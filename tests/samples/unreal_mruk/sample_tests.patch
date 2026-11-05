@@ -1,0 +1,55 @@
+diff --git a/Plugins/SampleEditor/Source/SampleEditor/Private/SampleEditor.cpp b/Plugins/SampleEditor/Source/SampleEditor/Private/SampleEditor.cpp
+index a0bf427..692f42a 100644
+--- a/Plugins/SampleEditor/Source/SampleEditor/Private/SampleEditor.cpp
++++ b/Plugins/SampleEditor/Source/SampleEditor/Private/SampleEditor.cpp
+@@ -7,9 +7,23 @@ LICENSE file in the root directory of this source tree.
+ */
+ 
+ #include "SampleEditor.h"
++#include "Editor.h"
++#include "HAL/IConsoleManager.h"
++#include "PlayInEditorDataTypes.h"
+ 
+ #define LOCTEXT_NAMESPACE "FSampleEditorModule"
+ 
++// puppetxr's tests: the toolbar's VR Preview, which no console command or script API starts
++static FAutoConsoleCommand PuppetxrVRPreview(TEXT("puppetxr.VRPreview"), TEXT("Starts a VR Preview session as the toolbar's VR Preview does"),
++	FConsoleCommandDelegate::CreateLambda([]() {
++		if (GEditor && !GEditor->PlayWorld && !GEditor->IsPlaySessionRequestQueued())
++		{
++			FRequestPlaySessionParams SessionParams;
++			SessionParams.SessionPreviewTypeOverride = EPlaySessionPreviewType::VRPreview;
++			GEditor->RequestPlaySession(SessionParams);
++		}
++	}));
++
+ void FSampleEditorModule::StartupModule()
+ {
+ }
+diff --git a/Source/MRUtilityKitSample/Private/DemoVRPawn.cpp b/Source/MRUtilityKitSample/Private/DemoVRPawn.cpp
+index 86627f7..164351b 100644
+--- a/Source/MRUtilityKitSample/Private/DemoVRPawn.cpp
++++ b/Source/MRUtilityKitSample/Private/DemoVRPawn.cpp
+@@ -53,7 +53,7 @@ void ADemoVRPawn::BeginPlay()
+ 	HideShapes();
+ 
+ 	FTimerDelegate Timer;
+-	Timer.BindLambda([this]() {
++	Timer.BindWeakLambda(this, [this]() {
+ 		PlaceMenu();
+ 	});
+ 	GetWorldTimerManager().SetTimer(MenuDelayTimerHandle, Timer, 0.3f, false);
+diff --git a/Source/MRUtilityKitSample/Private/VRPawn.cpp b/Source/MRUtilityKitSample/Private/VRPawn.cpp
+index 1dc76c6..6885295 100644
+--- a/Source/MRUtilityKitSample/Private/VRPawn.cpp
++++ b/Source/MRUtilityKitSample/Private/VRPawn.cpp
+@@ -15,7 +15,8 @@ AVRPawn::AVRPawn()
+ 
+ 	EnhancedInputComponent =
+ 		CreateDefaultSubobject<UEnhancedInputComponent>("EnhancedInputComponent");
+-	InputComponent = EnhancedInputComponent;
++	// puppetxr tests: no InputComponent here, or APawn::PawnClientRestart never calls
++	// SetupPlayerInputComponent nor binds the Blueprint input events (IA_Select, IA_ShowMenu)
+ 	AutoPossessPlayer = EAutoReceiveInput::Player0;
+ }
+ 

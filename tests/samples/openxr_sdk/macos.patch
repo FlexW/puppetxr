@@ -1,0 +1,27 @@
+diff --git a/src/tests/hello_xr/graphicsplugin_vulkan.cpp b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+index 7e68c2d..702c637 100644
+--- a/src/tests/hello_xr/graphicsplugin_vulkan.cpp
++++ b/src/tests/hello_xr/graphicsplugin_vulkan.cpp
+@@ -1147,6 +1147,12 @@ struct VulkanGraphicsPluginLegacy : public VulkanGraphicsPlugin {
+ 
+             VkInstanceCreateInfo instInfo{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+             memcpy(&instInfo, createInfo->vulkanCreateInfo, sizeof(instInfo));
++#if defined(__APPLE__)
++            // MoltenVK is a portability driver, which the loader lists only to instances asking for them
++            extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
++            extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
++            instInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
++#endif
+             instInfo.enabledExtensionCount = (uint32_t)extensions.size();
+             instInfo.ppEnabledExtensionNames = extensions.empty() ? nullptr : extensions.data();
+ 
+@@ -1198,6 +1204,9 @@ struct VulkanGraphicsPluginLegacy : public VulkanGraphicsPlugin {
+             }
+ #endif
+ 
++#if defined(__APPLE__)
++            extensions.push_back("VK_KHR_portability_subset");
++#endif
+             VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+             memcpy(&deviceInfo, createInfo->vulkanCreateInfo, sizeof(deviceInfo));
+             deviceInfo.pEnabledFeatures = &features;

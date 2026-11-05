@@ -1,0 +1,11 @@
+build/
+build-*/
+compile_commands.json
+imgui.ini
+*.spv
+.cache/
+*.xrrec
+
+# Blender backups
+*.blend1
+__pycache__/

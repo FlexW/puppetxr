@@ -1,0 +1,104 @@
+diff --git a/xr/openxr_binding_modifier_demo/start_vr.gd b/xr/openxr_binding_modifier_demo/start_vr.gd
+index 1b0cc35..4ca78b9 100644
+--- a/xr/openxr_binding_modifier_demo/start_vr.gd
++++ b/xr/openxr_binding_modifier_demo/start_vr.gd
+@@ -103,6 +103,8 @@ func _on_openxr_focused_state() -> void:
+ func _on_openxr_stopping() -> void:
+ 	# Our session is being stopped.
+ 	print("OpenXR is stopping")
++	# puppetxr's sample tests end a run by ending its session
++	get_tree().quit()
+ 
+ 
+ # Handle OpenXR pose recentered signal.
+diff --git a/xr/openxr_character_centric_movement/start_vr.gd b/xr/openxr_character_centric_movement/start_vr.gd
+index eaced7b..421a96d 100644
+--- a/xr/openxr_character_centric_movement/start_vr.gd
++++ b/xr/openxr_character_centric_movement/start_vr.gd
+@@ -114,6 +114,8 @@ func _on_openxr_focused_state() -> void:
+ func _on_openxr_stopping() -> void:
+ 	# Our session is being stopped.
+ 	print("OpenXR is stopping")
++	# puppetxr's sample tests end a run by ending its session
++	get_tree().quit()
+ 
+ 
+ # Handle OpenXR pose recentered signal.
+diff --git a/xr/openxr_composition_layers/start_vr.gd b/xr/openxr_composition_layers/start_vr.gd
+index eaced7b..421a96d 100644
+--- a/xr/openxr_composition_layers/start_vr.gd
++++ b/xr/openxr_composition_layers/start_vr.gd
+@@ -114,6 +114,8 @@ func _on_openxr_focused_state() -> void:
+ func _on_openxr_stopping() -> void:
+ 	# Our session is being stopped.
+ 	print("OpenXR is stopping")
++	# puppetxr's sample tests end a run by ending its session
++	get_tree().quit()
+ 
+ 
+ # Handle OpenXR pose recentered signal.
+diff --git a/xr/openxr_hand_tracking_demo/start_vr.gd b/xr/openxr_hand_tracking_demo/start_vr.gd
+index eaced7b..421a96d 100644
+--- a/xr/openxr_hand_tracking_demo/start_vr.gd
++++ b/xr/openxr_hand_tracking_demo/start_vr.gd
+@@ -114,6 +114,8 @@ func _on_openxr_focused_state() -> void:
+ func _on_openxr_stopping() -> void:
+ 	# Our session is being stopped.
+ 	print("OpenXR is stopping")
++	# puppetxr's sample tests end a run by ending its session
++	get_tree().quit()
+ 
+ 
+ # Handle OpenXR pose recentered signal.
+diff --git a/xr/openxr_origin_centric_movement/start_vr.gd b/xr/openxr_origin_centric_movement/start_vr.gd
+index eaced7b..421a96d 100644
+--- a/xr/openxr_origin_centric_movement/start_vr.gd
++++ b/xr/openxr_origin_centric_movement/start_vr.gd
+@@ -114,6 +114,8 @@ func _on_openxr_focused_state() -> void:
+ func _on_openxr_stopping() -> void:
+ 	# Our session is being stopped.
+ 	print("OpenXR is stopping")
++	# puppetxr's sample tests end a run by ending its session
++	get_tree().quit()
+ 
+ 
+ # Handle OpenXR pose recentered signal.
+diff --git a/xr/openxr_passthrough/start_vr.gd b/xr/openxr_passthrough/start_vr.gd
+index eaced7b..421a96d 100644
+--- a/xr/openxr_passthrough/start_vr.gd
++++ b/xr/openxr_passthrough/start_vr.gd
+@@ -114,6 +114,8 @@ func _on_openxr_focused_state() -> void:
+ func _on_openxr_stopping() -> void:
+ 	# Our session is being stopped.
+ 	print("OpenXR is stopping")
++	# puppetxr's sample tests end a run by ending its session
++	get_tree().quit()
+ 
+ 
+ # Handle OpenXR pose recentered signal.
+diff --git a/xr/openxr_render_models/start_vr.gd b/xr/openxr_render_models/start_vr.gd
+index eaced7b..421a96d 100644
+--- a/xr/openxr_render_models/start_vr.gd
++++ b/xr/openxr_render_models/start_vr.gd
+@@ -114,6 +114,8 @@ func _on_openxr_focused_state() -> void:
+ func _on_openxr_stopping() -> void:
+ 	# Our session is being stopped.
+ 	print("OpenXR is stopping")
++	# puppetxr's sample tests end a run by ending its session
++	get_tree().quit()
+ 
+ 
+ # Handle OpenXR pose recentered signal.
+diff --git a/xr/openxr_spectator_view/start_vr.gd b/xr/openxr_spectator_view/start_vr.gd
+index 9c02bbd..d8fa795 100644
+--- a/xr/openxr_spectator_view/start_vr.gd
++++ b/xr/openxr_spectator_view/start_vr.gd
+@@ -113,6 +113,8 @@ func _on_openxr_focused_state() -> void:
+ func _on_openxr_stopping() -> void:
+ 	# Our session is being stopped.
+ 	print("OpenXR is stopping")
++	# puppetxr's sample tests end a run by ending its session
++	get_tree().quit()
+ 
+ 
+ # Handle OpenXR pose recentered signal.

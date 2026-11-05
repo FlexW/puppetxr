@@ -1,0 +1,36 @@
+{
+  "runtime": "puppetxr",
+  "system": {"eye_gaze_interaction": true, "eye_tracking": true, "visual_face_tracking": true, "audio_face_tracking": true},
+  "views": {
+    "flags": 15,
+    "in_view_space": [
+      {"position":[-0.0320000015,0,0],"orientation":[0,0,0,1],"fov":[-0.785398185,0.785398185,0.785398185,-0.785398185]},
+      {"position":[0.0320000015,0,0],"orientation":[0,0,0,1],"fov":[-0.785398185,0.785398185,0.785398185,-0.785398185]}
+    ]
+  },
+  "ext_eye_gaze_interaction": {
+    "profile": "/interaction_profiles/ext/eye_gaze_interaction", "state_result": 0, "active": true,
+    "stage":{"result":0,"flags":15,"position":[0,1.60000002,0],"orientation":[0,0,0,1],"sample_time_delta":0},"view":{"result":0,"flags":15,"position":[0,0,0],"orientation":[0,0,0,1],"sample_time_delta":0}
+  },
+  "fb_eye_tracking_social": [
+    {"eye":0,"valid":true,"confidence":1,
+     "stage":{"position":[-0.0320000015,1.60000002,0],"orientation":[0,0,0,1]},
+     "view":{"position":[-0.0320000015,0,0],"orientation":[0,0,0,1]}},
+    {"eye":1,"valid":true,"confidence":1,
+     "stage":{"position":[0.0320000015,1.60000002,0],"orientation":[0,0,0,1]},
+     "view":{"position":[0.0320000015,0,0],"orientation":[0,0,0,1]}}
+  ],
+  "fb_face_tracking2": {
+    "valid": true, "eye_following_valid": true, "data_source": 0,
+    "confidences": [1,1],
+    "weights": [
+      0,0,0,0,0,0,0,0,0,0,
+      0,0,0,0,0,0,0,0,0,0,
+      0,0,0,0,0,0,0,0,0,0,
+      0,0,0,0,0,0,0,0,0,0,
+      0,0,0,0,0,0,0,0,0,0,
+      0,0,0,0,0,0,0,0,0,0,
+      0,0,0,0,0,0,0,0,0,0
+    ]
+  }
+}

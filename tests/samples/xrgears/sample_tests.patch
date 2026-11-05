@@ -1,0 +1,41 @@
+diff --git a/src/main.cpp b/src/main.cpp
+index bdc33c5..07518be 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -33,6 +33,7 @@ public:
+ 
+   bool quit = false;
+   float animation_timer = 0.0;
++  XrTime first_display_time = 0;
+   float revolutions_per_second = 0.0625;
+   struct timespec start_time;
+ 
+@@ -606,23 +607,14 @@ public:
+                                  &cmd_pool));
+   }
+ 
++  // puppetxr's sample tests: the gears turn with the display time, which follows the simulator's
++  // fixed step, instead of the wall clock
+   void
+   update_timer()
+   {
+-    const double sec_in_nsec = 1000000000.0f;
+-
+-    struct timespec mono_time;
+-    if (clock_gettime(CLOCK_MONOTONIC, &mono_time) != 0) {
+-      xrg_log_e("Could not read system clock");
+-      return;
+-    }
+-
+-    mono_time.tv_sec -= start_time.tv_sec;
+-
+-    double mono_secs =
+-      ((double)mono_time.tv_sec + ((double)mono_time.tv_nsec / sec_in_nsec));
+-
+-    animation_timer = revolutions_per_second * mono_secs;
++    if (first_display_time == 0)
++      first_display_time = xr.frameState.predictedDisplayTime;
++    animation_timer = revolutions_per_second * (double)(xr.frameState.predictedDisplayTime - first_display_time) / 1000000000.0;
+   }
+ 
+   void

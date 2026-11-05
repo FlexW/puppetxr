@@ -1,0 +1,688 @@
+{
+ "format": "puppetxr_room",
+ "version": 1,
+ "name": "living_room",
+ "binary": "room.bin",
+ "albedo": "room_albedo.png",
+ "visual": {
+  "vertices": {
+   "offset": 0,
+   "count": 4062
+  },
+  "indices": {
+   "offset": 81240,
+   "count": 9348
+  }
+ },
+ "global_mesh": {
+  "positions": {
+   "offset": 118632,
+   "count": 24044
+  },
+  "indices": {
+   "offset": 407160,
+   "count": 144564
+  }
+ },
+ "entities": [
+  {
+   "uuid": "ba1096c72c4c368fbffb5c92ad0b7fcc",
+   "label": "other",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "room": {
+    "floor": 1,
+    "ceiling": 2,
+    "walls": [
+     3,
+     4,
+     5,
+     6
+    ],
+    "children": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18
+    ]
+   },
+   "room_mesh": {
+    "positions": {
+     "offset": 985416,
+     "count": 36
+    },
+    "faces": [
+     {
+      "uuid": "f7c9e483b40f12cd0500359b54d91f18",
+      "label": "floor",
+      "indices": {
+       "offset": 985848,
+       "count": 24
+      }
+     },
+     {
+      "uuid": "6e077d11ea9fd8929d4e82c1379bf7a1",
+      "label": "ceiling",
+      "indices": {
+       "offset": 985944,
+       "count": 24
+      }
+     },
+     {
+      "uuid": "ea1c48e390b8f2181292c99904faf93d",
+      "label": "wall_face",
+      "indices": {
+       "offset": 986040,
+       "count": 15
+      }
+     },
+     {
+      "uuid": "d710e09b86f329dc1361cdd5c1941f08",
+      "label": "wall_face",
+      "indices": {
+       "offset": 986100,
+       "count": 30
+      }
+     },
+     {
+      "uuid": "cad58deb2dade150497229b8ba85b9cd",
+      "label": "wall_face",
+      "indices": {
+       "offset": 986220,
+       "count": 15
+      }
+     },
+     {
+      "uuid": "85e44863686f7d7cc8ff90756b277076",
+      "label": "wall_face",
+      "indices": {
+       "offset": 986280,
+       "count": 78
+      }
+     },
+     {
+      "uuid": "da524f062b93560e73d8013eaf2b0644",
+      "label": "door_frame",
+      "parent": "d710e09b86f329dc1361cdd5c1941f08",
+      "indices": {
+       "offset": 986592,
+       "count": 6
+      }
+     },
+     {
+      "uuid": "e58933f71395dffdeaa0b0257e615fcf",
+      "label": "window_frame",
+      "parent": "85e44863686f7d7cc8ff90756b277076",
+      "indices": {
+       "offset": 986616,
+       "count": 6
+      }
+     },
+     {
+      "uuid": "3a4453f8704d27d804ad8d5424c3d04f",
+      "label": "window_frame",
+      "parent": "85e44863686f7d7cc8ff90756b277076",
+      "indices": {
+       "offset": 986640,
+       "count": 6
+      }
+     }
+    ]
+   }
+  },
+  {
+   "uuid": "44acbda2d3dbfe43104501c974a30d69",
+   "label": "floor",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -2.8,
+     -2.3
+    ],
+    "max": [
+     2.8,
+     2.3
+    ],
+    "boundary": [
+     [
+      -2.8,
+      -2.3
+     ],
+     [
+      2.8,
+      -2.3
+     ],
+     [
+      2.8,
+      2.3
+     ],
+     [
+      -2.8,
+      2.3
+     ]
+    ]
+   }
+  },
+  {
+   "uuid": "e3dca1958c93e5e9b8e5cfca265ee742",
+   "label": "ceiling",
+   "position": [
+    0.0,
+    2.7,
+    -0.0
+   ],
+   "orientation": [
+    0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -2.8,
+     -2.3
+    ],
+    "max": [
+     2.8,
+     2.3
+    ],
+    "boundary": [
+     [
+      -2.8,
+      -2.3
+     ],
+     [
+      2.8,
+      -2.3
+     ],
+     [
+      2.8,
+      2.3
+     ],
+     [
+      -2.8,
+      2.3
+     ]
+    ]
+   }
+  },
+  {
+   "uuid": "6f664cc471ef97b9252ebb5f17af0b40",
+   "label": "wall_face",
+   "position": [
+    0.0,
+    1.35,
+    2.3
+   ],
+   "orientation": [
+    0.0,
+    1.0,
+    -0.0,
+    0.0
+   ],
+   "plane": {
+    "min": [
+     -2.8,
+     -1.35
+    ],
+    "max": [
+     2.8,
+     1.35
+    ]
+   }
+  },
+  {
+   "uuid": "aff8e01ef8d2f1cb85e49389dc9bda4c",
+   "label": "wall_face",
+   "position": [
+    2.8,
+    1.35,
+    -0.0
+   ],
+   "orientation": [
+    -0.0,
+    -0.707107,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -2.3,
+     -1.35
+    ],
+    "max": [
+     2.3,
+     1.35
+    ]
+   }
+  },
+  {
+   "uuid": "379cb9ff930bd69e4101913c18c86072",
+   "label": "wall_face",
+   "position": [
+    0.0,
+    1.35,
+    -2.3
+   ],
+   "orientation": [
+    -0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "plane": {
+    "min": [
+     -2.8,
+     -1.35
+    ],
+    "max": [
+     2.8,
+     1.35
+    ]
+   }
+  },
+  {
+   "uuid": "174069cfec28f46ffcd863e33577e752",
+   "label": "wall_face",
+   "position": [
+    -2.8,
+    1.35,
+    -0.0
+   ],
+   "orientation": [
+    0.0,
+    0.707107,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -2.3,
+     -1.35
+    ],
+    "max": [
+     2.3,
+     1.35
+    ]
+   }
+  },
+  {
+   "uuid": "123955b3dfa29683fa03a33182ad508f",
+   "label": "couch",
+   "position": [
+    2.045,
+    0.93,
+    0.45
+   ],
+   "orientation": [
+    -0.5,
+    0.5,
+    0.5,
+    0.5
+   ],
+   "plane": {
+    "min": [
+     -0.43,
+     -0.435
+    ],
+    "max": [
+     0.43,
+     0.435
+    ]
+   },
+   "volume": {
+    "min": [
+     -0.43,
+     -0.435,
+     -0.86
+    ],
+    "max": [
+     0.43,
+     0.435,
+     0.0
+    ]
+   }
+  },
+  {
+   "uuid": "cee81b243fe50e7a7f67b7900bf8f3a1",
+   "label": "table",
+   "position": [
+    0.0,
+    0.445,
+    0.75
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -0.55,
+     -0.3
+    ],
+    "max": [
+     0.55,
+     0.3
+    ]
+   },
+   "volume": {
+    "min": [
+     -0.55,
+     -0.3,
+     -0.445
+    ],
+    "max": [
+     0.55,
+     0.3,
+     0.0
+    ]
+   }
+  },
+  {
+   "uuid": "57f2c2e903d687231543e6be635449b5",
+   "label": "couch",
+   "position": [
+    0.0,
+    0.88,
+    1.7475
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -1.16,
+     -0.4725
+    ],
+    "max": [
+     1.16,
+     0.4725
+    ]
+   },
+   "volume": {
+    "min": [
+     -1.16,
+     -0.4725,
+     -0.81
+    ],
+    "max": [
+     1.16,
+     0.4725,
+     0.0
+    ]
+   }
+  },
+  {
+   "uuid": "5fc13ab91a41ed716b15eb5e2faa8142",
+   "label": "lamp",
+   "position": [
+    -2.4,
+    1.65,
+    1.9
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "volume": {
+    "min": [
+     -0.24,
+     -0.24,
+     -1.65
+    ],
+    "max": [
+     0.24,
+     0.24,
+     0.0
+    ]
+   }
+  },
+  {
+   "uuid": "f2c52120ee6e175cf7bad768e7569e94",
+   "label": "plant",
+   "position": [
+    2.425,
+    1.5,
+    -1.92
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "volume": {
+    "min": [
+     -0.345,
+     -0.3,
+     -1.5
+    ],
+    "max": [
+     0.345,
+     0.3,
+     0.0
+    ]
+   }
+  },
+  {
+   "uuid": "891d2699d3fb31acdadb220cf4fce8ed",
+   "label": "screen",
+   "position": [
+    0.0,
+    1.4,
+    -2.12
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "volume": {
+    "min": [
+     -0.65,
+     -0.11,
+     -0.9
+    ],
+    "max": [
+     0.65,
+     0.11,
+     0.0
+    ]
+   }
+  },
+  {
+   "uuid": "c64b612ac7e48a8f33f5281240544e28",
+   "label": "storage",
+   "position": [
+    0.0,
+    0.5,
+    -2.0485
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -0.8,
+     -0.2265
+    ],
+    "max": [
+     0.8,
+     0.2265
+    ]
+   },
+   "volume": {
+    "min": [
+     -0.8,
+     -0.2265,
+     -0.5
+    ],
+    "max": [
+     0.8,
+     0.2265,
+     0.0
+    ]
+   }
+  },
+  {
+   "uuid": "6e4a335eef194bacccc6f286e0c5cf32",
+   "label": "wall_art",
+   "position": [
+    0.0,
+    1.7,
+    2.29
+   ],
+   "orientation": [
+    -0.0,
+    -1.0,
+    0.0,
+    0.0
+   ],
+   "plane": {
+    "min": [
+     -0.7,
+     -0.35
+    ],
+    "max": [
+     0.7,
+     0.35
+    ]
+   }
+  },
+  {
+   "uuid": "da2a9332e054325601f731ccdaccbb55",
+   "label": "door_frame",
+   "position": [
+    2.79,
+    1.05,
+    -1.2
+   ],
+   "orientation": [
+    -0.0,
+    -0.707107,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -0.45,
+     -1.05
+    ],
+    "max": [
+     0.45,
+     1.05
+    ]
+   }
+  },
+  {
+   "uuid": "6fb45864e3170ed805f31f691793455f",
+   "label": "window_frame",
+   "position": [
+    -2.79,
+    1.55,
+    -1.0
+   ],
+   "orientation": [
+    -0.0,
+    0.707107,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -0.7,
+     -0.75
+    ],
+    "max": [
+     0.7,
+     0.75
+    ]
+   }
+  },
+  {
+   "uuid": "8950533edc0c5cabb9572c66c521c6c1",
+   "label": "window_frame",
+   "position": [
+    -2.79,
+    1.55,
+    1.0
+   ],
+   "orientation": [
+    -0.0,
+    0.707107,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -0.7,
+     -0.75
+    ],
+    "max": [
+     0.7,
+     0.75
+    ]
+   }
+  },
+  {
+   "uuid": "48973c492fc397ec5b47505f333a7f65",
+   "label": "global_mesh",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "mesh": true
+  }
+ ]
+}

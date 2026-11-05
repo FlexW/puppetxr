@@ -1,0 +1,209 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": { "CMAKE_EXPORT_COMPILE_COMMANDS": "ON" }
+        },
+        {
+            "name": "gcc",
+            "hidden": true,
+            "inherits": "base",
+            "cacheVariables": { "CMAKE_C_COMPILER": "gcc", "CMAKE_CXX_COMPILER": "g++" }
+        },
+        {
+            "name": "clang",
+            "hidden": true,
+            "inherits": "base",
+            "cacheVariables": { "CMAKE_C_COMPILER": "clang", "CMAKE_CXX_COMPILER": "clang++" }
+        },
+        { "name": "gcc-debug", "displayName": "GCC Debug", "inherits": "gcc", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
+        { "name": "gcc-release", "displayName": "GCC Release", "inherits": "gcc", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" } },
+        { "name": "clang-debug", "displayName": "Clang Debug", "inherits": "clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
+        { "name": "clang-release", "displayName": "Clang Release", "inherits": "clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" } },
+        {
+            "name": "clang-asan",
+            "displayName": "Clang Debug, AddressSanitizer and UndefinedBehaviorSanitizer",
+            "inherits": "clang",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "PUPPETXR_SANITIZE": "address" }
+        },
+        {
+            "name": "clang-tsan",
+            "displayName": "Clang RelWithDebInfo, ThreadSanitizer",
+            "inherits": "clang",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "PUPPETXR_SANITIZE": "thread" }
+        },
+        {
+            "name": "clang-tidy",
+            "displayName": "Clang Debug with clang-tidy, findings fail the build",
+            "inherits": "clang",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "PUPPETXR_CLANG_TIDY": "ON" }
+        },
+        {
+            "name": "dist",
+            "displayName": "Distribution: clang Release, LTO, hardened, reproducible, stripped",
+            "inherits": "clang",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "PUPPETXR_DIST": "ON" }
+        },
+        {
+            "name": "gcc-headless",
+            "displayName": "GCC Debug, headless only",
+            "inherits": "gcc",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "PUPPETXR_HEADLESS_ONLY": "ON" }
+        },
+        {
+            "name": "mingw-debug",
+            "displayName": "Windows cross build with mingw-w64 GCC, tests run in Wine",
+            "inherits": "base",
+            "toolchainFile": "${sourceDir}/cmake/mingw-w64.cmake",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "PUPPETXR_HLSL_DEFINES": "R_HLSL_NO_ATAN2=1" },
+            "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+        },
+        {
+            "name": "windows",
+            "hidden": true,
+            "inherits": "base",
+            "architecture": { "value": "x64", "strategy": "external" },
+            "toolset": { "value": "host=x64", "strategy": "external" },
+            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+        },
+        {
+            "name": "win-clang",
+            "hidden": true,
+            "inherits": "windows",
+            "cacheVariables": { "CMAKE_C_COMPILER": "clang", "CMAKE_CXX_COMPILER": "clang++", "CMAKE_RC_COMPILER": "llvm-rc" }
+        },
+        {
+            "name": "msvc",
+            "hidden": true,
+            "inherits": "windows",
+            "cacheVariables": { "CMAKE_C_COMPILER": "cl", "CMAKE_CXX_COMPILER": "cl" }
+        },
+        { "name": "win-clang-debug", "displayName": "Windows clang Debug", "inherits": "win-clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
+        { "name": "win-clang-release", "displayName": "Windows clang RelWithDebInfo", "inherits": "win-clang", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" } },
+        {
+            "name": "win-clang-asan",
+            "displayName": "Windows clang Debug, AddressSanitizer and UndefinedBehaviorSanitizer",
+            "inherits": "win-clang",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "PUPPETXR_SANITIZE": "address" }
+        },
+        {
+            "name": "win-clang-tidy",
+            "displayName": "Windows clang Debug with clang-tidy, findings fail the build",
+            "inherits": "win-clang",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "PUPPETXR_CLANG_TIDY": "ON" }
+        },
+        {
+            "name": "win-clang-dist",
+            "displayName": "Windows distribution: clang Release, LTO, hardened, reproducible, PDB",
+            "inherits": "win-clang",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "PUPPETXR_DIST": "ON" }
+        },
+        { "name": "msvc-debug", "displayName": "MSVC Debug", "inherits": "msvc", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
+        { "name": "msvc-release", "displayName": "MSVC RelWithDebInfo", "inherits": "msvc", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" } },
+        {
+            "name": "msvc-asan",
+            "displayName": "MSVC Debug, AddressSanitizer",
+            "inherits": "msvc",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "PUPPETXR_SANITIZE": "address" }
+        },
+        {
+            "name": "msvc-dist",
+            "displayName": "Windows distribution: MSVC Release, LTCG, hardened, PDB",
+            "inherits": "msvc",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "PUPPETXR_DIST": "ON" }
+        },
+        {
+            "name": "mac",
+            "hidden": true,
+            "inherits": "base",
+            "cacheVariables": { "CMAKE_C_COMPILER": "clang", "CMAKE_CXX_COMPILER": "clang++", "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0" },
+            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+        },
+        { "name": "mac-debug", "displayName": "macOS Apple clang Debug", "inherits": "mac", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
+        { "name": "mac-release", "displayName": "macOS Apple clang RelWithDebInfo", "inherits": "mac", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" } },
+        {
+            "name": "mac-asan",
+            "displayName": "macOS Apple clang Debug, AddressSanitizer and UndefinedBehaviorSanitizer",
+            "inherits": "mac",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "PUPPETXR_SANITIZE": "address" }
+        },
+        {
+            "name": "mac-tsan",
+            "displayName": "macOS Apple clang RelWithDebInfo, ThreadSanitizer",
+            "inherits": "mac",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "PUPPETXR_SANITIZE": "thread" }
+        },
+        {
+            "name": "mac-dist",
+            "displayName": "macOS distribution: Apple clang Release, LTO, universal arm64 and x86_64, dSYM",
+            "inherits": "mac",
+            "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "PUPPETXR_DIST": "ON", "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64" }
+        }
+    ],
+    "buildPresets": [
+        { "name": "gcc-debug", "configurePreset": "gcc-debug" },
+        { "name": "gcc-release", "configurePreset": "gcc-release" },
+        { "name": "clang-debug", "configurePreset": "clang-debug" },
+        { "name": "clang-release", "configurePreset": "clang-release" },
+        { "name": "clang-asan", "configurePreset": "clang-asan" },
+        { "name": "clang-tsan", "configurePreset": "clang-tsan" },
+        { "name": "clang-tidy", "configurePreset": "clang-tidy" },
+        { "name": "dist", "configurePreset": "dist" },
+        { "name": "gcc-headless", "configurePreset": "gcc-headless" },
+        { "name": "mingw-debug", "configurePreset": "mingw-debug" },
+        { "name": "win-clang-debug", "configurePreset": "win-clang-debug" },
+        { "name": "win-clang-release", "configurePreset": "win-clang-release" },
+        { "name": "win-clang-asan", "configurePreset": "win-clang-asan" },
+        { "name": "win-clang-tidy", "configurePreset": "win-clang-tidy" },
+        { "name": "win-clang-dist", "configurePreset": "win-clang-dist" },
+        { "name": "msvc-debug", "configurePreset": "msvc-debug" },
+        { "name": "msvc-release", "configurePreset": "msvc-release" },
+        { "name": "msvc-asan", "configurePreset": "msvc-asan" },
+        { "name": "msvc-dist", "configurePreset": "msvc-dist" },
+        { "name": "mac-debug", "configurePreset": "mac-debug" },
+        { "name": "mac-release", "configurePreset": "mac-release" },
+        { "name": "mac-asan", "configurePreset": "mac-asan" },
+        { "name": "mac-tsan", "configurePreset": "mac-tsan" },
+        { "name": "mac-dist", "configurePreset": "mac-dist" }
+    ],
+    "testPresets": [
+        { "name": "base", "hidden": true, "output": { "outputOnFailure": true }, "execution": { "jobs": 8 } },
+        { "name": "gcc-debug", "inherits": "base", "configurePreset": "gcc-debug" },
+        { "name": "gcc-release", "inherits": "base", "configurePreset": "gcc-release" },
+        { "name": "clang-debug", "inherits": "base", "configurePreset": "clang-debug" },
+        { "name": "clang-release", "inherits": "base", "configurePreset": "clang-release" },
+        {
+            "name": "clang-asan",
+            "inherits": "base",
+            "configurePreset": "clang-asan",
+            "environment": { "ASAN_OPTIONS": "detect_leaks=1", "LSAN_OPTIONS": "suppressions=${sourceDir}/tests/lsan.supp:print_suppressions=0", "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1", "VK_LOADER_DISABLE_DYNAMIC_LIBRARY_UNLOADING": "1" }
+        },
+        {
+            "name": "clang-tsan",
+            "inherits": "base",
+            "configurePreset": "clang-tsan",
+            "environment": { "TSAN_OPTIONS": "halt_on_error=1 second_deadlock_stack=1 suppressions=${sourceDir}/tests/tsan.supp" }
+        },
+        { "name": "dist", "inherits": "base", "configurePreset": "dist" },
+        { "name": "gcc-headless", "inherits": "base", "configurePreset": "gcc-headless" },
+        { "name": "mingw-debug", "inherits": "base", "configurePreset": "mingw-debug" },
+        { "name": "win-clang-debug", "inherits": "base", "configurePreset": "win-clang-debug" },
+        { "name": "win-clang-release", "inherits": "base", "configurePreset": "win-clang-release" },
+        { "name": "win-clang-asan", "inherits": "base", "configurePreset": "win-clang-asan" },
+        { "name": "win-clang-dist", "inherits": "base", "configurePreset": "win-clang-dist" },
+        { "name": "msvc-debug", "inherits": "base", "configurePreset": "msvc-debug" },
+        { "name": "msvc-release", "inherits": "base", "configurePreset": "msvc-release" },
+        { "name": "msvc-asan", "inherits": "base", "configurePreset": "msvc-asan" },
+        { "name": "msvc-dist", "inherits": "base", "configurePreset": "msvc-dist" },
+        { "name": "mac-debug", "inherits": "base", "configurePreset": "mac-debug" },
+        { "name": "mac-release", "inherits": "base", "configurePreset": "mac-release" },
+        { "name": "mac-asan", "inherits": "base", "configurePreset": "mac-asan" },
+        { "name": "mac-tsan", "inherits": "base", "configurePreset": "mac-tsan" },
+        { "name": "mac-dist", "inherits": "base", "configurePreset": "mac-dist" }
+    ]
+}

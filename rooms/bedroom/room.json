@@ -1,0 +1,559 @@
+{
+ "format": "puppetxr_room",
+ "version": 1,
+ "name": "bedroom",
+ "binary": "room.bin",
+ "albedo": "room_albedo.png",
+ "visual": {
+  "vertices": {
+   "offset": 0,
+   "count": 1869
+  },
+  "indices": {
+   "offset": 37380,
+   "count": 3924
+  }
+ },
+ "global_mesh": {
+  "positions": {
+   "offset": 53076,
+   "count": 20182
+  },
+  "indices": {
+   "offset": 295260,
+   "count": 121626
+  }
+ },
+ "entities": [
+  {
+   "uuid": "448aef5b6aa2ee2b2e18ed34656a4c6b",
+   "label": "other",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "room": {
+    "floor": 1,
+    "ceiling": 2,
+    "walls": [
+     3,
+     4,
+     5,
+     6
+    ],
+    "children": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14
+    ]
+   },
+   "room_mesh": {
+    "positions": {
+     "offset": 781764,
+     "count": 28
+    },
+    "faces": [
+     {
+      "uuid": "7c690bfdc34896411a116dc7470615fb",
+      "label": "floor",
+      "indices": {
+       "offset": 782100,
+       "count": 18
+      }
+     },
+     {
+      "uuid": "dbe9fba3789f60b2d31645420007279c",
+      "label": "ceiling",
+      "indices": {
+       "offset": 782172,
+       "count": 18
+      }
+     },
+     {
+      "uuid": "6d946a33bd8eb04c333dc361ee3cfd98",
+      "label": "wall_face",
+      "indices": {
+       "offset": 782244,
+       "count": 30
+      }
+     },
+     {
+      "uuid": "7af783a13b465cdfc42b8a80bf0cdbfa",
+      "label": "wall_face",
+      "indices": {
+       "offset": 782364,
+       "count": 15
+      }
+     },
+     {
+      "uuid": "057fe6dcbeb5b6ff049ba626052da002",
+      "label": "wall_face",
+      "indices": {
+       "offset": 782424,
+       "count": 48
+      }
+     },
+     {
+      "uuid": "9580861221eac9610eafa96ff275c803",
+      "label": "wall_face",
+      "indices": {
+       "offset": 782616,
+       "count": 15
+      }
+     },
+     {
+      "uuid": "0e6097e217b49a12dc46ef05848a5e9c",
+      "label": "door_frame",
+      "parent": "6d946a33bd8eb04c333dc361ee3cfd98",
+      "indices": {
+       "offset": 782676,
+       "count": 6
+      }
+     },
+     {
+      "uuid": "8e1eeb36da7cf0888021e05bb4074ee9",
+      "label": "window_frame",
+      "parent": "057fe6dcbeb5b6ff049ba626052da002",
+      "indices": {
+       "offset": 782700,
+       "count": 6
+      }
+     }
+    ]
+   }
+  },
+  {
+   "uuid": "08f7ef617da22defc979631e2910813f",
+   "label": "floor",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -2.0,
+     -1.8
+    ],
+    "max": [
+     2.0,
+     1.8
+    ],
+    "boundary": [
+     [
+      -2.0,
+      -1.8
+     ],
+     [
+      2.0,
+      -1.8
+     ],
+     [
+      2.0,
+      1.8
+     ],
+     [
+      -2.0,
+      1.8
+     ]
+    ]
+   }
+  },
+  {
+   "uuid": "5a4ba4a64ed31cd05683f0dc550a780b",
+   "label": "ceiling",
+   "position": [
+    0.0,
+    2.5,
+    -0.0
+   ],
+   "orientation": [
+    0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -2.0,
+     -1.8
+    ],
+    "max": [
+     2.0,
+     1.8
+    ],
+    "boundary": [
+     [
+      -2.0,
+      -1.8
+     ],
+     [
+      2.0,
+      -1.8
+     ],
+     [
+      2.0,
+      1.8
+     ],
+     [
+      -2.0,
+      1.8
+     ]
+    ]
+   }
+  },
+  {
+   "uuid": "8a0388b835bec185a86ce0d575bc5d3e",
+   "label": "wall_face",
+   "position": [
+    0.0,
+    1.25,
+    1.8
+   ],
+   "orientation": [
+    0.0,
+    1.0,
+    -0.0,
+    0.0
+   ],
+   "plane": {
+    "min": [
+     -2.0,
+     -1.25
+    ],
+    "max": [
+     2.0,
+     1.25
+    ]
+   }
+  },
+  {
+   "uuid": "c326344e9f35b75358de3962421d1531",
+   "label": "wall_face",
+   "position": [
+    2.0,
+    1.25,
+    -0.0
+   ],
+   "orientation": [
+    -0.0,
+    -0.707107,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -1.8,
+     -1.25
+    ],
+    "max": [
+     1.8,
+     1.25
+    ]
+   }
+  },
+  {
+   "uuid": "9c7b6d0e81063b5a962a0d40fda31589",
+   "label": "wall_face",
+   "position": [
+    0.0,
+    1.25,
+    -1.8
+   ],
+   "orientation": [
+    -0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "plane": {
+    "min": [
+     -2.0,
+     -1.25
+    ],
+    "max": [
+     2.0,
+     1.25
+    ]
+   }
+  },
+  {
+   "uuid": "3ae903e6da2a0649ea909455bfff535f",
+   "label": "wall_face",
+   "position": [
+    -2.0,
+    1.25,
+    -0.0
+   ],
+   "orientation": [
+    0.0,
+    0.707107,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -1.8,
+     -1.25
+    ],
+    "max": [
+     1.8,
+     1.25
+    ]
+   }
+  },
+  {
+   "uuid": "f714a55daa82f38660b4823a4f217683",
+   "label": "bed",
+   "position": [
+    -1.0,
+    1.0,
+    -0.95
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -1.0,
+     -0.8
+    ],
+    "max": [
+     1.0,
+     0.8
+    ]
+   },
+   "volume": {
+    "min": [
+     -1.0,
+     -0.8,
+     -1.0
+    ],
+    "max": [
+     1.0,
+     0.8,
+     0.0
+    ]
+   }
+  },
+  {
+   "uuid": "273196abba0e859b18db3573963ee7f3",
+   "label": "lamp",
+   "position": [
+    -1.78,
+    1.02,
+    0.15
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "volume": {
+    "min": [
+     -0.14,
+     -0.14,
+     -0.52
+    ],
+    "max": [
+     0.14,
+     0.14,
+     0.0
+    ]
+   }
+  },
+  {
+   "uuid": "69b9193dd355aded16e01c8973c7ccfe",
+   "label": "storage",
+   "position": [
+    -1.775,
+    0.5,
+    0.15
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -0.215,
+     -0.2
+    ],
+    "max": [
+     0.215,
+     0.2
+    ]
+   },
+   "volume": {
+    "min": [
+     -0.215,
+     -0.2,
+     -0.5
+    ],
+    "max": [
+     0.215,
+     0.2,
+     0.0
+    ]
+   }
+  },
+  {
+   "uuid": "4c9a97b3d3e85e31d2c46e75352c2ab6",
+   "label": "storage",
+   "position": [
+    1.69,
+    2.0,
+    -1.0
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -0.31,
+     -0.6
+    ],
+    "max": [
+     0.31,
+     0.6
+    ]
+   },
+   "volume": {
+    "min": [
+     -0.31,
+     -0.6,
+     -2.0
+    ],
+    "max": [
+     0.31,
+     0.6,
+     0.0
+    ]
+   }
+  },
+  {
+   "uuid": "78913bf626f544f14e5b00c0976f9580",
+   "label": "wall_art",
+   "position": [
+    -1.99,
+    1.6,
+    -0.95
+   ],
+   "orientation": [
+    -0.0,
+    0.707107,
+    0.0,
+    0.707107
+   ],
+   "plane": {
+    "min": [
+     -0.45,
+     -0.3
+    ],
+    "max": [
+     0.45,
+     0.3
+    ]
+   }
+  },
+  {
+   "uuid": "3681e5a29b1d3d23b51bc286112bb598",
+   "label": "door_frame",
+   "position": [
+    1.2,
+    1.05,
+    1.79
+   ],
+   "orientation": [
+    -0.0,
+    -1.0,
+    0.0,
+    0.0
+   ],
+   "plane": {
+    "min": [
+     -0.45,
+     -1.05
+    ],
+    "max": [
+     0.45,
+     1.05
+    ]
+   }
+  },
+  {
+   "uuid": "1e948935ca2c195a12eee4dea0556c09",
+   "label": "window_frame",
+   "position": [
+    0.0,
+    1.5,
+    -1.79
+   ],
+   "orientation": [
+    -0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "plane": {
+    "min": [
+     -0.7,
+     -0.6
+    ],
+    "max": [
+     0.7,
+     0.6
+    ]
+   }
+  },
+  {
+   "uuid": "ee7df06749a4a9744c85a49d21c042f5",
+   "label": "global_mesh",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "orientation": [
+    -0.707107,
+    0.0,
+    0.0,
+    0.707107
+   ],
+   "mesh": true
+  }
+ ]
+}

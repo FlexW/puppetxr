@@ -1,0 +1,1291 @@
+diff --git a/Samples/1stParty/OVR/Include/OVR_LogUtils.h b/Samples/1stParty/OVR/Include/OVR_LogUtils.h
+index 39d8808..46babf9 100755
+--- a/Samples/1stParty/OVR/Include/OVR_LogUtils.h
++++ b/Samples/1stParty/OVR/Include/OVR_LogUtils.h
+@@ -76,7 +76,15 @@ inline void LogWithTag(const int prio, const char* tag, const char* fmt, ...) {
+     va_end(args);
+ 
+     OutputDebugStringA(buffer);
+-#elif (defined(OVR_OS_LINUX) || defined(OVR_OS_MAC) || defined(OVR_OS_IPHONE))
++#elif defined(OVR_OS_LINUX)
++    OVR_UNUSED(prio);
++    va_list args;
++    va_start(args, fmt);
++    fprintf(stderr, "%s: ", tag);
++    vfprintf(stderr, fmt, args);
++    fputc('\n', stderr);
++    va_end(args);
++#elif (defined(OVR_OS_MAC) || defined(OVR_OS_IPHONE))
+     OVR_UNUSED(prio);
+     OVR_UNUSED(tag);
+     OVR_UNUSED(fmt);
+@@ -212,7 +220,16 @@ inline void LogWithFileTag(const int prio, const char* fileTag, const char* fmt,
+ 
+     OutputDebugStringA(buffer);
+     OutputDebugStringA("\n");
+-#elif (defined(OVR_OS_LINUX) || defined(OVR_OS_MAC) || defined(OVR_OS_IPHONE))
++#elif defined(OVR_OS_LINUX)
++    OVR_UNUSED(prio);
++    va_list args;
++    va_start(args, fmt);
++    const char* slash = strrchr(fileTag, '/');
++    fprintf(stderr, "%s: ", slash != nullptr ? slash + 1 : fileTag);
++    vfprintf(stderr, fmt, args);
++    fputc('\n', stderr);
++    va_end(args);
++#elif (defined(OVR_OS_MAC) || defined(OVR_OS_IPHONE))
+     OVR_UNUSED(prio);
+     OVR_UNUSED(fileTag);
+     OVR_UNUSED(fmt);
+@@ -221,7 +238,7 @@ inline void LogWithFileTag(const int prio, const char* fileTag, const char* fmt,
+ #endif
+ }
+ 
+-#if defined(OVR_OS_WIN32) // allow this file to be included in PC projects
++#if defined(OVR_OS_WIN32) || defined(OVR_OS_LINUX) // allow this file to be included in PC projects
+ 
+ #define OVR_LOG(...) LogWithFileTag(0, __FILE__, __VA_ARGS__)
+ #define OVR_WARN(...) LogWithFileTag(0, __FILE__, __VA_ARGS__)
+diff --git a/Samples/3rdParty/CMakeLists.txt b/Samples/3rdParty/CMakeLists.txt
+index f733d4c..6dc2a9f 100755
+--- a/Samples/3rdParty/CMakeLists.txt
++++ b/Samples/3rdParty/CMakeLists.txt
+@@ -9,7 +9,7 @@ function(find_ktx)
+         set_target_properties(ktx PROPERTIES
+             IMPORTED_LOCATION ${KTXLIB}
+             INTERFACE_INCLUDE_DIRECTORIES ${KTX_DIR}/include)
+-    elseif (WIN32)
++    else()
+         set(KTX_DIR ${CMAKE_CURRENT_LIST_DIR}/khronos/ktx_src)
+         include(FetchContent)
+ 
+@@ -31,6 +31,14 @@ function(find_ktx)
+ 
+ 
+         # Common compile definitions
++        if (NOT WIN32)
++            set(KTX_FEATURE_STATIC_LIBRARY ON CACHE BOOL "")
++            set(KTX_FEATURE_TESTS OFF CACHE BOOL "")
++            set(KTX_FEATURE_TOOLS OFF CACHE BOOL "")
++            set(BASISU_SUPPORT_SSE OFF CACHE BOOL "")
++            # KTX builds with -Werror, which every new clang warning breaks; -w wins over it
++            add_compile_options(-w)
++        endif()
+         add_subdirectory(${libktx_SOURCE_DIR} ${libktx_BINARY_DIR})
+     endif()
+ endfunction()
+@@ -85,7 +93,7 @@ function(find_minizip)
+             $<$<COMPILE_LANGUAGE:CXX>:-Wno-unused-command-line-argument;>
+         )
+         target_link_libraries(minizip z)
+-    elseif (WIN32)
++    else()
+         target_include_directories(minizip
+             PUBLIC
+                 ${CMAKE_CURRENT_LIST_DIR}/zlib
+@@ -108,7 +116,7 @@ endfunction()
+ 
+ function(find_openxr_loader)
+     # Pull openxr loader for windows build as there is no aar method on windows
+-    if(WIN32)
++    if(NOT ANDROID)
+         include(FetchContent)
+ 
+         FetchContent_Declare(
+@@ -132,7 +140,7 @@ find_ktx()
+ find_stb()
+ 
+ # this need to be defined before minizip since minizip depends on zlib
+-if (WIN32)
++if (NOT ANDROID)
+     find_zlib()
+ endif()
+ find_minizip()
+diff --git a/Samples/SampleXrFramework/CMakeLists.txt b/Samples/SampleXrFramework/CMakeLists.txt
+index e92089a..c5b0ac8 100755
+--- a/Samples/SampleXrFramework/CMakeLists.txt
++++ b/Samples/SampleXrFramework/CMakeLists.txt
+@@ -135,6 +135,19 @@ elseif(WIN32)
+         samplexrframework PUBLIC XR_OS_WINDOWS=1 XR_USE_PLATFORM_WIN32=1
+                                     XR_USE_GRAPHICS_API_OPENGL=1
+     )
++else()
++    # Linux: OpenGL ES 3 over EGL, bound through XR_MNDX_egl_enable
++    target_compile_definitions(
++        samplexrframework
++        PUBLIC
++            XR_OS_LINUX=1
++            XR_USE_PLATFORM_EGL=1
++            XR_USE_GRAPHICS_API_OPENGL_ES=1
++            _USE_MATH_DEFINES
++    )
++    # The sources rely on headers the Android and MSVC toolchains include transitively
++    target_compile_options(samplexrframework PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include cstdint;SHELL:-include cstddef;SHELL:-include climits;SHELL:-include cstring;SHELL:-include algorithm;SHELL:-include unistd.h>")
++    target_link_libraries(samplexrframework PUBLIC EGL GLESv2 pthread dl)
+ endif()
+ 
+ # ================= OpenGL ES Based Framework ====================
+@@ -163,6 +176,10 @@ if(ANDROID)
+ elseif(WIN32)
+     target_compile_definitions(samplecommon_gl INTERFACE _USE_MATH_DEFINES)
+     target_link_libraries(samplecommon_gl INTERFACE samplecommon_win32gl)
++else()
++    target_compile_definitions(samplecommon_gl INTERFACE XR_OS_LINUX=1 XR_USE_PLATFORM_EGL=1 XR_USE_GRAPHICS_API_OPENGL_ES=1 _USE_MATH_DEFINES)
++    target_compile_options(samplecommon_gl INTERFACE "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include cstdint;SHELL:-include cstddef;SHELL:-include climits;SHELL:-include cstring;SHELL:-include algorithm;SHELL:-include unistd.h>")
++    target_link_libraries(samplecommon_gl INTERFACE EGL GLESv2 pthread dl)
+ endif()
+ 
+ # ================= Android NativeActivity Based Framework ====================
+diff --git a/Samples/SampleXrFramework/Src/OVR_FileSys.cpp b/Samples/SampleXrFramework/Src/OVR_FileSys.cpp
+index 813b662..22a7538 100755
+--- a/Samples/SampleXrFramework/Src/OVR_FileSys.cpp
++++ b/Samples/SampleXrFramework/Src/OVR_FileSys.cpp
+@@ -149,6 +149,20 @@ std::string exeDirAsUri() {
+     // Windows doesn't recognize '%20' as a space, so replace it with '\x20' which it does.
+     return std::regex_replace(uri, std::regex("%20"), "\x20");
+ }
++#elif defined(OVR_OS_LINUX)
++std::string exeDirAsUri() {
++    char path[4096];
++    const ssize_t length = readlink("/proc/self/exe", path, sizeof(path) - 1);
++    if (length <= 0) {
++        return std::string();
++    }
++    path[length] = '\0';
++    char* slash = strrchr(path, '/');
++    if (slash != nullptr) {
++        *slash = '\0';
++    }
++    return std::string("file://") + path;
++}
+ #endif // defined(OVR_OS_WIN32)
+ 
+ void ovrFileSys::PushBackSearchPathIfValid(
+@@ -306,7 +320,7 @@ ovrFileSysLocal::ovrFileSysLocal(xrJava const& javaContext) : Jvm(javaContext.Vm
+ 
+     ALOG("ovrFileSysLocal - apk scheme OpenHost done uri '%s'", curPackageUri);
+     Schemes.push_back(scheme);
+-#elif defined(OVR_OS_WIN32)
++#elif defined(OVR_OS_WIN32) || defined(OVR_OS_LINUX)
+     (void)Jvm;
+     (void)ActivityObject;
+ 
+diff --git a/Samples/SampleXrFramework/Src/OVR_MappedFile.cpp b/Samples/SampleXrFramework/Src/OVR_MappedFile.cpp
+index 5674f87..a620713 100755
+--- a/Samples/SampleXrFramework/Src/OVR_MappedFile.cpp
++++ b/Samples/SampleXrFramework/Src/OVR_MappedFile.cpp
+@@ -28,7 +28,7 @@ Authors     :   Chris Taylor
+ #include "OVR_MappedFile.h"
+ #include "OVR_Types.h"
+ 
+-#if defined(OVR_OS_ANDROID)
++#if defined(OVR_OS_ANDROID) || defined(OVR_OS_LINUX)
+ 
+ #if defined(OVR_OS_ANDROID)
+ // disable warnings on implicit type conversion where value may be changed by conversion for
+diff --git a/Samples/SampleXrFramework/Src/Render/Egl.c b/Samples/SampleXrFramework/Src/Render/Egl.c
+index a5de58e..3732921 100755
+--- a/Samples/SampleXrFramework/Src/Render/Egl.c
++++ b/Samples/SampleXrFramework/Src/Render/Egl.c
+@@ -36,13 +36,15 @@ Language 	:	C99
+ // Implementation
+ //==============================================================================
+ 
+-#if defined(ANDROID)
++#if defined(ANDROID) || defined(XR_OS_LINUX)
+ PFNEGLCREATESYNCKHRPROC eglCreateSyncKHR_;
+ PFNEGLDESTROYSYNCKHRPROC eglDestroySyncKHR_;
+ PFNEGLCLIENTWAITSYNCKHRPROC eglClientWaitSyncKHR_;
+ PFNEGLSIGNALSYNCKHRPROC eglSignalSyncKHR_;
+ PFNEGLGETSYNCATTRIBKHRPROC eglGetSyncAttribKHR_;
++#if defined(ANDROID)
+ PFNEGLDUPNATIVEFENCEFDANDROIDPROC eglDupNativeFenceFDANDROID_;
++#endif
+ #endif // defined(ANDROID)
+ 
+ PFNGLINVALIDATEFRAMEBUFFER_ glInvalidateFramebuffer_;
+@@ -58,7 +60,7 @@ PFNGLINVALIDATEFRAMEBUFFER_ glInvalidateFramebuffer_;
+ OpenGLExtensions_t glExtensions;
+ 
+ void* EglGetExtensionProc(const char* functionName) {
+-#if defined(ANDROID)
++#if defined(ANDROID) || defined(XR_OS_LINUX)
+     void* ptr = (void*)eglGetProcAddress(functionName);
+ #elif defined(WIN32)
+     void* ptr = (void*)wglGetProcAddress(functionName);
+@@ -83,21 +85,23 @@ void EglInitExtensions() {
+             strstr(allExtensions, "GL_EXT_texture_filter_anisotropic");
+     }
+ 
+-#if defined(ANDROID)
++#if defined(ANDROID) || defined(XR_OS_LINUX)
+     eglCreateSyncKHR_ = (PFNEGLCREATESYNCKHRPROC)EglGetExtensionProc("eglCreateSyncKHR");
+     eglDestroySyncKHR_ = (PFNEGLDESTROYSYNCKHRPROC)EglGetExtensionProc("eglDestroySyncKHR");
+     eglClientWaitSyncKHR_ =
+         (PFNEGLCLIENTWAITSYNCKHRPROC)EglGetExtensionProc("eglClientWaitSyncKHR");
+     eglSignalSyncKHR_ = (PFNEGLSIGNALSYNCKHRPROC)EglGetExtensionProc("eglSignalSyncKHR");
+     eglGetSyncAttribKHR_ = (PFNEGLGETSYNCATTRIBKHRPROC)EglGetExtensionProc("eglGetSyncAttribKHR");
++#if defined(ANDROID)
+     eglDupNativeFenceFDANDROID_ =
+         (PFNEGLDUPNATIVEFENCEFDANDROIDPROC)EglGetExtensionProc("eglDupNativeFenceFDANDROID");
++#endif
+ #endif // defined(ANDROID)
+     glInvalidateFramebuffer_ =
+         (PFNGLINVALIDATEFRAMEBUFFER_)EglGetExtensionProc("glInvalidateFramebuffer");
+ }
+ 
+-#if defined(ANDROID)
++#if defined(ANDROID) || defined(XR_OS_LINUX)
+ 
+ const char* EglErrorString(const EGLint error) {
+     switch (error) {
+@@ -216,7 +220,7 @@ bool GLCheckErrorsWithTitle(const char* logTitle) {
+     return hadError;
+ }
+ 
+-#if defined(ANDROID)
++#if defined(ANDROID) || defined(XR_OS_LINUX)
+ 
+ EGLint GL_FlushSync(int timeout) {
+     // if extension not present, return NO_SYNC
+@@ -347,7 +351,12 @@ void ovrEgl_CreateContext(ovrEgl* egl, const ovrEgl* shareEgl) {
+         // The pbuffer config also needs to be compatible with normal window rendering
+         // so it can share textures with the window context.
+         eglGetConfigAttrib(egl->Display, configs[i], EGL_SURFACE_TYPE, &value);
++#if defined(XR_OS_LINUX)
++        // There is no window on Linux: the runtime shows the eyes in its mirror window
++        if ((value & EGL_PBUFFER_BIT) != EGL_PBUFFER_BIT) {
++#else
+         if ((value & (EGL_WINDOW_BIT | EGL_PBUFFER_BIT)) != (EGL_WINDOW_BIT | EGL_PBUFFER_BIT)) {
++#endif
+             continue;
+         }
+ 
+diff --git a/Samples/SampleXrFramework/Src/Render/Egl.h b/Samples/SampleXrFramework/Src/Render/Egl.h
+index 07bf2c4..240d96f 100755
+--- a/Samples/SampleXrFramework/Src/Render/Egl.h
++++ b/Samples/SampleXrFramework/Src/Render/Egl.h
+@@ -157,7 +157,7 @@ void ovrEgl_Clear(ovrEgl* egl);
+ void ovrEgl_CreateContext(ovrEgl* egl, const ovrEgl* shareEgl);
+ void ovrEgl_DestroyContext(ovrEgl* egl);
+ 
+-#if defined(ANDROID)
++#if defined(ANDROID) || defined(XR_OS_LINUX)
+ // EGL_KHR_reusable_sync
+ extern PFNEGLCREATESYNCKHRPROC eglCreateSyncKHR_;
+ extern PFNEGLDESTROYSYNCKHRPROC eglDestroySyncKHR_;
+@@ -165,8 +165,10 @@ extern PFNEGLCLIENTWAITSYNCKHRPROC eglClientWaitSyncKHR_;
+ extern PFNEGLSIGNALSYNCKHRPROC eglSignalSyncKHR_;
+ extern PFNEGLGETSYNCATTRIBKHRPROC eglGetSyncAttribKHR_;
+ 
++#if defined(ANDROID)
+ // EGL_ANDROID_native_fence_sync
+ extern PFNEGLDUPNATIVEFENCEFDANDROIDPROC eglDupNativeFenceFDANDROID_;
++#endif
+ #endif // defined(ANDROID)
+ 
+ typedef void(GL_APIENTRYP PFNGLINVALIDATEFRAMEBUFFER_)(
+@@ -189,7 +191,7 @@ void GL_InvalidateFramebuffer(
+     const bool depthBuffer);
+ 
+ const char* GlFrameBufferStatusString(GLenum status);
+-#if defined(ANDROID)
++#if defined(ANDROID) || defined(XR_OS_LINUX)
+ const char* EglErrorString(const EGLint error);
+ #else
+ const char* EglErrorString(const GLint error);
+diff --git a/Samples/SampleXrFramework/Src/Render/Framebuffer.h b/Samples/SampleXrFramework/Src/Render/Framebuffer.h
+index 812ac9d..9d820f3 100755
+--- a/Samples/SampleXrFramework/Src/Render/Framebuffer.h
++++ b/Samples/SampleXrFramework/Src/Render/Framebuffer.h
+@@ -68,6 +68,11 @@ typedef void(GL_APIENTRY* PFNGLFRAMEBUFFERTEXTURE2DMULTISAMPLEEXTPROC)(
+ #include <jni.h>
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #elif defined(WIN32)
+ #include <unknwn.h>
+ #define XR_USE_GRAPHICS_API_OPENGL 1
+diff --git a/Samples/SampleXrFramework/Src/XrApp.cpp b/Samples/SampleXrFramework/Src/XrApp.cpp
+index fcfb8ec..ea9cc6f 100755
+--- a/Samples/SampleXrFramework/Src/XrApp.cpp
++++ b/Samples/SampleXrFramework/Src/XrApp.cpp
+@@ -41,6 +41,8 @@ __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+ // https://gpuopen.com/learn/amdpowerxpressrequesthighperformance/
+ __declspec(dllexport) DWORD AmdPowerXpressRequestHighPerformance = 0x00000001;
+ }
++#elif defined(XR_OS_LINUX)
++#include <csignal>
+ #endif //  defined(WIN32) defined(ANDROID)
+ 
+ using OVR::Bounds3f;
+@@ -396,6 +398,9 @@ std::vector<const char*> XrApp::GetExtensions() {
+     std::vector<const char*> extensions = {
+ #if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
+         XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
++#if defined(XR_USE_PLATFORM_EGL)
++        XR_MNDX_EGL_ENABLE_EXTENSION_NAME,
++#endif // defined(XR_USE_PLATFORM_EGL)
+ #elif defined(XR_USE_GRAPHICS_API_OPENGL)
+         XR_KHR_OPENGL_ENABLE_EXTENSION_NAME,
+ #endif // defined(XR_USE_GRAPHICS_API_OPENGL_ES)
+@@ -928,7 +933,14 @@ bool XrApp::InitSession() {
+     // Create the OpenXR Session.
+     const void* nextChain = GetSessionCreateInfoNextChain();
+ 
+-#if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
++#if defined(XR_USE_GRAPHICS_API_OPENGL_ES) && defined(XR_USE_PLATFORM_EGL)
++    XrGraphicsBindingEGLMNDX graphicsBindingAndroidGLES = {XR_TYPE_GRAPHICS_BINDING_EGL_MNDX};
++    graphicsBindingAndroidGLES.next = nextChain;
++    graphicsBindingAndroidGLES.getProcAddress = eglGetProcAddress;
++    graphicsBindingAndroidGLES.display = Egl.Display;
++    graphicsBindingAndroidGLES.config = Egl.Config;
++    graphicsBindingAndroidGLES.context = Egl.Context;
++#elif defined(XR_USE_GRAPHICS_API_OPENGL_ES)
+     XrGraphicsBindingOpenGLESAndroidKHR graphicsBindingAndroidGLES = {
+         XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR};
+     graphicsBindingAndroidGLES.next = nextChain;
+@@ -1500,6 +1512,26 @@ bool WindowsMainLoopContext::ShouldExitMainLoop() const {
+ bool WindowsMainLoopContext::IsExitRequested() const {
+     return xrApp_->GetShouldExit();
+ }
++#elif defined(XR_OS_LINUX)
++static volatile sig_atomic_t LinuxExitSignal = 0;
++
++static void LinuxHandleExitSignal(int) {
++    LinuxExitSignal = 1;
++}
++
++void LinuxMainLoopContext::HandleOsEvents() {
++    if (LinuxExitSignal != 0) {
++        xrApp_->SetShouldExit(true);
++    }
++}
++
++bool LinuxMainLoopContext::ShouldExitMainLoop() const {
++    return false;
++}
++
++bool LinuxMainLoopContext::IsExitRequested() const {
++    return xrApp_->GetShouldExit();
++}
+ #else
+ #error "Platform not supported!"
+ #endif // defined(ANDROID)
+@@ -1715,6 +1747,15 @@ void XrApp::Run() {
+     Context.ActivityObject = nullptr;
+ 
+     WindowsMainLoopContext loopContext(Context, this);
++#elif defined(XR_OS_LINUX)
++void XrApp::Run() {
++    Context.Vm = nullptr;
++    Context.Env = nullptr;
++    Context.ActivityObject = nullptr;
++
++    signal(SIGINT, LinuxHandleExitSignal);
++    signal(SIGTERM, LinuxHandleExitSignal);
++    LinuxMainLoopContext loopContext(Context, this);
+ #else
+ #error "Platform not supported!"
+ #endif // defined(ANDROID)
+diff --git a/Samples/SampleXrFramework/Src/XrApp.h b/Samples/SampleXrFramework/Src/XrApp.h
+index d984992..1a72cfe 100755
+--- a/Samples/SampleXrFramework/Src/XrApp.h
++++ b/Samples/SampleXrFramework/Src/XrApp.h
+@@ -97,6 +97,11 @@ typedef void(GL_APIENTRY* PFNGLFRAMEBUFFERTEXTURE2DMULTISAMPLEEXTPROC)(
+ #include <unknwn.h>
+ #define XR_USE_GRAPHICS_API_OPENGL 1
+ #define XR_USE_PLATFORM_WIN32 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #endif // defined(ANDROID)
+ 
+ #include <openxr/openxr.h>
+@@ -279,6 +284,17 @@ class WindowsMainLoopContext : public MainLoopContext {
+     bool ShouldExitMainLoop() const override;
+     bool IsExitRequested() const override;
+ };
++#elif defined(XR_OS_LINUX)
++class LinuxMainLoopContext : public MainLoopContext {
++   public:
++    LinuxMainLoopContext(xrJava& javaContext, XrApp* xrApp)
++        : MainLoopContext(javaContext, xrApp) {}
++    ~LinuxMainLoopContext() override {}
++
++    void HandleOsEvents() override;
++    bool ShouldExitMainLoop() const override;
++    bool IsExitRequested() const override;
++};
+ #endif
+ 
+ class XrApp {
+diff --git a/Samples/XrSamples/XrBodyFaceEyeSocial/CMakeLists.txt b/Samples/XrSamples/XrBodyFaceEyeSocial/CMakeLists.txt
+index 88ac85d..2bef885 100755
+--- a/Samples/XrSamples/XrBodyFaceEyeSocial/CMakeLists.txt
++++ b/Samples/XrSamples/XrBodyFaceEyeSocial/CMakeLists.txt
+@@ -36,7 +36,7 @@ if(ANDROID)
+         ktx
+     )
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_definitions(-D_USE_MATH_DEFINES)
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+diff --git a/Samples/XrSamples/XrColocationDiscovery/CMakeLists.txt b/Samples/XrSamples/XrColocationDiscovery/CMakeLists.txt
+index 2b7302b..6654375 100755
+--- a/Samples/XrSamples/XrColocationDiscovery/CMakeLists.txt
++++ b/Samples/XrSamples/XrColocationDiscovery/CMakeLists.txt
+@@ -36,7 +36,7 @@ if(ANDROID)
+         ktx
+     )
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_definitions(-D_USE_MATH_DEFINES)
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+diff --git a/Samples/XrSamples/XrColorSpaceFB/CMakeLists.txt b/Samples/XrSamples/XrColorSpaceFB/CMakeLists.txt
+index 7c81c9a..c725034 100755
+--- a/Samples/XrSamples/XrColorSpaceFB/CMakeLists.txt
++++ b/Samples/XrSamples/XrColorSpaceFB/CMakeLists.txt
+@@ -36,7 +36,7 @@ if(ANDROID)
+         ktx
+     )
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_definitions(-D_USE_MATH_DEFINES)
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+diff --git a/Samples/XrSamples/XrControllers/CMakeLists.txt b/Samples/XrSamples/XrControllers/CMakeLists.txt
+index 2accfb7..5a92199 100755
+--- a/Samples/XrSamples/XrControllers/CMakeLists.txt
++++ b/Samples/XrSamples/XrControllers/CMakeLists.txt
+@@ -36,7 +36,7 @@ if(ANDROID)
+         ktx
+     )
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_definitions(-D_USE_MATH_DEFINES)
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+diff --git a/Samples/XrSamples/XrDynamicObjects/CMakeLists.txt b/Samples/XrSamples/XrDynamicObjects/CMakeLists.txt
+index f0a7318..d1ad1bf 100755
+--- a/Samples/XrSamples/XrDynamicObjects/CMakeLists.txt
++++ b/Samples/XrSamples/XrDynamicObjects/CMakeLists.txt
+@@ -36,7 +36,7 @@ if(ANDROID)
+         ktx
+     )
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_definitions(-D_USE_MATH_DEFINES)
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+diff --git a/Samples/XrSamples/XrDynamicObjects/Src/main.cpp b/Samples/XrSamples/XrDynamicObjects/Src/main.cpp
+index e62dd50..33da594 100755
+--- a/Samples/XrSamples/XrDynamicObjects/Src/main.cpp
++++ b/Samples/XrSamples/XrDynamicObjects/Src/main.cpp
+@@ -357,6 +357,7 @@ class XrDynamicObjectsApp : public OVRFW::XrApp {
+             XrCompositionLayerPassthroughFB passthroughLayer{
+                 XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB};
+             passthroughLayer.next = &alphaBlend;
++            passthroughLayer.flags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+             passthroughLayer.layerHandle = PassthroughLayer;
+             layers[layerCount++].Passthrough = passthroughLayer;
+         }
+diff --git a/Samples/XrSamples/XrHandDataSource/CMakeLists.txt b/Samples/XrSamples/XrHandDataSource/CMakeLists.txt
+index 2ec6097..ec0e293 100755
+--- a/Samples/XrSamples/XrHandDataSource/CMakeLists.txt
++++ b/Samples/XrSamples/XrHandDataSource/CMakeLists.txt
+@@ -36,7 +36,7 @@ if(ANDROID)
+         ktx
+     )
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_definitions(-D_USE_MATH_DEFINES)
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+diff --git a/Samples/XrSamples/XrHandDataSource/Src/xr_helper.h b/Samples/XrSamples/XrHandDataSource/Src/xr_helper.h
+index 118a4f9..bbcfcdd 100755
+--- a/Samples/XrSamples/XrHandDataSource/Src/xr_helper.h
++++ b/Samples/XrSamples/XrHandDataSource/Src/xr_helper.h
+@@ -29,6 +29,11 @@ Copyright   :   Copyright (c) Facebook Technologies, LLC and its affiliates. All
+ #if defined(ANDROID)
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #else
+ #include "unknwn.h"
+ #define XR_USE_GRAPHICS_API_OPENGL 1
+diff --git a/Samples/XrSamples/XrHandTrackingWideMotionMode/CMakeLists.txt b/Samples/XrSamples/XrHandTrackingWideMotionMode/CMakeLists.txt
+index 3f75a79..a8c42bd 100755
+--- a/Samples/XrSamples/XrHandTrackingWideMotionMode/CMakeLists.txt
++++ b/Samples/XrSamples/XrHandTrackingWideMotionMode/CMakeLists.txt
+@@ -36,7 +36,7 @@ if(ANDROID)
+         ktx
+     )
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_definitions(-D_USE_MATH_DEFINES)
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+diff --git a/Samples/XrSamples/XrHandTrackingWideMotionMode/Src/xr_helper.h b/Samples/XrSamples/XrHandTrackingWideMotionMode/Src/xr_helper.h
+index 118a4f9..bbcfcdd 100755
+--- a/Samples/XrSamples/XrHandTrackingWideMotionMode/Src/xr_helper.h
++++ b/Samples/XrSamples/XrHandTrackingWideMotionMode/Src/xr_helper.h
+@@ -29,6 +29,11 @@ Copyright   :   Copyright (c) Facebook Technologies, LLC and its affiliates. All
+ #if defined(ANDROID)
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #else
+ #include "unknwn.h"
+ #define XR_USE_GRAPHICS_API_OPENGL 1
+diff --git a/Samples/XrSamples/XrHandsAndControllers/CMakeLists.txt b/Samples/XrSamples/XrHandsAndControllers/CMakeLists.txt
+index 8624bc3..d3113bc 100755
+--- a/Samples/XrSamples/XrHandsAndControllers/CMakeLists.txt
++++ b/Samples/XrSamples/XrHandsAndControllers/CMakeLists.txt
+@@ -36,7 +36,7 @@ if(ANDROID)
+         ktx
+     )
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_definitions(-D_USE_MATH_DEFINES)
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+diff --git a/Samples/XrSamples/XrHandsFB/CMakeLists.txt b/Samples/XrSamples/XrHandsFB/CMakeLists.txt
+index 0f1a3af..e2191ff 100755
+--- a/Samples/XrSamples/XrHandsFB/CMakeLists.txt
++++ b/Samples/XrSamples/XrHandsFB/CMakeLists.txt
+@@ -36,7 +36,7 @@ if(ANDROID)
+         ktx
+     )
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_definitions(-D_USE_MATH_DEFINES)
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+diff --git a/Samples/XrSamples/XrInput/CMakeLists.txt b/Samples/XrSamples/XrInput/CMakeLists.txt
+index 9f903b4..5fdb764 100755
+--- a/Samples/XrSamples/XrInput/CMakeLists.txt
++++ b/Samples/XrSamples/XrInput/CMakeLists.txt
+@@ -36,7 +36,7 @@ if(ANDROID)
+         ktx
+     )
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_definitions(-D_USE_MATH_DEFINES)
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+diff --git a/Samples/XrSamples/XrMicrogestures/CMakeLists.txt b/Samples/XrSamples/XrMicrogestures/CMakeLists.txt
+index ead4e1a..ceb09d1 100755
+--- a/Samples/XrSamples/XrMicrogestures/CMakeLists.txt
++++ b/Samples/XrSamples/XrMicrogestures/CMakeLists.txt
+@@ -36,7 +36,7 @@ if(ANDROID)
+         ktx
+     )
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_definitions(-D_USE_MATH_DEFINES)
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+diff --git a/Samples/XrSamples/XrOverlayKeyboard/CMakeLists.txt b/Samples/XrSamples/XrOverlayKeyboard/CMakeLists.txt
+index 8bd6f64..f8b4364 100755
+--- a/Samples/XrSamples/XrOverlayKeyboard/CMakeLists.txt
++++ b/Samples/XrSamples/XrOverlayKeyboard/CMakeLists.txt
+@@ -35,7 +35,7 @@ if(ANDROID)
+         ktx
+     )
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_definitions(-D_USE_MATH_DEFINES)
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+diff --git a/Samples/XrSamples/XrOverlayKeyboard/Src/XrHelper.h b/Samples/XrSamples/XrOverlayKeyboard/Src/XrHelper.h
+index f0fb584..a1e200f 100755
+--- a/Samples/XrSamples/XrOverlayKeyboard/Src/XrHelper.h
++++ b/Samples/XrSamples/XrOverlayKeyboard/Src/XrHelper.h
+@@ -31,6 +31,11 @@ Copyright   :   Copyright (c) Facebook Technologies, LLC and its affiliates. All
+ #define XR_USE_PLATFORM_ANDROID 1
+ #include <jni.h>
+ #include <EGL/egl.h>
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #else
+ #include "unknwn.h"
+ #define XR_USE_GRAPHICS_API_OPENGL 1
+diff --git a/Samples/XrSamples/XrPassthrough/CMakeLists.txt b/Samples/XrSamples/XrPassthrough/CMakeLists.txt
+index d59828a..b50bb52 100755
+--- a/Samples/XrSamples/XrPassthrough/CMakeLists.txt
++++ b/Samples/XrSamples/XrPassthrough/CMakeLists.txt
+@@ -29,7 +29,7 @@ if(ANDROID)
+     add_library(${PROJECT_NAME} MODULE ${SRC_FILES})
+     target_link_libraries(${PROJECT_NAME} PRIVATE samplecommon_gl)
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+         COMMAND "${CMAKE_COMMAND}" -E copy_directory
+diff --git a/Samples/XrSamples/XrPassthrough/Src/XrPassthrough.cpp b/Samples/XrSamples/XrPassthrough/Src/XrPassthrough.cpp
+index 9b7cdeb..b5d42c4 100755
+--- a/Samples/XrSamples/XrPassthrough/Src/XrPassthrough.cpp
++++ b/Samples/XrSamples/XrPassthrough/Src/XrPassthrough.cpp
+@@ -230,7 +230,12 @@ void Egl::CreateContext(const Egl* shareEgl) {
+         // The pbuffer config also needs to be compatible with normal window rendering
+         // so it can share textures with the window context.
+         eglGetConfigAttrib(Display, configs[i], EGL_SURFACE_TYPE, &value);
++#if defined(XR_OS_LINUX)
++        // There is no window on Linux: the runtime shows the eyes in its mirror window
++        if ((value & EGL_PBUFFER_BIT) != EGL_PBUFFER_BIT) {
++#else
+         if ((value & (EGL_WINDOW_BIT | EGL_PBUFFER_BIT)) != (EGL_WINDOW_BIT | EGL_PBUFFER_BIT)) {
++#endif
+             continue;
+         }
+ 
+@@ -675,6 +680,9 @@ int main() {
+     const char* const requiredExtensionNames[] = {
+ #if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
+         XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
++#if defined(XR_USE_PLATFORM_EGL)
++        XR_MNDX_EGL_ENABLE_EXTENSION_NAME,
++#endif
+ #elif defined(XR_USE_GRAPHICS_API_OPENGL)
+         XR_KHR_OPENGL_ENABLE_EXTENSION_NAME,
+ #endif
+@@ -856,7 +864,13 @@ int main() {
+     // FB_passthrough sample end
+ 
+     // Create the OpenXR Session.
+-#if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
++#if defined(XR_USE_GRAPHICS_API_OPENGL_ES) && defined(XR_USE_PLATFORM_EGL)
++    XrGraphicsBindingEGLMNDX graphicsBinding = {XR_TYPE_GRAPHICS_BINDING_EGL_MNDX};
++    graphicsBinding.getProcAddress = eglGetProcAddress;
++    graphicsBinding.display = app.egl.Display;
++    graphicsBinding.config = app.egl.Config;
++    graphicsBinding.context = app.egl.Context;
++#elif defined(XR_USE_GRAPHICS_API_OPENGL_ES)
+     XrGraphicsBindingOpenGLESAndroidKHR graphicsBinding = {
+         XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR};
+     graphicsBinding.display = app.egl.Display;
+@@ -1121,7 +1135,10 @@ int main() {
+     int framesCyclePaused = 0;
+     bool cyclePaused = false;
+ 
+-    constexpr int framesPerMode = 400;
++    // Tests on a software rasterizer cycle the modes faster
++    const char* framesPerModeEnv = getenv("XRPASSTHROUGH_FRAMES_PER_MODE");
++    const int framesPerModeSet = framesPerModeEnv != nullptr ? atoi(framesPerModeEnv) : 0;
++    const int framesPerMode = framesPerModeSet > 1 ? framesPerModeSet : 400;
+ 
+     enum Mode {
+         Mode_Passthrough_Basic = 0,
+diff --git a/Samples/XrSamples/XrPassthrough/Src/XrPassthrough.h b/Samples/XrSamples/XrPassthrough/Src/XrPassthrough.h
+index 44fd91e..589c330 100755
+--- a/Samples/XrSamples/XrPassthrough/Src/XrPassthrough.h
++++ b/Samples/XrSamples/XrPassthrough/Src/XrPassthrough.h
+@@ -25,6 +25,11 @@
+ #include <GLES3/gl3ext.h>
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #else
+ #include "unknwn.h"
+ #include "Render/GlWrapperWin32.h"
+diff --git a/Samples/XrSamples/XrPassthrough/Src/XrPassthroughGl.cpp b/Samples/XrSamples/XrPassthrough/Src/XrPassthroughGl.cpp
+index 094f005..56a6f21 100755
+--- a/Samples/XrSamples/XrPassthrough/Src/XrPassthroughGl.cpp
++++ b/Samples/XrSamples/XrPassthrough/Src/XrPassthroughGl.cpp
+@@ -707,6 +707,8 @@ void Framebuffer::Clear() {
+ static void* GlGetExtensionProc(const char* functionName) {
+ #if defined(ANDROID)
+     return (void*)eglGetProcAddress(functionName);
++#elif defined(XR_OS_LINUX)
++    return (void*)eglGetProcAddress(functionName);
+ #elif defined(WIN32)
+     return (void*)wglGetProcAddress(functionName);
+ #else
+diff --git a/Samples/XrSamples/XrPassthrough/Src/XrPassthroughGl.h b/Samples/XrSamples/XrPassthrough/Src/XrPassthroughGl.h
+index f08daf2..6da233a 100755
+--- a/Samples/XrSamples/XrPassthrough/Src/XrPassthroughGl.h
++++ b/Samples/XrSamples/XrPassthrough/Src/XrPassthroughGl.h
+@@ -20,6 +20,9 @@
+ 
+ #if defined(ANDROID)
+ #include <GLES3/gl3.h>
++#elif defined(XR_OS_LINUX)
++#include <GLES3/gl3.h>
++#include <EGL/egl.h>
+ #else
+ #include "Render/GlWrapperWin32.h"
+ #endif // defined(ANDROID)
+diff --git a/Samples/XrSamples/XrPassthrough/Src/XrPassthroughInput.h b/Samples/XrSamples/XrPassthrough/Src/XrPassthroughInput.h
+index 85b5d8e..de6e7cc 100755
+--- a/Samples/XrSamples/XrPassthrough/Src/XrPassthroughInput.h
++++ b/Samples/XrSamples/XrPassthrough/Src/XrPassthroughInput.h
+@@ -26,6 +26,11 @@
+ 
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #else
+ #include "unknwn.h"
+ #include "Render/GlWrapperWin32.h"
+diff --git a/Samples/XrSamples/XrPassthroughOcclusion/CMakeLists.txt b/Samples/XrSamples/XrPassthroughOcclusion/CMakeLists.txt
+index ab9d6a5..0626a81 100755
+--- a/Samples/XrSamples/XrPassthroughOcclusion/CMakeLists.txt
++++ b/Samples/XrSamples/XrPassthroughOcclusion/CMakeLists.txt
+@@ -29,7 +29,7 @@ if(ANDROID)
+     add_library(${PROJECT_NAME} MODULE ${SRC_FILES})
+     target_link_libraries(${PROJECT_NAME} PRIVATE samplecommon_gl)
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+         COMMAND "${CMAKE_COMMAND}" -E copy_directory
+diff --git a/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusion.cpp b/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusion.cpp
+index 57ea53c..162e4b2 100755
+--- a/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusion.cpp
++++ b/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusion.cpp
+@@ -342,7 +342,12 @@ void Egl::CreateContext(const Egl* shareEgl) {
+         // The pbuffer config also needs to be compatible with normal window rendering
+         // so it can share textures with the window context.
+         eglGetConfigAttrib(Display, configs[i], EGL_SURFACE_TYPE, &value);
++#if defined(XR_OS_LINUX)
++        // There is no window on Linux: the runtime shows the eyes in its mirror window
++        if ((value & EGL_PBUFFER_BIT) != EGL_PBUFFER_BIT) {
++#else
+         if ((value & (EGL_WINDOW_BIT | EGL_PBUFFER_BIT)) != (EGL_WINDOW_BIT | EGL_PBUFFER_BIT)) {
++#endif
+             continue;
+         }
+ 
+@@ -733,6 +738,9 @@ int main() {
+     const char* const requiredExtensionNames[] = {
+ #if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
+         XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
++#if defined(XR_USE_PLATFORM_EGL)
++        XR_MNDX_EGL_ENABLE_EXTENSION_NAME,
++#endif
+ #elif defined(XR_USE_GRAPHICS_API_OPENGL)
+         XR_KHR_OPENGL_ENABLE_EXTENSION_NAME,
+ #endif
+@@ -922,7 +930,13 @@ int main() {
+     INIT_PFN(xrSetEnvironmentDepthHandRemovalMETA);
+ 
+     // Create the OpenXR Session.
+-#if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
++#if defined(XR_USE_GRAPHICS_API_OPENGL_ES) && defined(XR_USE_PLATFORM_EGL)
++    XrGraphicsBindingEGLMNDX graphicsBinding = {XR_TYPE_GRAPHICS_BINDING_EGL_MNDX};
++    graphicsBinding.getProcAddress = eglGetProcAddress;
++    graphicsBinding.display = app.egl.Display;
++    graphicsBinding.config = app.egl.Config;
++    graphicsBinding.context = app.egl.Context;
++#elif defined(XR_USE_GRAPHICS_API_OPENGL_ES)
+     XrGraphicsBindingOpenGLESAndroidKHR graphicsBinding = {
+         XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR};
+     graphicsBinding.display = app.egl.Display;
+@@ -1430,6 +1444,8 @@ int main() {
+     }
+ 
+     OXR(xrStopEnvironmentDepthProviderMETA(app.EnvironmentDepthProvider));
++    // The swapchain is a child of the provider and dies with it (spec 2.3.3)
++    OXR(xrDestroyEnvironmentDepthSwapchainMETA(app.EnvironmentDepthSwapchain));
+     OXR(xrDestroyEnvironmentDepthProviderMETA(app.EnvironmentDepthProvider));
+ 
+     OXR(xrPassthroughPauseFB(passthrough));
+@@ -1440,7 +1456,6 @@ int main() {
+     AppInput_shutdown();
+ 
+     OXR(xrDestroySwapchain(app.ColorSwapchain));
+-    OXR(xrDestroyEnvironmentDepthSwapchainMETA(app.EnvironmentDepthSwapchain));
+     OXR(xrDestroySpace(app.HeadSpace));
+     OXR(xrDestroySpace(app.LocalSpace));
+     OXR(xrDestroySession(app.Session));
+diff --git a/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusion.h b/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusion.h
+index 43f7f43..75e6f3c 100755
+--- a/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusion.h
++++ b/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusion.h
+@@ -25,6 +25,11 @@
+ #include <GLES3/gl3ext.h>
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #else
+ #include "unknwn.h"
+ #include "Render/GlWrapperWin32.h"
+diff --git a/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusionGl.cpp b/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusionGl.cpp
+index 1bb3d04..913626f 100755
+--- a/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusionGl.cpp
++++ b/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusionGl.cpp
+@@ -475,7 +475,12 @@ static Uniform ProgramUniforms[] = {
+     {Uniform::Index::DEPTH_PROJECTION_MATRICES, Uniform::Type::UNIFORM, "DepthProjectionMatrix"},
+ };
+ 
++#if defined(XR_OS_LINUX)
++// layout(binding) on samplers needs ES 3.1 without GL_ARB_shading_language_420pack
++static const char* programVersion = "#version 310 es\n";
++#else
+ static const char* programVersion = "#version 300 es\n";
++#endif
+ 
+ bool Program::Create(const char* vertexSource, const char* fragmentSource) {
+     GLint r;
+@@ -681,6 +686,8 @@ Framebuffer
+ static void* GlGetExtensionProc(const char* functionName) {
+ #if defined(ANDROID)
+     return (void*)eglGetProcAddress(functionName);
++#elif defined(XR_OS_LINUX)
++    return (void*)eglGetProcAddress(functionName);
+ #elif defined(WIN32)
+     return (void*)wglGetProcAddress(functionName);
+ #else
+diff --git a/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusionGl.h b/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusionGl.h
+index 5352e3c..554cc41 100755
+--- a/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusionGl.h
++++ b/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusionGl.h
+@@ -24,6 +24,9 @@
+ 
+ #if defined(ANDROID)
+ #include <GLES3/gl3.h>
++#elif defined(XR_OS_LINUX)
++#include <GLES3/gl3.h>
++#include <EGL/egl.h>
+ #else
+ #include "Render/GlWrapperWin32.h"
+ #endif // defined(ANDROID)
+diff --git a/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusionInput.h b/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusionInput.h
+index 85b5d8e..de6e7cc 100755
+--- a/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusionInput.h
++++ b/Samples/XrSamples/XrPassthroughOcclusion/Src/XrPassthroughOcclusionInput.h
+@@ -26,6 +26,11 @@
+ 
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #else
+ #include "unknwn.h"
+ #include "Render/GlWrapperWin32.h"
+diff --git a/Samples/XrSamples/XrSceneModel/CMakeLists.txt b/Samples/XrSamples/XrSceneModel/CMakeLists.txt
+index 6beffab..7477507 100755
+--- a/Samples/XrSamples/XrSceneModel/CMakeLists.txt
++++ b/Samples/XrSamples/XrSceneModel/CMakeLists.txt
+@@ -29,7 +29,7 @@ if(ANDROID)
+     add_library(${PROJECT_NAME} MODULE ${SRC_FILES})
+     target_link_libraries(${PROJECT_NAME} PRIVATE samplecommon_gl)
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+         COMMAND "${CMAKE_COMMAND}" -E copy_directory
+diff --git a/Samples/XrSamples/XrSceneModel/Src/SceneModelGl.cpp b/Samples/XrSamples/XrSceneModel/Src/SceneModelGl.cpp
+index d28e0f8..b4101f7 100755
+--- a/Samples/XrSamples/XrSceneModel/Src/SceneModelGl.cpp
++++ b/Samples/XrSamples/XrSceneModel/Src/SceneModelGl.cpp
+@@ -770,6 +770,8 @@ void ovrFramebuffer::Clear() {
+ static void* GlGetExtensionProc(const char* functionName) {
+ #if defined(ANDROID)
+     return (void*)eglGetProcAddress(functionName);
++#elif defined(XR_OS_LINUX)
++    return (void*)eglGetProcAddress(functionName);
+ #elif defined(WIN32)
+     return (void*)wglGetProcAddress(functionName);
+ #else
+diff --git a/Samples/XrSamples/XrSceneModel/Src/SceneModelGl.h b/Samples/XrSamples/XrSceneModel/Src/SceneModelGl.h
+index e583936..a6893a4 100755
+--- a/Samples/XrSamples/XrSceneModel/Src/SceneModelGl.h
++++ b/Samples/XrSamples/XrSceneModel/Src/SceneModelGl.h
+@@ -28,6 +28,11 @@
+ 
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #elif defined(WIN32)
+ #include "Render/GlWrapperWin32.h"
+ 
+diff --git a/Samples/XrSamples/XrSceneModel/Src/SceneModelXr.cpp b/Samples/XrSamples/XrSceneModel/Src/SceneModelXr.cpp
+index 42a5109..4ef4264 100755
+--- a/Samples/XrSamples/XrSceneModel/Src/SceneModelXr.cpp
++++ b/Samples/XrSamples/XrSceneModel/Src/SceneModelXr.cpp
+@@ -413,7 +413,12 @@ void ovrEgl::CreateContext(const ovrEgl* shareEgl) {
+         // The pbuffer config also needs to be compatible with normal window rendering
+         // so it can share textures with the window context.
+         eglGetConfigAttrib(Display, configs[i], EGL_SURFACE_TYPE, &value);
++#if defined(XR_OS_LINUX)
++        // There is no window on Linux: the runtime shows the eyes in its mirror window
++        if ((value & EGL_PBUFFER_BIT) != EGL_PBUFFER_BIT) {
++#else
+         if ((value & (EGL_WINDOW_BIT | EGL_PBUFFER_BIT)) != (EGL_WINDOW_BIT | EGL_PBUFFER_BIT)) {
++#endif
+             continue;
+         }
+ 
+@@ -1643,6 +1648,9 @@ int main() {
+     const char* const requiredExtensionNames[] = {
+ #if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
+         XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
++#if defined(XR_USE_PLATFORM_EGL)
++        XR_MNDX_EGL_ENABLE_EXTENSION_NAME,
++#endif
+ #elif defined(XR_USE_GRAPHICS_API_OPENGL)
+         XR_KHR_OPENGL_ENABLE_EXTENSION_NAME,
+ #endif
+@@ -1835,7 +1843,13 @@ int main() {
+     app.SystemId = systemId;
+ 
+     // Create the OpenXR Session.
+-#if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
++#if defined(XR_USE_GRAPHICS_API_OPENGL_ES) && defined(XR_USE_PLATFORM_EGL)
++    XrGraphicsBindingEGLMNDX graphicsBinding = {XR_TYPE_GRAPHICS_BINDING_EGL_MNDX};
++    graphicsBinding.getProcAddress = eglGetProcAddress;
++    graphicsBinding.display = app.Egl.Display;
++    graphicsBinding.config = app.Egl.Config;
++    graphicsBinding.context = app.Egl.Context;
++#elif defined(XR_USE_GRAPHICS_API_OPENGL_ES)
+     XrGraphicsBindingOpenGLESAndroidKHR graphicsBinding = {};
+     graphicsBinding.type = XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR;
+     graphicsBinding.next = NULL;
+diff --git a/Samples/XrSamples/XrSceneModel/Src/SceneModelXr.h b/Samples/XrSamples/XrSceneModel/Src/SceneModelXr.h
+index aea090c..ca85223 100755
+--- a/Samples/XrSamples/XrSceneModel/Src/SceneModelXr.h
++++ b/Samples/XrSamples/XrSceneModel/Src/SceneModelXr.h
+@@ -26,6 +26,11 @@
+ 
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #elif defined(WIN32)
+ #include "Render/GlWrapperWin32.h"
+ 
+diff --git a/Samples/XrSamples/XrSceneModel/Src/SimpleXrInput.h b/Samples/XrSamples/XrSceneModel/Src/SimpleXrInput.h
+index 449b9dd..b8224c0 100755
+--- a/Samples/XrSamples/XrSceneModel/Src/SimpleXrInput.h
++++ b/Samples/XrSamples/XrSceneModel/Src/SimpleXrInput.h
+@@ -28,6 +28,11 @@
+ 
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #elif defined(WIN32)
+ #include "Render/GlWrapperWin32.h"
+ 
+diff --git a/Samples/XrSamples/XrSceneSharing/CMakeLists.txt b/Samples/XrSamples/XrSceneSharing/CMakeLists.txt
+index a04c1de..a08d5e2 100755
+--- a/Samples/XrSamples/XrSceneSharing/CMakeLists.txt
++++ b/Samples/XrSamples/XrSceneSharing/CMakeLists.txt
+@@ -29,7 +29,7 @@ if(ANDROID)
+     add_library(${PROJECT_NAME} MODULE ${SRC_FILES})
+     target_link_libraries(${PROJECT_NAME} PRIVATE samplecommon_gl)
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+         COMMAND "${CMAKE_COMMAND}" -E copy_directory
+diff --git a/Samples/XrSamples/XrSceneSharing/Src/SceneSharingGl.cpp b/Samples/XrSamples/XrSceneSharing/Src/SceneSharingGl.cpp
+index c1a3c80..dae2e0e 100755
+--- a/Samples/XrSamples/XrSceneSharing/Src/SceneSharingGl.cpp
++++ b/Samples/XrSamples/XrSceneSharing/Src/SceneSharingGl.cpp
+@@ -697,6 +697,8 @@ void ovrFramebuffer::Clear() {
+ static void* GlGetExtensionProc(const char* functionName) {
+ #if defined(ANDROID)
+     return (void*)eglGetProcAddress(functionName);
++#elif defined(XR_OS_LINUX)
++    return (void*)eglGetProcAddress(functionName);
+ #elif defined(WIN32)
+     return (void*)wglGetProcAddress(functionName);
+ #else
+diff --git a/Samples/XrSamples/XrSceneSharing/Src/SceneSharingGl.h b/Samples/XrSamples/XrSceneSharing/Src/SceneSharingGl.h
+index 5b64f73..ab028dd 100755
+--- a/Samples/XrSamples/XrSceneSharing/Src/SceneSharingGl.h
++++ b/Samples/XrSamples/XrSceneSharing/Src/SceneSharingGl.h
+@@ -28,6 +28,11 @@
+ 
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #elif defined(WIN32)
+ #include "Render/GlWrapperWin32.h"
+ 
+diff --git a/Samples/XrSamples/XrSceneSharing/Src/SceneSharingXr.cpp b/Samples/XrSamples/XrSceneSharing/Src/SceneSharingXr.cpp
+index 19cffb0..e70b370 100755
+--- a/Samples/XrSamples/XrSceneSharing/Src/SceneSharingXr.cpp
++++ b/Samples/XrSamples/XrSceneSharing/Src/SceneSharingXr.cpp
+@@ -315,7 +315,12 @@ void ovrEgl::CreateContext(const ovrEgl* shareEgl) {
+         // The pbuffer config also needs to be compatible with normal window rendering
+         // so it can share textures with the window context.
+         eglGetConfigAttrib(Display, configs[i], EGL_SURFACE_TYPE, &value);
++#if defined(XR_OS_LINUX)
++        // There is no window on Linux: the runtime shows the eyes in its mirror window
++        if ((value & EGL_PBUFFER_BIT) != EGL_PBUFFER_BIT) {
++#else
+         if ((value & (EGL_WINDOW_BIT | EGL_PBUFFER_BIT)) != (EGL_WINDOW_BIT | EGL_PBUFFER_BIT)) {
++#endif
+             continue;
+         }
+ 
+@@ -1542,6 +1547,9 @@ int main() {
+     const char* const requiredExtensionNames[] = {
+ #if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
+         XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
++#if defined(XR_USE_PLATFORM_EGL)
++        XR_MNDX_EGL_ENABLE_EXTENSION_NAME,
++#endif
+ #elif defined(XR_USE_GRAPHICS_API_OPENGL)
+         XR_KHR_OPENGL_ENABLE_EXTENSION_NAME,
+ #endif
+@@ -1713,7 +1721,13 @@ int main() {
+     app.SystemId = systemId;
+ 
+     // Create the OpenXR Session.
+-#if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
++#if defined(XR_USE_GRAPHICS_API_OPENGL_ES) && defined(XR_USE_PLATFORM_EGL)
++    XrGraphicsBindingEGLMNDX graphicsBinding = {XR_TYPE_GRAPHICS_BINDING_EGL_MNDX};
++    graphicsBinding.getProcAddress = eglGetProcAddress;
++    graphicsBinding.display = app.Egl.Display;
++    graphicsBinding.config = app.Egl.Config;
++    graphicsBinding.context = app.Egl.Context;
++#elif defined(XR_USE_GRAPHICS_API_OPENGL_ES)
+     XrGraphicsBindingOpenGLESAndroidKHR graphicsBinding = {};
+     graphicsBinding.type = XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR;
+     graphicsBinding.next = NULL;
+diff --git a/Samples/XrSamples/XrSceneSharing/Src/SceneSharingXr.h b/Samples/XrSamples/XrSceneSharing/Src/SceneSharingXr.h
+index 24828b6..c75c1ce 100755
+--- a/Samples/XrSamples/XrSceneSharing/Src/SceneSharingXr.h
++++ b/Samples/XrSamples/XrSceneSharing/Src/SceneSharingXr.h
+@@ -27,6 +27,11 @@
+ 
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #elif defined(WIN32)
+ #include "Render/GlWrapperWin32.h"
+ 
+diff --git a/Samples/XrSamples/XrSceneSharing/Src/SimpleXrInput.h b/Samples/XrSamples/XrSceneSharing/Src/SimpleXrInput.h
+index 3b2325a..a040778 100755
+--- a/Samples/XrSamples/XrSceneSharing/Src/SimpleXrInput.h
++++ b/Samples/XrSamples/XrSceneSharing/Src/SimpleXrInput.h
+@@ -30,6 +30,11 @@
+ 
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #elif defined(WIN32)
+ #include "Render/GlWrapperWin32.h"
+ 
+diff --git a/Samples/XrSamples/XrSpatialAnchor/CMakeLists.txt b/Samples/XrSamples/XrSpatialAnchor/CMakeLists.txt
+index 45b39f1..86080f4 100755
+--- a/Samples/XrSamples/XrSpatialAnchor/CMakeLists.txt
++++ b/Samples/XrSamples/XrSpatialAnchor/CMakeLists.txt
+@@ -29,7 +29,7 @@ if(ANDROID)
+     add_library(${PROJECT_NAME} MODULE ${SRC_FILES})
+     target_link_libraries(${PROJECT_NAME} PRIVATE samplecommon_gl)
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+         COMMAND "${CMAKE_COMMAND}" -E copy_directory
+diff --git a/Samples/XrSamples/XrSpatialAnchor/Src/SimpleXrInput.h b/Samples/XrSamples/XrSpatialAnchor/Src/SimpleXrInput.h
+index 16e7dee..b949e02 100755
+--- a/Samples/XrSamples/XrSpatialAnchor/Src/SimpleXrInput.h
++++ b/Samples/XrSamples/XrSpatialAnchor/Src/SimpleXrInput.h
+@@ -28,6 +28,11 @@
+ 
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #elif defined(WIN32)
+ #include "Render/GlWrapperWin32.h"
+ 
+diff --git a/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorGl.cpp b/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorGl.cpp
+index 5c19ed0..6f8aff5 100755
+--- a/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorGl.cpp
++++ b/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorGl.cpp
+@@ -684,6 +684,8 @@ void ovrFramebuffer::Clear() {
+ static void* GlGetExtensionProc(const char* functionName) {
+ #if defined(ANDROID)
+     return (void*)eglGetProcAddress(functionName);
++#elif defined(XR_OS_LINUX)
++    return (void*)eglGetProcAddress(functionName);
+ #elif defined(WIN32)
+     return (void*)wglGetProcAddress(functionName);
+ #else
+diff --git a/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorGl.h b/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorGl.h
+index 51ad2b8..ab4f733 100755
+--- a/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorGl.h
++++ b/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorGl.h
+@@ -25,6 +25,11 @@
+ 
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #elif defined(WIN32)
+ #include "Render/GlWrapperWin32.h"
+ 
+diff --git a/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorXr.cpp b/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorXr.cpp
+index 5aa4520..94eaa48 100755
+--- a/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorXr.cpp
++++ b/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorXr.cpp
+@@ -338,7 +338,12 @@ void ovrEgl::CreateContext(const ovrEgl* shareEgl) {
+         // The pbuffer config also needs to be compatible with normal window rendering
+         // so it can share textures with the window context.
+         eglGetConfigAttrib(Display, configs[i], EGL_SURFACE_TYPE, &value);
++#if defined(XR_OS_LINUX)
++        // There is no window on Linux: the runtime shows the eyes in its mirror window
++        if ((value & EGL_PBUFFER_BIT) != EGL_PBUFFER_BIT) {
++#else
+         if ((value & (EGL_WINDOW_BIT | EGL_PBUFFER_BIT)) != (EGL_WINDOW_BIT | EGL_PBUFFER_BIT)) {
++#endif
+             continue;
+         }
+ 
+@@ -1422,6 +1427,9 @@ int main() {
+     std::vector<const char*> requiredExtensionNames{
+ #if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
+         XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
++#if defined(XR_USE_PLATFORM_EGL)
++        XR_MNDX_EGL_ENABLE_EXTENSION_NAME,
++#endif
+ #elif defined(XR_USE_GRAPHICS_API_OPENGL)
+         XR_KHR_OPENGL_ENABLE_EXTENSION_NAME,
+ #endif
+@@ -1601,7 +1609,13 @@ int main() {
+     app.SystemId = systemId;
+ 
+     // Create the OpenXR Session.
+-#if defined(XR_USE_GRAPHICS_API_OPENGL_ES)
++#if defined(XR_USE_GRAPHICS_API_OPENGL_ES) && defined(XR_USE_PLATFORM_EGL)
++    XrGraphicsBindingEGLMNDX graphicsBinding = {XR_TYPE_GRAPHICS_BINDING_EGL_MNDX};
++    graphicsBinding.getProcAddress = eglGetProcAddress;
++    graphicsBinding.display = app.Egl.Display;
++    graphicsBinding.config = app.Egl.Config;
++    graphicsBinding.context = app.Egl.Context;
++#elif defined(XR_USE_GRAPHICS_API_OPENGL_ES)
+     XrGraphicsBindingOpenGLESAndroidKHR graphicsBinding = {
+         XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR};
+     graphicsBinding.display = app.Egl.Display;
+diff --git a/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorXr.h b/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorXr.h
+index aea090c..ca85223 100755
+--- a/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorXr.h
++++ b/Samples/XrSamples/XrSpatialAnchor/Src/SpatialAnchorXr.h
+@@ -26,6 +26,11 @@
+ 
+ #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+ #define XR_USE_PLATFORM_ANDROID 1
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #elif defined(WIN32)
+ #include "Render/GlWrapperWin32.h"
+ 
+diff --git a/Samples/XrSamples/XrVirtualKeyboard/CMakeLists.txt b/Samples/XrSamples/XrVirtualKeyboard/CMakeLists.txt
+index 71b839e..c574522 100755
+--- a/Samples/XrSamples/XrVirtualKeyboard/CMakeLists.txt
++++ b/Samples/XrSamples/XrVirtualKeyboard/CMakeLists.txt
+@@ -36,7 +36,7 @@ if(ANDROID)
+         ktx
+     )
+     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-u ANativeActivity_onCreate")
+-elseif(WIN32)
++else()
+     add_definitions(-D_USE_MATH_DEFINES)
+     add_executable(${PROJECT_NAME} ${SRC_FILES})
+     add_custom_command(TARGET ${PROJECT_NAME} PRE_BUILD
+diff --git a/Samples/XrSamples/XrVirtualKeyboard/Src/XrHelper.h b/Samples/XrSamples/XrVirtualKeyboard/Src/XrHelper.h
+index f0fb584..a1e200f 100755
+--- a/Samples/XrSamples/XrVirtualKeyboard/Src/XrHelper.h
++++ b/Samples/XrSamples/XrVirtualKeyboard/Src/XrHelper.h
+@@ -31,6 +31,11 @@ Copyright   :   Copyright (c) Facebook Technologies, LLC and its affiliates. All
+ #define XR_USE_PLATFORM_ANDROID 1
+ #include <jni.h>
+ #include <EGL/egl.h>
++#elif defined(XR_OS_LINUX)
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <GLES3/gl3.h>
++#include <GLES3/gl3ext.h>
+ #else
+ #include "unknwn.h"
+ #define XR_USE_GRAPHICS_API_OPENGL 1

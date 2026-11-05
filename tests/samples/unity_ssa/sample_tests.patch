@@ -1,0 +1,19 @@
+diff --git a/Assets/Scripts/ColoDiscoMan.cs b/Assets/Scripts/ColoDiscoMan.cs
+index b0f8ad7..57a6f91 100644
+--- a/Assets/Scripts/ColoDiscoMan.cs
++++ b/Assets/Scripts/ColoDiscoMan.cs
+@@ -559,6 +559,14 @@ public class ColoDiscoMan : MonoBehaviour
+                 $"Oculus.Platform.Core.Initialize FAILED: {e.Message}",
+                 m_RequireLoggedInUser ? LogType.Exception : LogType.Warning
+             );
++            // puppetxr: no Meta platform service; group sharing needs no user, as after a failed login
++            if (!m_RequireLoggedInUser)
++            {
++                foreach (var uiThing in m_DisabledWithoutValidUser)
++                {
++                    uiThing.interactable = true;
++                }
++            }
+         }
+ 
+         // KEY API CALL: static event OVRColocationSession.ColocationSessionDiscovered

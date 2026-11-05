@@ -1,0 +1,3 @@
+# Tests pass out-of-range enum values on purpose to check that validation rejects them
+InheritParentConfig: true
+Checks: '-clang-analyzer-optin.core.EnumCastOutOfRange'

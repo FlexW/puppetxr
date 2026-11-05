@@ -1,0 +1,139 @@
+diff --git a/Assets/Oculus/OculusProjectConfig.asset b/Assets/Oculus/OculusProjectConfig.asset
+index 9cac891..7e02176 100644
+--- a/Assets/Oculus/OculusProjectConfig.asset
++++ b/Assets/Oculus/OculusProjectConfig.asset
+@@ -20,9 +20,9 @@ MonoBehaviour:
+   sharedAnchorSupport: 0
+   renderModelSupport: 0
+   trackedKeyboardSupport: 0
+-  bodyTrackingSupport: 0
+-  faceTrackingSupport: 0
+-  eyeTrackingSupport: 0
++  bodyTrackingSupport: 1
++  faceTrackingSupport: 1
++  eyeTrackingSupport: 1
+   colocationSessionSupport: 0
+   sceneSupport: 1
+   boundaryVisibilitySupport: 0
+diff --git a/Assets/Resources/OculusRuntimeSettings.asset b/Assets/Resources/OculusRuntimeSettings.asset
+index 77ddf32..b7b7204 100644
+--- a/Assets/Resources/OculusRuntimeSettings.asset
++++ b/Assets/Resources/OculusRuntimeSettings.asset
+@@ -18,8 +18,8 @@ MonoBehaviour:
+   requestsAudioFaceTracking: 1
+   enableFaceTrackingVisemesOutput: 0
+   telemetryProjectGuid: d2ff93a6-6ce3-4b3c-88e6-96839ac718fd
+-  bodyTrackingFidelity: 1
+-  bodyTrackingJointSet: 0
++  bodyTrackingFidelity: 2
++  bodyTrackingJointSet: 1
+   allowVisibilityMesh: 0
+   QuestVisibilityMeshOverriden: 0
+   <ApertureType>k__BackingField: 0
+diff --git a/Assets/XR/Settings/OpenXR Package Settings.asset b/Assets/XR/Settings/OpenXR Package Settings.asset
+index 3373675..6e9b81f 100644
+--- a/Assets/XR/Settings/OpenXR Package Settings.asset	
++++ b/Assets/XR/Settings/OpenXR Package Settings.asset	
+@@ -177,7 +177,7 @@ MonoBehaviour:
+   m_Script: {fileID: 11500000, guid: b3cf79659a011bd419c7a2a30eb74e9a, type: 3}
+   m_Name: EyeGazeInteraction Android
+   m_EditorClassIdentifier: 
+-  m_enabled: 0
++  m_enabled: 1
+   nameUi: Eye Gaze Interaction Profile
+   version: 0.0.1
+   featureIdInternal: com.unity.openxr.feature.input.eyetracking
+@@ -1166,7 +1166,7 @@ MonoBehaviour:
+   m_Script: {fileID: 11500000, guid: b3cf79659a011bd419c7a2a30eb74e9a, type: 3}
+   m_Name: EyeGazeInteraction Standalone
+   m_EditorClassIdentifier: 
+-  m_enabled: 0
++  m_enabled: 1
+   nameUi: Eye Gaze Interaction Profile
+   version: 0.0.1
+   featureIdInternal: com.unity.openxr.feature.input.eyetracking
+diff --git a/Packages/manifest.json b/Packages/manifest.json
+index 9fd63b8..eceeae3 100644
+--- a/Packages/manifest.json
++++ b/Packages/manifest.json
+@@ -1,6 +1,7 @@
+ {
+   "dependencies": {
+     "com.meta.xr.sdk.core": "207.0.0",
++    "com.meta.xr.sdk.interaction.ovr": "207.0.0",
+     "com.unity.2d.sprite": "1.0.0",
+     "com.unity.2d.tilemap": "1.0.0",
+     "com.unity.ai.navigation": "2.0.9",
+diff --git a/ProjectSettings/EditorBuildSettings.asset b/ProjectSettings/EditorBuildSettings.asset
+index 25a26ea..674d66f 100644
+--- a/ProjectSettings/EditorBuildSettings.asset
++++ b/ProjectSettings/EditorBuildSettings.asset
+@@ -5,52 +5,52 @@ EditorBuildSettings:
+   m_ObjectHideFlags: 0
+   serializedVersion: 2
+   m_Scenes:
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/StartScene.unity
+     guid: 071fba5195bd4b04eab8668985aa1683
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/CustomControllers.unity
+     guid: e0f49aa4174f98941b88699b5fecddc0
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/CustomHands.unity
+     guid: a4f984fcee593d2418cc61f4a993d46d
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/Tools/Firebase.unity
+     guid: 954eda7bd02eb444ca928648702a2b4c
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/HandsInteractionTrainScene.unity
+     guid: a9c41884ef0c347628dfd8a4af4a022e
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/Locomotion.unity
+     guid: 024cd9dcd49bd8f46a6bea03aa8a21bb
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/OVROverlay.unity
+     guid: d31b44aac77e1684d861792b23d46a8b
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/OVROverlayCanvas.unity
+     guid: af6fdd821de21814caa6187d466b6d2b
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/OVROverlayCanvas_Text.unity
+     guid: ddc6bb16dbba496439d8fd8634a91a8e
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/OVROverlayCanvas_RenderOnChange.unity
+     guid: 7aecae271166037498f5da4184b4f2dd
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/Passthrough.unity
+     guid: 58e5fc2486c774a4e88ac76261268d52
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/Stereo180Video.unity
+     guid: 11cf8fa7bf3deb04db11bd170c0b4338
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/SpatialAnchor.unity
+     guid: 1db179c458352bf46beb307fd047d589
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/WidevineVideo.unity
+     guid: 5495456b7253d31479996b9587c20927
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/Passthrough/Scenes/EnableDisablePassthrough.unity
+     guid: 3e2ea09376a86d544ba6603c851c8627
+-  - enabled: 1
++  - enabled: 0
+     path: Assets/StarterSamples/Usage/TouchPro/TouchProSample.unity
+     guid: a54709569404c0644b22913759862a81
+   m_configObjects:

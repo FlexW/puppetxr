@@ -1,0 +1,70 @@
+diff --git a/Plugins/MetaXRPlatform/Source/OVRPlatform/Private/OVRPlatformFunctions.cpp b/Plugins/MetaXRPlatform/Source/OVRPlatform/Private/OVRPlatformFunctions.cpp
+index 47e6c1d..f491e61 100644
+--- a/Plugins/MetaXRPlatform/Source/OVRPlatform/Private/OVRPlatformFunctions.cpp
++++ b/Plugins/MetaXRPlatform/Source/OVRPlatform/Private/OVRPlatformFunctions.cpp
+@@ -3,6 +3,8 @@
+ // This file was @generated with LibOVRPlatform/codegen/main. Do not modify it!
+ 
+ #include "OVRPlatformFunctions.h"
++#include "Misc/CommandLine.h"
++#include "Misc/Parse.h"
+ #include "OVRPlatformRequestsConverters.h"
+ #include "OVRPlatformOptionsConverters.h"
+ 
+@@ -105,6 +107,13 @@ bool UOvrFunctionsBlueprintLibrary::Platform_IsInitialized()
+ 
+ FOvrId UOvrFunctionsBlueprintLibrary::Platform_GetLoggedInUserID()
+ {
++    // puppetxr's tests: the simulated user (PUPPETXR_USER_ID) instead of the Meta account, so that
++    // sharing with users runs without the platform service
++    uint64 PuppetxrUserId = 0;
++    if (FParse::Value(FCommandLine::Get(), TEXT("-puppetxr-user-id="), PuppetxrUserId))
++    {
++        return FOvrId(PuppetxrUserId);
++    }
+     return FOvrId(ovr_GetLoggedInUserID());
+ }
+ 
+diff --git a/Source/SharedAnchorsSample/SharedAnchorsSample.Build.cs b/Source/SharedAnchorsSample/SharedAnchorsSample.Build.cs
+index 2b9c403..4423578 100644
+--- a/Source/SharedAnchorsSample/SharedAnchorsSample.Build.cs
++++ b/Source/SharedAnchorsSample/SharedAnchorsSample.Build.cs
+@@ -33,6 +33,12 @@ public class SharedAnchorsSample : ModuleRules
+                 "OnlineSubsystem",
+             });
+ 
++        // puppetxr's tests: the VR Preview console command
++        if (Target.bBuildEditor)
++        {
++            PrivateDependencyModuleNames.Add("UnrealEd");
++        }
++
+         if (Target.Platform != UnrealTargetPlatform.Android)
+         {
+             PrecompileForTargets = PrecompileTargetsType.None;
+diff --git a/Source/SharedAnchorsSample/SharedAnchorsSample.cpp b/Source/SharedAnchorsSample/SharedAnchorsSample.cpp
+index e6259ce..c15e03c 100644
+--- a/Source/SharedAnchorsSample/SharedAnchorsSample.cpp
++++ b/Source/SharedAnchorsSample/SharedAnchorsSample.cpp
+@@ -8,5 +8,21 @@ LICENSE file in the root directory of this source tree.
+ 
+ #include "SharedAnchorsSample.h"
+ #include "Modules/ModuleManager.h"
++#if WITH_EDITOR
++#include "Editor.h"
++#include "HAL/IConsoleManager.h"
++#include "PlayInEditorDataTypes.h"
++
++// puppetxr's tests: the toolbar's VR Preview, which no console command or script API starts
++static FAutoConsoleCommand PuppetxrVRPreview(TEXT("puppetxr.VRPreview"), TEXT("Starts a VR Preview session as the toolbar's VR Preview does"),
++	FConsoleCommandDelegate::CreateLambda([]() {
++		if (GEditor && !GEditor->PlayWorld && !GEditor->IsPlaySessionRequestQueued())
++		{
++			FRequestPlaySessionParams SessionParams;
++			SessionParams.SessionPreviewTypeOverride = EPlaySessionPreviewType::VRPreview;
++			GEditor->RequestPlaySession(SessionParams);
++		}
++	}));
++#endif
+ 
+ IMPLEMENT_PRIMARY_GAME_MODULE(FDefaultGameModuleImpl, SharedAnchorsSample, "SharedAnchorsSample");

@@ -1,0 +1,24 @@
+# LeakSanitizer suppressions for code we do not build: Vulkan and GL drivers, the Vulkan, EGL
+# and OpenXR loaders, system libraries. Never suppress a leak with a frame in puppetxr; fix it.
+# A suppression matches any frame of the leak's stack, so never add the OpenXR loader: every
+# call into puppetxr passes through it. VK_LOADER_DISABLE_DYNAMIC_LIBRARY_UNLOADING (set by the
+# clang-asan test preset) keeps drivers loaded, so their frames have names to match and
+# memory they still reference is not reported at all.
+leak:libvulkan_
+leak:libnvidia-
+leak:libVkLayer_
+leak:libvulkan.so
+leak:libEGL_mesa
+leak:libGLX_mesa
+leak:libgallium
+leak:libEGL.so
+leak:libGLdispatch
+leak:libdbus-1.so
+leak:libglib-2.0.so
+# libX11 keeps per display state (resource database, input method) that SDL's x11 driver asks
+# for; every test process keeps libX11 loaded (tests_base.cpp) so its frames have a name to match
+leak:libX11.so
+# On a Wayland desktop SDL decorates windows through libdecor, whose GTK plugin keeps pango and
+# fontconfig caches for the life of the process
+leak:libgtk-3.so
+leak:libfontconfig.so
