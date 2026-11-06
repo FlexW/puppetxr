@@ -7829,10 +7829,31 @@ TEST_F(OxrSceneTest, spatial_anchors)
     EXPECT_EQ(scene.xrGetSpaceUuidFB(complete.space, nullptr), XR_ERROR_VALIDATION_FAILURE);
 }
 
+// Regression: a component filter without a storage location was taken as a local query. Horizon OS
+// (Quest 3) refuses it, so an app that only ever ran here found nothing on a headset
+TEST_F(OxrSceneTest, a_component_filter_needs_a_storage_location_as_on_a_quest)
+{
+    start();
+    const XrSpaceComponentFilterInfoFB bare  = { .type = XR_TYPE_SPACE_COMPONENT_FILTER_INFO_FB, .componentType = XR_SPACE_COMPONENT_TYPE_BOUNDED_2D_FB };
+    XrSpaceQueryInfoFB                 info  = { .type = XR_TYPE_SPACE_QUERY_INFO_FB, .queryAction = XR_SPACE_QUERY_ACTION_LOAD_FB, .maxResultCount = 100, .timeout = XR_INFINITE_DURATION,
+                                                 .filter = (const XrSpaceFilterInfoBaseHeaderFB*)&bare };
+    XrAsyncRequestIdFB                 request_id = 0;
+    EXPECT_EQ(scene.xrQuerySpacesFB(session, (const XrSpaceQueryInfoBaseHeaderFB*)&info, &request_id), XR_ERROR_VALIDATION_FAILURE);
+
+    const XrSpaceStorageLocationFilterInfoFB local  = { .type = XR_TYPE_SPACE_STORAGE_LOCATION_FILTER_INFO_FB, .location = XR_SPACE_STORAGE_LOCATION_LOCAL_FB };
+    const XrSpaceComponentFilterInfoFB       filter = { .type = XR_TYPE_SPACE_COMPONENT_FILTER_INFO_FB, .next = &local, .componentType = XR_SPACE_COMPONENT_TYPE_BOUNDED_2D_FB };
+    info.filter = (const XrSpaceFilterInfoBaseHeaderFB*)&filter;
+    EXPECT_EQ(scene.xrQuerySpacesFB(session, (const XrSpaceQueryInfoBaseHeaderFB*)&info, &request_id), XR_SUCCESS);
+
+    info.filter = nullptr;
+    EXPECT_EQ(scene.xrQuerySpacesFB(session, (const XrSpaceQueryInfoBaseHeaderFB*)&info, &request_id), XR_SUCCESS) << "no filter at all stays a query of everything";
+}
+
 TEST_F(OxrSceneTest, space_queries)
 {
     start();
-    const XrSpaceComponentFilterInfoFB filter = { .type = XR_TYPE_SPACE_COMPONENT_FILTER_INFO_FB, .componentType = XR_SPACE_COMPONENT_TYPE_BOUNDED_2D_FB };
+    const XrSpaceStorageLocationFilterInfoFB local  = { .type = XR_TYPE_SPACE_STORAGE_LOCATION_FILTER_INFO_FB, .location = XR_SPACE_STORAGE_LOCATION_LOCAL_FB };
+    const XrSpaceComponentFilterInfoFB       filter = { .type = XR_TYPE_SPACE_COMPONENT_FILTER_INFO_FB, .next = &local, .componentType = XR_SPACE_COMPONENT_TYPE_BOUNDED_2D_FB };
     XrUuidEXT                          table  = {};
     W_Uuid                             w      = {};
     ASSERT_TRUE(w_uuid_from_string(test_entity_uuid(TEST_ROOM_ENTITY_TABLE), w));
@@ -18146,7 +18167,8 @@ TEST_F(OxrDynamicObjectTest, fb_queries_find_keyboards_too)
     load();
     track_keyboards();
     ASSERT_NE(sim_add_prop(oxr_get_sim(), { .kind = SIM_PropKind::Keyboard, .pose = zm::POSE_IDENTITY }), 0u);
-    const XrSpaceComponentFilterInfoFB filter     = { .type = XR_TYPE_SPACE_COMPONENT_FILTER_INFO_FB, .componentType = (XrSpaceComponentTypeFB)DOT_COMPONENT };
+    const XrSpaceStorageLocationFilterInfoFB local = { .type = XR_TYPE_SPACE_STORAGE_LOCATION_FILTER_INFO_FB, .location = XR_SPACE_STORAGE_LOCATION_LOCAL_FB };
+    const XrSpaceComponentFilterInfoFB filter     = { .type = XR_TYPE_SPACE_COMPONENT_FILTER_INFO_FB, .next = &local, .componentType = (XrSpaceComponentTypeFB)DOT_COMPONENT };
     const XrSpaceQueryInfoFB           query      = { .type = XR_TYPE_SPACE_QUERY_INFO_FB, .queryAction = XR_SPACE_QUERY_ACTION_LOAD_FB, .maxResultCount = 8, .filter = (const XrSpaceFilterInfoBaseHeaderFB*)&filter };
     XrAsyncRequestIdFB                 request_id = 0;
     ASSERT_EQ(scene.xrQuerySpacesFB(session, (const XrSpaceQueryInfoBaseHeaderFB*)&query, &request_id), XR_SUCCESS);

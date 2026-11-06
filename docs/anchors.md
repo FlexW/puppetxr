@@ -93,7 +93,7 @@ placed at start, the camera offset by how far the anchor moved since) is tested 
 |---|---|
 | `xrSaveSpaceFB`, `xrSaveSpaceListFB`, `xrSaveSpacesMETA` | put the anchors in the local store (or the cloud for location CLOUD) with the room name, its content hash and the pose in room space |
 | `xrEraseSpaceFB`, `xrEraseSpacesMETA` | remove them; erasing a missing anchor succeeds. In the cloud the owner deletes, anyone else only stops seeing it |
-| `xrQuerySpacesFB` | the room's entities and the stored anchors; with `XrSpaceStorageLocationFilterInfoFB` CLOUD only cloud anchors |
+| `xrQuerySpacesFB` | the room's entities and the stored anchors; with `XrSpaceStorageLocationFilterInfoFB` CLOUD only cloud anchors. A component filter without that struct is `XR_ERROR_VALIDATION_FAILURE`, as on a Quest 3; no filter at all is allowed, and UUID and group filters without it are accepted (not checked against a headset) |
 | `xrDiscoverSpacesMETA` | the room's entities and the stored anchors |
 
 - Anchors support LOCATABLE, and STORABLE with a storage extension enabled. A new anchor
