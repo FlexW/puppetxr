@@ -717,7 +717,7 @@ namespace
 struct WindowCallProbe
 {
     SDL_AtomicInt runs;
-    b8            on_window_thread;
+    SDL_AtomicInt on_window_thread;
 };
 
 struct WindowCallThread
@@ -735,7 +735,7 @@ struct WindowCallThread
 static void probe_window_thread (void* user)
 {
     WindowCallProbe& probe = *(WindowCallProbe*)user;
-    probe.on_window_thread = os_is_window_thread();
+    SDL_SetAtomicInt(&probe.on_window_thread, os_is_window_thread() ? 1 : 0);
     SDL_AddAtomicInt(&probe.runs, 1);
 }
 
@@ -779,7 +779,7 @@ TEST(Platform, posted_window_thread_calls_run_at_once)
         os_serve_posted(1000000);
     }
     EXPECT_EQ(SDL_GetAtomicInt(&probe.runs), 1);
-    EXPECT_TRUE(probe.on_window_thread);
+    EXPECT_EQ(SDL_GetAtomicInt(&probe.on_window_thread), 1);
     EXPECT_LT(os_monotonic_ns() - start, 100000000ull);
 }
 
@@ -804,7 +804,7 @@ TEST(Platform, window_calls_from_other_threads_run_on_the_main_thread)
     }
     os_thread_join(thread);
     EXPECT_EQ(SDL_GetAtomicInt(&call.probe.runs), 1);
-    EXPECT_TRUE(call.probe.on_window_thread);
+    EXPECT_EQ(SDL_GetAtomicInt(&call.probe.on_window_thread), 1);
     EXPECT_LT(call.took_ns, 100000000ull);
 #else
     GTEST_SKIP() << "macOS only";
@@ -920,7 +920,7 @@ TEST(Platform, a_window_thread_waiting_for_a_mutex_runs_the_calls_of_its_holder)
     WindowCallProbe probe = {};
     os_run_on_window_thread(probe_window_thread, &probe);
     EXPECT_EQ(SDL_GetAtomicInt(&probe.runs), 1);
-    EXPECT_TRUE(probe.on_window_thread);
+    EXPECT_EQ(SDL_GetAtomicInt(&probe.on_window_thread), 1);
     os_mutex_unlock(wait.mutex);
     os_semaphore_wait(wait.done);
     os_semaphore_destroy(wait.done);

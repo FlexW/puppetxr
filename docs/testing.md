@@ -24,8 +24,8 @@ through `tools/samples/run.sh`. Linux for now; Windows and macOS join the same j
 
 | workflow | when | what | time |
 |---|---|---|---|
-| `.github/workflows/ci-fast.yml` | every push to a pull request and to `main` | unit tests of `gcc-debug` and `clang-debug` | see the job |
-| `.github/workflows/ci-full.yml` | a pull request with the label `full-ci`, each push while it has it, every push to `main`, by hand | unit tests of the other presets, all samples, `tools/dist/dist.sh` with its tests | see the job |
+| `.github/workflows/ci-fast.yml` | every push to a pull request and to `main` | unit tests of `gcc-debug` and `clang-debug` | about 4 min with warm caches, 7 min cold |
+| `.github/workflows/ci-full.yml` | a pull request with the label `full-ci`, each push while it has it, every push to `main`, by hand | unit tests of the other presets, all samples, `tools/dist/dist.sh` with its tests | about 16 min with warm caches (the release build is not cached), 22 min cold |
 
 - The job `full-ci` of `ci-full.yml` is the check to require on `main`. It fails until the label is
   on and the other jobs passed, as a required check counts a skipped job as passed.
@@ -557,6 +557,10 @@ begins, renders and ends them one frame behind; Unity renders on its render thre
 main thread polls events, syncs actions, locates spaces and finally ends the session. Every
 entry point holds the runtime mutex (`OXR_Lock`), so these tests only find something under
 the `clang-tsan` preset. Removing one `OXR_Lock` makes them fail there.
+
+Only our targets are instrumented, so TSan does not see SDL's atomics as ordering anything: a plain
+field published through an `SDL_AtomicInt` shows as a race now and then. Make the field atomic too.
+SDL's mutexes and semaphores are seen, through the pthread calls under them.
 
 `tests/tsan.supp` holds suppressions for code we do not build (dbus under SDL video, Mesa's
 drivers: `libgallium` where lavapipe is merged into it, `libvulkan_lvp` where it is not, and the
