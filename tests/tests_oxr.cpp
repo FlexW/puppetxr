@@ -32,6 +32,17 @@ typedef void (*PFN_eglGetProcAddress) ();
 #include "test_metal.h"
 #include "test_room.h"
 
+// Sanitizers make frames several times slower, so upper bounds on wall-clock time scale with them;
+// under them these tests look for races and memory errors, not for waits
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer) || __has_feature(address_sanitizer)
+#define TEST_TIME_SCALE 8ull
+#endif
+#endif
+#if !defined(TEST_TIME_SCALE)
+#define TEST_TIME_SCALE 1ull
+#endif
+
 extern "C" XrResult xrNegotiateLoaderRuntimeInterface (const XrNegotiateLoaderInfo* loader_info, XrNegotiateRuntimeRequest* runtime_request);
 
 namespace
@@ -325,12 +336,19 @@ struct OxrTest : testing::Test
         ASSERT_EQ(state, XR_SESSION_STATE_FOCUSED);
     }
 
+    // The window thread clears it under the runtime lock
+    static b8 tick_pending ()
+    {
+        const OXR_Lock lock(__func__);
+        return oxr_get_runtime() && oxr_get_runtime()->window_tick_pending;
+    }
+
     // Where the window thread is a thread of its own (Windows, Linux) the window's part of a frame
     // runs there after the frame; on macOS the test's main thread is the window thread
     void ticks () const
     {
         const u64 start = os_monotonic_ns();
-        while (oxr_get_runtime() && oxr_get_runtime()->window_tick_pending && os_monotonic_ns() - start < 1000000000ull)
+        while (tick_pending() && os_monotonic_ns() - start < 1000000000ull)
         {
             os_serve_posted(1000000);
         }
@@ -5231,6 +5249,10 @@ struct OxrThreadWindowedTest : OxrWindowedTest
         return 0;
     }
 
+    // A frame waiting for the blocked main thread takes OS_MAIN_THREAD_TIMEOUT_MS; well below it, as
+    // a software renderer takes tens of milliseconds to draw one
+    static constexpr u64 FRAME_BOUND_NS = OS_MAIN_THREAD_TIMEOUT_MS * 1000000ull / 2 * TEST_TIME_SCALE;
+
     // Returns the longest frame
     u64 frames_on_a_thread (u32 count)
     {
@@ -5253,7 +5275,7 @@ TEST_F(OxrThreadWindowedTest, frames_never_wait_for_a_main_thread_blocked_on_the
     begin_session();
     OXR_Runtime* rt = oxr_get_runtime();
     ASSERT_NE(rt->window, nullptr);
-    EXPECT_LT(frames_on_a_thread(30), 50000000ull) << "every frame under 50 ms";
+    EXPECT_LT(frames_on_a_thread(30), FRAME_BOUND_NS) << "no frame waits for the main thread";
     if (os_is_window_thread())
     {
         EXPECT_TRUE(rt->window_tick_pending) << "the window's part waits for the main thread";
@@ -5346,7 +5368,7 @@ TEST_F(OxrThreadWindowedTest, taking_the_mouse_never_waits_for_a_main_thread_blo
     ticks();
     os_push_mouse_event(rt->window, 30.0f, 10.0f, OS_Key::MouseLeft, true);
     os_push_mouse_event(rt->window, 30.0f, 10.0f, OS_Key::MouseLeft, false);
-    EXPECT_LT(frames_on_a_thread(3), 50000000ull);
+    EXPECT_LT(frames_on_a_thread(3), FRAME_BOUND_NS);
     EXPECT_TRUE(rt->mouse_captured);
     EXPECT_TRUE(rt->window_relative_pending || !os_is_window_thread()) << "the window thread of its own may have applied it";
     ticks();
@@ -5354,7 +5376,7 @@ TEST_F(OxrThreadWindowedTest, taking_the_mouse_never_waits_for_a_main_thread_blo
 
     os_push_key_event(rt->window, OS_Key::Escape, true, false);
     os_push_key_event(rt->window, OS_Key::Escape, false, false);
-    EXPECT_LT(frames_on_a_thread(3), 50000000ull);
+    EXPECT_LT(frames_on_a_thread(3), FRAME_BOUND_NS);
     EXPECT_FALSE(rt->mouse_captured);
     EXPECT_TRUE(rt->window_relative_pending || !os_is_window_thread());
     ticks();
@@ -5424,12 +5446,18 @@ TEST_F(OxrVulkanRealWindowTest, frames_never_wait_for_the_display)
     {
         frame();
     }
+    f64 refresh_hz = 60.0;
+    {
+        const OXR_Lock lock(__func__);
+        refresh_hz = rt->window_refresh_hz > 0.0f ? (f64)rt->window_refresh_hz : refresh_hz;
+    }
     const u64 start = os_monotonic_ns();
     for (u32 i = 0; i < 60; i++)
     {
         frame_only();
     }
-    EXPECT_LT(os_monotonic_ns() - start, 300000000ull) << "60 frames take under 300 ms on any display rate up to 200 Hz";
+    // Relative to the display: a fixed bound measures how fast a software renderer draws the frames
+    EXPECT_LT((f64)(os_monotonic_ns() - start), 45.0 * 1e9 / refresh_hz * (f64)TEST_TIME_SCALE) << "60 frames take under 45 display periods";
 }
 
 // The window server holds a presented drawable until its next composite: presenting faster than

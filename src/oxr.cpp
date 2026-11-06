@@ -14608,7 +14608,7 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrLocateBodyJointsFB (XrBodyTrackerFB 
     return XR_SUCCESS;
 }
 
-static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrGetBodySkeletonFB (XrBodyTrackerFB body_tracker, XrBodySkeletonFB* skeleton)
+static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrGetBodySkeletonFB (XrBodyTrackerFB body_tracker, XrBodySkeletonFB* skeleton) // NOLINT(misc-const-correctness): the signature of the OpenXR function
 {
     const OXR_Lock         lock(__func__);
     const OXR_BodyTracker* tracker = find_body_tracker(body_tracker);

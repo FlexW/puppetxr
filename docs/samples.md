@@ -132,7 +132,7 @@ when their session stops and stop their animations. Each runs on the renderer it
 | meta-composition-layers-sample | tested | `vendors_meta_composition_layers_gl` | | still; cylinder, quad and equirect layers |
 | meta-space-warp-sample | tested | `vendors_meta_space_warp_gl` | | A turns `XR_FB_space_warp` off, the panel says so (`disabled`) |
 | performance-metrics-sample | tested | `vendors_performance_metrics_vk` | | living_room; the HUD lists the `XR_META_performance_metrics` counters (`metrics`) |
-| body-tracking-sample | tested | `vendors_body_tracking_gl` | `XR_FB_body_tracking`, `XR_META_body_tracking_full_body` | still; the avatar stands in T-pose |
+| body-tracking-sample | tested | `vendors_body_tracking_gl` | `XR_FB_body_tracking`, `XR_META_body_tracking_full_body` | still; the avatar follows head and controllers, arms down |
 | hybrid-app-sample | not tested | | | Android hybrid app mode; its model turns forever, so it never holds still |
 | androidxr-*, magic-leap-* | not tested | | `XR_ANDROID_*`, `XR_ML_*` | other vendors' extensions |
 

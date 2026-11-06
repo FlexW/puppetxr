@@ -495,7 +495,7 @@ static void wake_window_thread ()
 #endif
 }
 
-static int SDLCALL window_thread_main (void* user)
+static int SDLCALL window_thread_main (void* user) // NOLINT(misc-const-correctness): the signature of SDL_ThreadFunction
 {
     (void)user;
 #if HAVE_WINDOWS
@@ -988,7 +988,7 @@ void os_post_to_window_thread (OS_WindowThreadFunction* function, void* user)
 }
 
 #if HAVE_WINDOW_THREAD
-static void barrier_call (void* user)
+static void barrier_call (void* user) // NOLINT(misc-const-correctness): the signature of a window thread call
 {
     (void)user;
 }

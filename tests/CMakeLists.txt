@@ -34,7 +34,24 @@ include(GoogleTest)
 # Tests on windows of the platform's video driver take one lock: side by side they stole each
 # other's keyboard focus and dropped keys
 set(puppetxr_real_window_tests "*RealWindow*:PlatformAppEventsTest.*:Platform.showing_a_maximized_window*:*high_pixel_density*")
-gtest_discover_tests(puppetxr_tests DISCOVERY_TIMEOUT 60 TEST_FILTER "-${puppetxr_real_window_tests}"
+# Tests with a wall-clock upper bound run alone: beside other tests on a software renderer or a
+# small machine they measure the load, not the code
+set(puppetxr_timed_tests "Platform.window_thread_calls_return_at_once:Platform.posted_window_thread_calls_run_at_once:Platform.window_calls_from_other_threads_run_on_the_main_thread:Platform.window_calls_the_main_thread_never_takes_are_withdrawn:Platform.a_main_thread_waiting_for_a_mutex_serves_window_calls:Platform.a_waiting_main_thread_takes_a_mutex_once_it_is_free:Platform.showing_a_maximized_window*:Profile.zones_cost_next_to_nothing_while_stopped:OxrTest.a_second_wait_without_begin_times_out_with_a_warning:OxrFrameFaultTest.a_failed_begin_begins_no_frame:OxrThreadWindowedTest.*:OxrVulkanRealWindowTest.frames_never_wait_for_the_display:OxrVulkanRealWindowTest.the_mirror_presents_at_most_at_the_display_rate")
+gtest_discover_tests(puppetxr_tests DISCOVERY_TIMEOUT 60 TEST_FILTER "-${puppetxr_real_window_tests}:${puppetxr_timed_tests}"
     PROPERTIES ENVIRONMENT "PUPPETXR_STATE_DIR=${CMAKE_BINARY_DIR}/test_state;${PUPPETXR_TEST_ENVIRONMENT}")
-gtest_discover_tests(puppetxr_tests DISCOVERY_TIMEOUT 60 TEST_FILTER "${puppetxr_real_window_tests}" TEST_LIST puppetxr_real_window_tests
+gtest_discover_tests(puppetxr_tests DISCOVERY_TIMEOUT 60 TEST_FILTER "${puppetxr_real_window_tests}-${puppetxr_timed_tests}" TEST_LIST puppetxr_real_window_tests
     PROPERTIES ENVIRONMENT "PUPPETXR_STATE_DIR=${CMAKE_BINARY_DIR}/test_state;${PUPPETXR_TEST_ENVIRONMENT}" RESOURCE_LOCK real_window)
+gtest_discover_tests(puppetxr_tests DISCOVERY_TIMEOUT 60 TEST_FILTER "${puppetxr_timed_tests}" TEST_LIST puppetxr_timed_tests_found
+    PROPERTIES ENVIRONMENT "PUPPETXR_STATE_DIR=${CMAKE_BINARY_DIR}/test_state;${PUPPETXR_TEST_ENVIRONMENT}" RUN_SERIAL TRUE)
+
+# The sample driver fails a test whose app is missing instead of waiting for it (docs/testing.md)
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if (Python3_FOUND)
+    set(puppetxr_sample_driver ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/sample_tests.py --samples ${CMAKE_CURRENT_BINARY_DIR}/no_samples
+        --runtime none --puppetxrctl none --references ${CMAKE_SOURCE_DIR}/tests/samples --out ${CMAKE_CURRENT_BINARY_DIR}/sample_driver_out)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/no_samples)
+    add_test(NAME sample_driver_fails_tests_of_a_missing_app COMMAND ${puppetxr_sample_driver} --tests unity_mruk_menu,unity_mruk_mrukbase --jobs 2)
+    set_tests_properties(sample_driver_fails_tests_of_a_missing_app PROPERTIES PASS_REGULAR_EXPRESSION "0 of 2 passed" TIMEOUT 30)
+    add_test(NAME sample_driver_runs_only_built_apps COMMAND ${puppetxr_sample_driver})
+    set_tests_properties(sample_driver_runs_only_built_apps PROPERTIES PASS_REGULAR_EXPRESSION "no sample app is built" TIMEOUT 30)
+endif ()

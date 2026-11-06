@@ -73,7 +73,7 @@ b8 r_backend_available (R_Backend backend)
     case R_Backend::OpenGL:
     case R_Backend::OpenGLES:
         return backend == R_Backend::Vulkan || PUPPETXR_HAVE_GL;
-    case R_Backend::D3D11:
+    case R_Backend::D3D11: // NOLINT(bugprone-branch-clone): the same only where both macros are
     case R_Backend::D3D12:
         return PUPPETXR_HAVE_D3D;
     case R_Backend::Metal:
