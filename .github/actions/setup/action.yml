@@ -1,0 +1,50 @@
+# LFS files and the image of tools/samples/Dockerfile for the CI jobs (docs/testing.md, CI), both
+# from the actions cache: LFS bandwidth is metered, and the image takes minutes to build from the
+# Arch Linux Archive.
+
+name: setup
+description: LFS files and the pinned test image, cached
+
+runs:
+  using: composite
+  steps:
+    - name: LFS file list
+      shell: bash
+      run: git lfs ls-files --long | cut -d' ' -f1 | sort > "$RUNNER_TEMP/lfs-files"
+    - id: lfs-id
+      shell: bash
+      run: echo "hash=$(sha256sum "$RUNNER_TEMP/lfs-files" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+    - id: lfs
+      uses: actions/cache/restore@v4
+      with:
+        path: .git/lfs
+        key: lfs-${{ steps.lfs-id.outputs.hash }}
+        restore-keys: lfs-
+    - name: LFS files
+      shell: bash
+      run: git lfs pull
+    - if: steps.lfs.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: .git/lfs
+        key: lfs-${{ steps.lfs-id.outputs.hash }}
+    - id: image
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ runner.temp }}/puppetxr-samples.tar.zst
+        key: samples-image-${{ hashFiles('tools/samples/Dockerfile') }}
+    - name: Build the image
+      if: steps.image.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        docker build --platform linux/amd64 -t puppetxr-samples tools/samples
+        docker save puppetxr-samples | zstd -T0 -o "$RUNNER_TEMP/puppetxr-samples.tar.zst"
+    - if: steps.image.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.temp }}/puppetxr-samples.tar.zst
+        key: samples-image-${{ hashFiles('tools/samples/Dockerfile') }}
+    - name: Load the image
+      if: steps.image.outputs.cache-hit == 'true'
+      shell: bash
+      run: zstd -dc "$RUNNER_TEMP/puppetxr-samples.tar.zst" | docker load

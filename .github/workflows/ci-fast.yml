@@ -1,0 +1,32 @@
+# The fast tier (docs/testing.md, CI): every push to a pull request and to main builds with GCC
+# and clang and runs the unit tests. Linux for now; Windows and macOS join this matrix.
+
+name: ci-fast
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-fast-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: unit (${{ matrix.preset }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [gcc-debug, clang-debug]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/unit
+        with:
+          preset: ${{ matrix.preset }}

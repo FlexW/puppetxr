@@ -17,7 +17,7 @@ RUN --mount=type=secret,id=ca,required=false \
         gcc clang lld llvm cmake ninja git git-lfs python pkgconf shaderc glslang \
         libx11 libxext libxcursor libxi libxfixes libxrandr libxss libxtst libxinerama wayland wayland-protocols libxkbcommon \
         libglvnd mesa vulkan-swrast vulkan-icd-loader xorg-server-xvfb fontconfig zlib \
-        libxxf86vm sdl2-compat meson glm tinyxxd glib2 vulkan-headers \
+        libxxf86vm sdl2-compat meson glm tinyxxd glib2 vulkan-headers ccache \
  && pacman -Scc --noconfirm \
  && test "$(pacman -Q mesa)" = "mesa 1:26.2.4-1" \
  && test "$(pacman -Q vulkan-swrast)" = "vulkan-swrast 1:26.2.4-1" \
