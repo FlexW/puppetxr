@@ -9078,15 +9078,22 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrQuerySpacesFB (XrSession session, co
     }
     else if (query->filter)
     {
-        // XrSpaceStorageLocationFilterInfoFB extends the filter; without it the query is local
+        // XrSpaceStorageLocationFilterInfoFB extends the filter
+        b8 has_location = false;
         for (const XrBaseInStructure* next = ((const XrBaseInStructure*)query->filter)->next; next; next = next->next)
         {
             if (next->type == XR_TYPE_SPACE_STORAGE_LOCATION_FILTER_INFO_FB)
             {
                 const XrSpaceStorageLocationFB location = ((const XrSpaceStorageLocationFilterInfoFB*)next)->location;
                 OXR_CHECK(location == XR_SPACE_STORAGE_LOCATION_LOCAL_FB || location == XR_SPACE_STORAGE_LOCATION_CLOUD_FB);
-                source = location == XR_SPACE_STORAGE_LOCATION_CLOUD_FB ? OXR_QuerySource::Cloud : OXR_QuerySource::Local;
+                source       = location == XR_SPACE_STORAGE_LOCATION_CLOUD_FB ? OXR_QuerySource::Cloud : OXR_QuerySource::Local;
+                has_location = true;
             }
+        }
+        // The spec does not ask for it, Horizon OS does: a Quest 3 returns XR_ERROR_VALIDATION_FAILURE
+        if (query->filter->type == XR_TYPE_SPACE_COMPONENT_FILTER_INFO_FB && !has_location)
+        {
+            OXR_FAIL("a component filter without XrSpaceStorageLocationFilterInfoFB");
         }
         const XrResult result = parse_entity_filter((const XrBaseInStructure*)query->filter, XR_TYPE_SPACE_COMPONENT_FILTER_INFO_FB, XR_TYPE_SPACE_UUID_FILTER_INFO_FB, filter);
         if (XR_FAILED(result))
