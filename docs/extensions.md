@@ -22,6 +22,10 @@ Interaction profile extensions are S because `src/oxr_profiles.inc` already vali
 their bindings; their input stays unbound until a `SIM_Controller` emulates the device.
 Extensions promoted to core 1.1 are covered by the core work as well.
 
+Meta's FB and META extensions follow Horizon OS where it differs from the spec text, for behaviour
+seen on a headset; the layer's doc records the difference. Core OpenXR and ratified extensions
+follow the spec.
+
 Totals: 99 done, 1 partial, 147 no, 16 n/a; effort S 105, M 88, L 43, XL 8, platform 19.
 
 ## KHR
@@ -215,7 +219,7 @@ Totals: 99 done, 1 partial, 147 no, 16 n/a; effort S 105, M 88, L 43, XL 8, plat
 | `XR_FB_haptic_pcm` | done | M | buffers resampled to 2000 Hz into the envelope arrays, append, samples consumed; `puppetxrctl haptic` |
 | `XR_FB_keyboard_tracking` | done | M | the oldest keyboard prop (docs/props.md) is the local, connected system keyboard: id, 30 x 1.8 x 11.2 cm, a keyboard space at its box centre that follows it; draw it with `/model_fb/keyboard/local`; docs/openxr.md "Tracked keyboards" |
 | `XR_FB_space_warp` | done | M | deprecated by XR_EXT_frame_synthesis; infos validated, no frame extrapolation (the compositor ignores motion vectors and depth); CTS passes |
-| `XR_FB_spatial_entity_query` | done | M | the loaded room and the local anchor store; `XrSpaceStorageLocationFilterInfoFB` picks the cloud (`docs/anchors.md`) |
+| `XR_FB_spatial_entity_query` | done | M | the loaded room and the local anchor store; `XrSpaceStorageLocationFilterInfoFB` picks the cloud and is required with a component filter, as on Horizon OS (`docs/anchors.md`) |
 | `XR_FB_spatial_entity_sharing` | done | M | shares through the simulated cloud directory, so between processes and machines that share it (`docs/anchors.md`) |
 | `XR_FB_spatial_entity_storage` | done | M | per app and user JSON store, anchors kept in room space (`docs/anchors.md`) |
 | `XR_FB_triangle_mesh` | done | M | app-built meshes, shown by projected passthrough layers |
