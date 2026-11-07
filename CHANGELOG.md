@@ -7,6 +7,9 @@ config start with **Breaking:**.
 
 ## Unreleased
 
+- Body tracking: `body_tracking.skeleton_change_period_ms` (or `PUPPETXR_SKELETON_CHANGE_PERIOD_MS`) makes the skeleton change count rise once per period with the same shape, as some runtimes do; off by default.
+- Recordings are format 2: the header holds the skeleton change period. Format 1 still reads.
+
 - `xrQuerySpacesFB` refuses a component filter without `XrSpaceStorageLocationFilterInfoFB`, as a Quest 3 does.
 - The sources build with MSVC again.
 - Linux: closing the mirror window no longer can end the app with X's BadWindow error.

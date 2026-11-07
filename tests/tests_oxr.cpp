@@ -16131,6 +16131,28 @@ TEST_F(OxrBodyTest, fidelity_decides_whether_the_fingers_move)
     EXPECT_GT(zm::length(body_vec(low[XR_BODY_JOINT_RIGHT_HAND_MIDDLE_TIP_FB].pose.position) - body_vec(high[XR_BODY_JOINT_RIGHT_HAND_MIDDLE_TIP_FB].pose.position)), 0.02f) << "the fist opens";
 }
 
+// With a skeleton change period the count an app reads rises with the display time
+TEST_F(OxrBodyTest, skeleton_changes_with_the_period)
+{
+    sim_set_skeleton_change_period(oxr_get_sim(), 100000000);
+    begin_session();
+    frame();
+    const XrBodyTrackerFB body_tracker = tracker(XR_BODY_JOINT_SET_FULL_BODY_META);
+    const XrTime          start        = sim_predicted_display_time(oxr_get_sim());
+    while (sim_predicted_display_time(oxr_get_sim()) < start + 200000000)
+    {
+        frame();
+    }
+    const XrTime                   time      = sim_predicted_display_time(oxr_get_sim());
+    const XrBodyJointsLocateInfoFB info      = { .type = XR_TYPE_BODY_JOINTS_LOCATE_INFO_FB, .baseSpace = stage, .time = time };
+    XrBodyJointLocationFB          joints[XR_FULL_BODY_JOINT_COUNT_META] = {};
+    XrBodyJointLocationsFB         locations = { .type = XR_TYPE_BODY_JOINT_LOCATIONS_FB, .jointCount = XR_FULL_BODY_JOINT_COUNT_META, .jointLocations = joints };
+    ASSERT_EQ(locate_joints(body_tracker, &info, &locations), XR_SUCCESS);
+    EXPECT_EQ(locations.skeletonChangedCount, sim_body_skeleton_changes(oxr_get_sim(), time));
+    EXPECT_GT(locations.skeletonChangedCount, sim_body_generation(oxr_get_sim())) << "the skeleton changed without a shape change";
+    EXPECT_EQ(destroy_tracker(body_tracker), XR_SUCCESS);
+}
+
 // XR_META_body_tracking_calibration: the height an app suggests reshapes the body, a reset goes
 // back to the configured one
 TEST_F(OxrBodyTest, calibration_overrides_the_height)

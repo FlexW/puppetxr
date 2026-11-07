@@ -744,6 +744,7 @@ static void put_header (REC_Out& out, const REC_Header& header)
         put_u32(out, (u32)fault.result);
         put_u32(out, fault.remaining);
     }
+    put_u64(out, (u64)header.skeleton_change_period_ns);
 }
 
 static b8 get_table (REC_In& in, b8 devices, REC_Layout& layout)
@@ -911,6 +912,11 @@ static b8 get_header (u32 version, REC_In& in, REC_Header& out, REC_Layout& layo
             return false;
         }
     }
+    out.skeleton_change_period_ns = version >= 2 ? (i64)get_u64(in) : 0;
+    if (out.skeleton_change_period_ns < 0)
+    {
+        return false;
+    }
     return !in.failed && pose_valid(out.room_from_stage);
 }
 
@@ -921,6 +927,7 @@ static b8 read_header (u32 version, REC_In& in, REC_Header& out, REC_Layout& lay
     switch (version)
     {
     case 1:
+    case 2:
         return get_header(version, in, out, layout);
     default:
         return false;
@@ -932,6 +939,7 @@ static b8 read_state (u32 version, REC_In& in, const REC_Layout& layout, SIM_Fra
     switch (version)
     {
     case 1:
+    case 2:
         return get_state(in, layout, out);
     default:
         return false;
@@ -1180,6 +1188,7 @@ void rec_header_from_config (const SIM_Config& config, const SIM_Snapshot& initi
         .anchor_latency_frames  = config.anchor_latency_frames,
         .anchor_localize_frames = config.anchor_localize_frames,
         .hand_tracking_fov_degrees = config.hand_tracking_fov_degrees,
+        .skeleton_change_period_ns = config.skeleton_change_period_ns,
     };
     cstr_copy(out_header.room, sizeof(out_header.room), config.room);
 }
@@ -1202,6 +1211,7 @@ void rec_apply_header (const REC_Header& header, SIM_Config& config)
     config.anchor_latency_frames  = header.anchor_latency_frames;
     config.anchor_localize_frames = header.anchor_localize_frames;
     config.hand_tracking_fov_degrees = header.hand_tracking_fov_degrees;
+    config.skeleton_change_period_ns = header.skeleton_change_period_ns;
 }
 
 REC_Writer* rec_writer_create (const char* path, const REC_Header& header, const W_Store* store)

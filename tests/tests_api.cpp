@@ -325,6 +325,23 @@ TEST_F(ApiTest, controller_type)
     EXPECT_FLOAT_EQ(x, 0.5f);
 }
 
+// The skeleton change period decides the skeletonChangedCount an app reads, so a replay takes the
+// recording's
+TEST_F(ApiTest, replay_takes_the_skeleton_change_period)
+{
+    start();
+    sim_set_skeleton_change_period(oxr_get_sim(), 2000000000);
+    char path[OS_MAX_PATH];
+    api_path(path, sizeof(path), "puppetxr_api_skeleton_period.xrrec");
+    ASSERT_EQ(api.record_start(path), PUPPETXR_SUCCESS);
+    ASSERT_EQ(api.record_stop(), PUPPETXR_SUCCESS);
+    sim_set_skeleton_change_period(oxr_get_sim(), 0);
+
+    ASSERT_EQ(api.replay_start(path), PUPPETXR_SUCCESS);
+    EXPECT_EQ(sim_get_skeleton_change_period(oxr_get_sim()), 2000000000);
+    ASSERT_EQ(api.replay_stop(), PUPPETXR_SUCCESS);
+}
+
 TEST_F(ApiTest, hand_source)
 {
     start();

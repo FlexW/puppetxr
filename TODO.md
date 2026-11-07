@@ -365,6 +365,7 @@ Mostly Linux; on Windows the Godot demos (Vulkan) and Meta's Unity MRUK samples 
 - [ ] the other face extensions on the same weights: `XR_ANDROID_face_tracking`, `XR_HTC_facial_tracking`, `XR_BD_facial_simulation`; `XR_ANDROID_eye_tracking`
 - [ ] body tracking: an option that keeps the controllers within the arms' reach, off by default (tests place controllers exactly)
 - [ ] body tracking: steps when the body walks, instead of feet sliding with the root
+- [x] body tracking: a skeleton change period, the count rising with the shape the same (`docs/body-tracking.md`, Model)
 - [x] vendors body-tracking-sample gets body tracking (`docs/body-tracking.md`): the reference of `vendors_body_tracking_gl` (Linux, GL) shows the avatar following head and controllers
 - [ ] `vendors_body_tracking_gl` with a longer left arm (`puppetxrctl body bone left_arm_upper 1.3`): one more screenshot in its script; done when the sample test compares it
 - [x] Godot demos on Windows: the Windows build of Godot 4.7.2 on lavapipe of mesa-dist-win 26.2.4, the 8 `_vk` tests against the Linux references within 3 (docs/testing.md)

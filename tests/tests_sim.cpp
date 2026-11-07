@@ -3782,6 +3782,43 @@ TEST(SimBody, skeleton_stands_on_the_floor_facing_forward)
 }
 
 // A bone scale lengthens the bones from its joint to the joint's children, on that side only
+// Some runtimes send a new skeleton every few seconds with the same shape; an app that rebuilds on
+// every change must keep up. Off by default, the count then only rises with the shape
+TEST(SimBody, skeleton_changes_with_the_period)
+{
+    SIM_Config config = {};
+    sim_default_config(config);
+    EXPECT_EQ(config.skeleton_change_period_ns, 0);
+    os_set_env("PUPPETXR_SKELETON_CHANGE_PERIOD_MS", "500");
+    sim_apply_env(config);
+    os_unset_env("PUPPETXR_SKELETON_CHANGE_PERIOD_MS");
+    EXPECT_EQ(config.skeleton_change_period_ns, 500000000);
+    ASSERT_TRUE(sim_parse_config(config, R"({ "body_tracking": { "skeleton_change_period_ms": 2000 } })"));
+    EXPECT_EQ(config.skeleton_change_period_ns, 2000000000);
+    {
+        SIM_Sim* configured = sim_create(config);
+        defer { sim_destroy(configured); };
+        EXPECT_EQ(sim_get_skeleton_change_period(configured), 2000000000);
+    }
+    ASSERT_TRUE(sim_parse_config(config, R"({ "body_tracking": { "skeleton_change_period_ms": 0 } })"));
+    EXPECT_EQ(config.skeleton_change_period_ns, 0) << "0 is never";
+
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    const u32 generation = sim_body_generation(sim);
+    EXPECT_EQ(sim_body_skeleton_changes(sim, 7000000000), generation) << "never by default";
+    sim_set_skeleton_change_period(sim, 2000000000);
+    EXPECT_EQ(sim_get_skeleton_change_period(sim), 2000000000);
+    EXPECT_EQ(sim_body_skeleton_changes(sim, 1999999999), generation);
+    EXPECT_EQ(sim_body_skeleton_changes(sim, 7000000000), generation + 3);
+    EXPECT_EQ(sim_body_skeleton_changes(sim, -5), generation) << "never below the shape's count";
+
+    SIM_BodyState state = sim_get_body(sim);
+    state.height        = 1.6f;
+    sim_set_body(sim, state);
+    EXPECT_EQ(sim_body_skeleton_changes(sim, 7000000000), sim_body_generation(sim) + 3) << "a shape change still counts";
+}
+
 TEST(SimBody, bone_scale_changes_only_that_bone)
 {
     SIM_Sim* sim = make_sim();

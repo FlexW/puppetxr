@@ -1022,6 +1022,64 @@ TEST_F(RecTest, control_characters_in_typed_text_truncate_the_recording)
     EXPECT_EQ(rec_frame_count(recording), 4u);
 }
 
+// skeletonChangedCount is what an app sees, so a replay takes the recording's period
+TEST_F(RecTest, header_records_the_skeleton_change_period)
+{
+    SIM_Config config = {};
+    sim_default_config(config);
+    config.skeleton_change_period_ns = 2000000000;
+    REC_Header header = {};
+    rec_header_from_config(config, make_header().initial, header);
+    char path[OS_MAX_PATH];
+    temp_path(path, sizeof(path), "puppetxr_test_skeleton_period.xrrec");
+    ASSERT_TRUE(rec_writer_close(rec_writer_create(path, header)));
+
+    REC_Recording* recording = rec_load(path);
+    ASSERT_NE(recording, nullptr);
+    defer { rec_release(recording); };
+    EXPECT_EQ(rec_header(recording).skeleton_change_period_ns, 2000000000);
+    SIM_Config replayed = {};
+    sim_default_config(replayed);
+    rec_apply_header(rec_header(recording), replayed);
+    EXPECT_EQ(replayed.skeleton_change_period_ns, 2000000000);
+}
+
+// A recording of format 1, before the header held the skeleton change period, still reads, with none
+TEST_F(RecTest, a_version_1_recording_reads_without_a_skeleton_change_period)
+{
+    char path[OS_MAX_PATH];
+    temp_path(path, sizeof(path), "puppetxr_test_version_1.xrrec");
+    ASSERT_TRUE(write_recording(path, 2));
+    u8*   data = nullptr;
+    usize size = 0;
+    ASSERT_TRUE(os_read_file(path, &data, &size));
+    defer { os_memory_release(data); };
+
+    // Format 1's header is format 2's without the period's 8 bytes at its end
+    const u32 tail        = 8;
+    const u32 header_size = (u32)data[12] | ((u32)data[13] << 8) | ((u32)data[14] << 16) | ((u32)data[15] << 24);
+    const u32 old_size    = header_size - tail;
+    memory_move(data + 16 + old_size, data + 16 + header_size, size - 16 - header_size);
+    const usize old_file = size - tail;
+    data[8]  = 1;
+    data[12] = (u8)old_size;
+    data[13] = (u8)(old_size >> 8);
+    data[14] = (u8)(old_size >> 16);
+    data[15] = (u8)(old_size >> 24);
+    const u32 crc = crc32(data + 16, old_size);
+    data[16 + old_size]     = (u8)crc;
+    data[16 + old_size + 1] = (u8)(crc >> 8);
+    data[16 + old_size + 2] = (u8)(crc >> 16);
+    data[16 + old_size + 3] = (u8)(crc >> 24);
+
+    REC_Recording* recording = rec_load_from_memory(data, old_file);
+    ASSERT_NE(recording, nullptr);
+    defer { rec_release(recording); };
+    EXPECT_EQ(rec_header(recording).format_version, 1u);
+    EXPECT_EQ(rec_header(recording).skeleton_change_period_ns, 0);
+    EXPECT_EQ(rec_frame_count(recording), 2u);
+}
+
 TEST_F(RecTest, header_records_the_hand_tracking_cone)
 {
     SIM_Config config = {};
