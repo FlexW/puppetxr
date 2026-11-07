@@ -2803,7 +2803,8 @@ static b8 record_start_locked (OXR_Runtime* rt, const char* path)
     sim_capture_snapshot(rt->sim, initial);
     REC_Header header = {};
     rec_header_from_config(sim_get_config(rt->sim), initial, header);
-    header.controller = sim_get_controller(rt->sim);
+    header.controller                = sim_get_controller(rt->sim);
+    header.skeleton_change_period_ns = sim_get_skeleton_change_period(rt->sim);
     cstr_copy(header.room, sizeof(header.room), rt->room);
     header.room_hash              = rt->world ? w_content_hash(rt->world) : 0;
     header.room_from_stage        = rt->room_from_stage;
@@ -2882,6 +2883,7 @@ static void replay_begin_locked (OXR_Runtime* rt, REC_Recording* recording)
     rt->replay_first_divergence = 0;
     const REC_Header& header = rec_header(recording);
     sim_set_controller(rt->sim, header.controller);
+    sim_set_skeleton_change_period(rt->sim, header.skeleton_change_period_ns);
     sim_restore_snapshot(rt->sim, header.initial);
     sim_set_controls_enabled(rt->sim, false);
 
@@ -14572,7 +14574,7 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrLocateBodyJointsFB (XrBodyTrackerFB 
     const OXR_Located located = locate_world(base, sample);
     locations->isActive             = XR_FALSE;
     locations->confidence           = 0.0f;
-    locations->skeletonChangedCount = sim_body_generation(sim);
+    locations->skeletonChangedCount = sim_body_skeleton_changes(sim, time);
     locations->time                 = time;
     for (XrBaseOutStructure* next = (XrBaseOutStructure*)locations->next; next; next = next->next)
     {

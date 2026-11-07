@@ -45,6 +45,12 @@ repeat it bit-identically.
   proportions no headset reports, for checking how a retargeting copes.
   `xrGetBodySkeletonFB` returns the T-pose of this shape, the lower foot on the floor; every
   shape change, including a calibration override, raises the skeleton change count.
+- **Skeleton change period**: config `body_tracking.skeleton_change_period_ms` or
+  `PUPPETXR_SKELETON_CHANGE_PERIOD_MS` (default 0, never; at most an hour). With a period, the
+  skeleton change count also rises once per period of display time, the T-pose the same, as
+  some runtimes send a new skeleton every few seconds (a Quest 3 was measured at 2 s). An app
+  that rebuilds its retargeting on every change must keep up.
+  `sim_body_skeleton_changes(sim, time)` is the generation plus the periods passed by `time`.
 - **Pose**: a rotation per joint relative to its T-pose parent frame. Presets: `t_pose`,
   `a_pose`, `stand` (default: arms down, legs straight), `arms_forward`, `sit`. A preset
   replaces the whole pose; joint edits change one joint.
@@ -115,7 +121,7 @@ Shape, pose, arm modes and tracking flags change what apps see, so a recording c
 body block when any of them changes, written in the frame it takes effect. This bumps
 `REC_FORMAT_VERSION` and adds a reader case (`docs/recording-format.md`). Calibration calls are
 the app's and repeat on replay. Edits during a replay are `PUPPETXR_ERROR_REPLAYING`, as other
-device edits are.
+device edits are. The header holds the skeleton change period, and a replay takes it.
 
 ## Runtime (oxr layer)
 
@@ -155,9 +161,12 @@ device edits are.
 - `tests_oxr.cpp`: tracker creation with and without the extensions, both joint sets, every
   function's invalid handles and structs, locate before the first frame, parents and T-pose
   match the extension's hierarchy, the skeleton change count after a shape change and a
-  calibration override, fidelity round trip.
+  calibration override, the count rising with the skeleton change period, fidelity round trip.
+- `tests_sim.cpp` `SimBody.skeleton_changes_with_the_period`: the config, the environment, the
+  count per period and after a shape change; `tests_api.cpp`
+  `ApiTest.replay_takes_the_skeleton_change_period`.
 - `tests_rec.cpp`: shape, pose and tracking edits replay bit-identically; the previous format
-  still reads.
+  still reads; the header keeps the skeleton change period, and format 1 reads without one.
 - `apps/body_dump` prints the skeleton and one frame of joints of both joint sets as JSON, on
   any runtime (Vulkan session, no layers). ctest `body_dump` runs it fixed-step on puppetxr against
   `tests/body_dump_puppetxr.json`; a change to the body model updates that file from

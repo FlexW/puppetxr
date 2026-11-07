@@ -18,6 +18,7 @@ unknown keys are ignored with a warning only for bad values.
     "stage": { "width": 2, "depth": 2 },
     "hands": { "tracking_fov_degrees": 120 },
     "body": { "height": 1.75 },
+    "body_tracking": { "skeleton_change_period_ms": 0 },
     "controller": "meta_touch_plus",
     "devices": {
         "head":  { "position": [0, 1.6, 0],     "orientation": [0, 0, 0, 1], "active": true },
@@ -124,7 +125,7 @@ Environment overrides: `PUPPETXR_TRACE=1|<names>`, `PUPPETXR_DEVICE=<preset>` (w
 `PUPPETXR_EXIT_AT=<frame>`, `PUPPETXR_ROOM=<name|none>`, `PUPPETXR_ROOMS_DIR=<dir>`, `PUPPETXR_CONTROL=1`,
 `PUPPETXR_CONTROL_PORT=<port>`, `PUPPETXR_CONTROL_ADDRESS=<ip>`, `PUPPETXR_CONTROL_PAUSED=1`,
 `PUPPETXR_DISABLE_EXTENSIONS=<name>,<name>` (replaces `disabled_extensions`), `PUPPETXR_GRAPHICS=<api>,<api>` (replaces `graphics`),
-`PUPPETXR_ORIGIN_OFFSET=none|per_run|<yaw>,<x>,<z>`, `PUPPETXR_ORIGIN_SEED=<n>`, `PUPPETXR_DRIFT_RATE=<yaw degrees/s>,<x>,<y>,<z m/s>`, `PUPPETXR_HAND_TRACKING_FOV=<degrees>`, `PUPPETXR_PROPS=<JSON array of props>`, `PUPPETXR_KEYBOARD_TRACKING=0|1`, `PUPPETXR_ANCHORS_DIR=<dir>`,
+`PUPPETXR_ORIGIN_OFFSET=none|per_run|<yaw>,<x>,<z>`, `PUPPETXR_ORIGIN_SEED=<n>`, `PUPPETXR_DRIFT_RATE=<yaw degrees/s>,<x>,<y>,<z m/s>`, `PUPPETXR_HAND_TRACKING_FOV=<degrees>`, `PUPPETXR_SKELETON_CHANGE_PERIOD_MS=<ms>`, `PUPPETXR_PROPS=<JSON array of props>`, `PUPPETXR_KEYBOARD_TRACKING=0|1`, `PUPPETXR_ANCHORS_DIR=<dir>`,
 `PUPPETXR_CLOUD_DIR=<dir>`, `PUPPETXR_APP_ID=<id>`, `PUPPETXR_USER_ID=<n>`, `PUPPETXR_CONFIG=<path>`, `PUPPETXR_LOG_FILE=<path>` (append every runtime
 log line to a file, for hosts that swallow stdout and stderr such as test frameworks
 and engines; others may read it, and more processes append to it, while it is open), `PUPPETXR_STATE_DIR=<dir>` (the per-user state directory itself, see below).
@@ -269,6 +270,10 @@ simulator starts, still or moving; `PUPPETXR_PROPS` replaces it.
 `hands.tracking_fov_degrees` (default 120) is the full angle of the cone around the head's
 forward axis in which hand tracking sees a tracked hand; outside it the hand is lost unless the
 app asked for wide motion mode. Controllers are tracked everywhere.
+
+`body_tracking.skeleton_change_period_ms` (default 0, never; at most an hour) raises the skeleton
+change count of body tracking once per period, the skeleton's shape the same, as some runtimes do
+(`docs/body-tracking.md`, Model).
 
 `body` is the simulated body of body tracking at start and after a reset, in the JSON that
 `puppetxrctl body save` writes (`docs/body-tracking.md`): `height` (default 1.75, 0.5 to 3, the

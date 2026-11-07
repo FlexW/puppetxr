@@ -1,6 +1,6 @@
 # Recording format
 
-`src/rec.h`, `src/rec.cpp`. Format version 1. File extension `.xrrec` by convention.
+`src/rec.h`, `src/rec.cpp`. Format version 2; version 1 still reads. File extension `.xrrec` by convention.
 
 A recording stores the simulator state an app observes, once per `xrWaitFrame`, not
 the keyboard and mouse events that produced it. Replays therefore do not depend on
@@ -41,6 +41,7 @@ Header payload:
 | anchor faults      | u8 count, count x (i32 XrResult, u32 remaining), by `OXR_AnchorOp` |
 | hand tracking cone | f32 full angle in degrees, `hands.tracking_fov_degrees` |
 | frame faults       | u8 count, count x (i32 XrResult, u32 remaining), by `OXR_FrameOp` (`docs/openxr.md`, Frame faults); a remaining fault must be negative |
+| skeleton change period | from version 2: u64 ns, `body_tracking.skeleton_change_period_ms`, 0 never. Version 1 has none and reads as 0 |
 
 A Name is a u8 length (1..63) followed by that many bytes of `[a-z0-9_/.-]`.
 

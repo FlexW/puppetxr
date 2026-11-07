@@ -139,6 +139,7 @@ struct SIM_Sim
     u32            next_prop_id;
     SIM_BodyState  body;
     u32            body_generation; // raised by every shape change, XrBodyJointLocationsFB::skeletonChangedCount
+    i64            skeleton_change_period; // ns, 0 never
     SIM_FaceState  face;
 };
 
@@ -2647,6 +2648,11 @@ b8 sim_parse_config (SIM_Config& config, const char* json)
     json_find_float(hands, "tracking_fov_degrees", config.hand_tracking_fov_degrees, config.hand_tracking_fov_degrees);
     config.hand_tracking_fov_degrees = zm::clamp(config.hand_tracking_fov_degrees, 1.0f, 360.0f);
 
+    const JsonValue body_tracking = json_find(root, "body_tracking");
+    u64             period_ms     = (u64)config.skeleton_change_period_ns / 1000000;
+    json_find_u64(body_tracking, "skeleton_change_period_ms", period_ms, period_ms);
+    config.skeleton_change_period_ns = (i64)zm::min(period_ms, (u64)SIM_MAX_SKELETON_CHANGE_PERIOD_MS) * 1000000;
+
     const JsonValue body = json_find(root, "body");
     if (json_is_valid(body) && !sim_body_apply_json(body, config.body))
     {
@@ -3122,6 +3128,10 @@ void sim_apply_env (SIM_Config& config)
     {
         config.hand_tracking_fov_degrees = (f32)zm::min(parse_u64(value), (u64)360);
     }
+    if (const char* value = os_env("PUPPETXR_SKELETON_CHANGE_PERIOD_MS"); value && value[0])
+    {
+        config.skeleton_change_period_ns = (i64)zm::min(parse_u64(value), (u64)SIM_MAX_SKELETON_CHANGE_PERIOD_MS) * 1000000;
+    }
     if (const char* value = os_env("PUPPETXR_ORIGIN_SEED"))
     {
         config.origin_seed = parse_u64(value);
@@ -3383,6 +3393,7 @@ SIM_Sim* sim_create (const SIM_Config& config)
     sim_default_body(config.body.height, sim->body);
     sim_set_body(sim, config.body);
     sim->body_generation = 0;
+    sim_set_skeleton_change_period(sim, config.skeleton_change_period_ns);
     sim_set_face(sim, config.face);
     const Pose head = level_frame(sim->devices[(u32)SIM_Device::Head].pose);
     for (u32 h = 0; h < 2; h++)
@@ -5095,6 +5106,25 @@ u32 sim_body_generation (const SIM_Sim* sim)
 {
     ASSERT(sim);
     return sim->body_generation;
+}
+
+u32 sim_body_skeleton_changes (const SIM_Sim* sim, i64 time)
+{
+    ASSERT(sim);
+    const u32 periods = sim->skeleton_change_period > 0 && time > 0 ? (u32)(time / sim->skeleton_change_period) : 0u;
+    return sim->body_generation + periods;
+}
+
+i64 sim_get_skeleton_change_period (const SIM_Sim* sim)
+{
+    ASSERT(sim);
+    return sim->skeleton_change_period;
+}
+
+void sim_set_skeleton_change_period (SIM_Sim* sim, i64 period_ns)
+{
+    ASSERT(sim);
+    sim->skeleton_change_period = zm::max(period_ns, (i64)0);
 }
 
 void sim_body_skeleton (const SIM_Sim* sim, SIM_BodySkeleton& out_skeleton)

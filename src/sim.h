@@ -400,6 +400,7 @@ enum class SIM_LimbMode : u8
 #define SIM_BODY_MAX_HEIGHT 3.0f
 #define SIM_BODY_MIN_SCALE  0.25f
 #define SIM_BODY_MAX_SCALE  4.0f
+#define SIM_MAX_SKELETON_CHANGE_PERIOD_MS 3600000ull // an hour; longer is as good as never
 
 // What the UI, the control API and the config set; the joints follow from it and the devices
 struct SIM_BodyState
@@ -794,6 +795,7 @@ struct SIM_Config
     f32              analog_ramp;      // s for a held key to push a trigger, grip or stick from 0 to full; 0 instant
     f32              analog_release;   // s for it to fall back from full to 0 once released; 0 instant
     f32              hand_tracking_fov_degrees; // full angle of the cone around the head's forward axis where hand tracking sees hands
+    i64              skeleton_change_period_ns; // body_tracking.skeleton_change_period_ms: a new skeleton this often, the shape the same; 0 never
     SIM_BodyState    body;                      // the simulated body at start and after a reset (docs/body-tracking.md)
     SIM_FaceState    face;                      // the simulated face at start and after a reset (docs/face-tracking.md)
     SIM_Device       primary_hand;     // hand of bare bindings in profiles without a hand of their own
@@ -987,6 +989,9 @@ b8                sim_body_to_json           (const SIM_BodyState& state, char* 
 void              sim_set_body_pose          (SIM_Sim* sim, SIM_BodyPose pose);
 void              sim_set_body_joint         (SIM_Sim* sim, SIM_BodyJoint joint, Quat rotation); // switches its limb to posed
 u32               sim_body_generation        (const SIM_Sim* sim);
+u32               sim_body_skeleton_changes  (const SIM_Sim* sim, i64 time); // XrBodyJointLocationsFB::skeletonChangedCount at time: the generation and one per period passed
+i64               sim_get_skeleton_change_period (const SIM_Sim* sim);
+void              sim_set_skeleton_change_period (SIM_Sim* sim, i64 period_ns); // 0 or less is never
 void              sim_body_skeleton          (const SIM_Sim* sim, SIM_BodySkeleton& out_skeleton);
 void              sim_body_joints            (const SIM_Sim* sim, const SIM_Sample& sample, SIM_BodyJoints& out_joints, b8 fingers = true); // without fingers the hands are open, XR_META_body_tracking_fidelity's low
 b8                sim_body_joint_scalable    (SIM_BodyJoint joint); // not the root, the twists, nor the hand joints past the wrist
