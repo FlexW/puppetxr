@@ -5061,6 +5061,12 @@ struct OxrCrossBackendReplayTest : OxrVulkanReplayTest
         {
             GTEST_SKIP() << "no OpenGL backend";
         }
+        TestGLApp probe = {};
+        if (!probe.create(false))
+        {
+            GTEST_SKIP() << "no OpenGL context";
+        }
+        probe.destroy();
         OxrVulkanReplayTest::SetUp();
     }
 
@@ -5233,8 +5239,11 @@ struct OxrThreadWindowedTest : OxrWindowedTest
         OxrThreadWindowedTest* test;
         u32                    frames;
         u64                    longest_ns;
+        u32                    longest_frame;
         b8                     threads_differ;
     };
+
+    u32 longest_frame = 0;
 
     static i32 frame_thread (void* user)
     {
@@ -5244,7 +5253,9 @@ struct OxrThreadWindowedTest : OxrWindowedTest
         {
             const u64 start = os_monotonic_ns();
             run.test->frame_only();
-            run.longest_ns = zm::max(run.longest_ns, os_monotonic_ns() - start);
+            const u64 took_ns = os_monotonic_ns() - start;
+            run.longest_frame = took_ns > run.longest_ns ? i : run.longest_frame;
+            run.longest_ns    = zm::max(run.longest_ns, took_ns);
         }
         return 0;
     }
@@ -5260,6 +5271,7 @@ struct OxrThreadWindowedTest : OxrWindowedTest
         OS_Thread*  thread = os_thread_create("frames", frame_thread, &run);
         os_thread_join(thread);
         EXPECT_TRUE(run.threads_differ);
+        longest_frame = run.longest_frame;
         return run.longest_ns;
     }
 };
@@ -5275,7 +5287,7 @@ TEST_F(OxrThreadWindowedTest, frames_never_wait_for_a_main_thread_blocked_on_the
     begin_session();
     OXR_Runtime* rt = oxr_get_runtime();
     ASSERT_NE(rt->window, nullptr);
-    EXPECT_LT(frames_on_a_thread(30), FRAME_BOUND_NS) << "no frame waits for the main thread";
+    EXPECT_LT(frames_on_a_thread(30), FRAME_BOUND_NS) << "no frame waits for the main thread; the longest is frame " << longest_frame;
     if (os_is_window_thread())
     {
         EXPECT_TRUE(rt->window_tick_pending) << "the window's part waits for the main thread";
@@ -5532,6 +5544,11 @@ TEST_F(OxrVulkanRealWindowTest, frames_after_a_present_do_not_keep_the_window_bu
     create_vulkan();
     create_vulkan_session();
     begin_session();
+    // A swapchain the window has outgrown fails its acquire; frames make it again
+    for (u32 i = 0; i < 5; i++)
+    {
+        frame();
+    }
     OXR_Runtime* rt = oxr_get_runtime();
     for (const OXR_Session& live : rt->sessions)
     {
@@ -14996,9 +15013,13 @@ TEST_P(OxrD3DRealWindowTest, a_click_on_a_panel_leaves_the_mouse_to_the_panels)
     EXPECT_NE(sim_clock_mode(oxr_get_sim()) == SIM_ClockMode::FixedStep, fixed) << "the panel got the click";
     EXPECT_FALSE(rt->mouse_captured) << "clicked on the Simulator panel";
 
-    os_push_mouse_event(rt->window, 1000.0f, 600.0f, OS_Key::None, false);
-    os_push_mouse_event(rt->window, 1000.0f, 600.0f, OS_Key::MouseLeft, true);
-    os_push_mouse_event(rt->window, 1000.0f, 600.0f, OS_Key::MouseLeft, false);
+    // The panels hug the sides, so the middle is the view on a small display too
+    const f32 view_x = (f32)rt->window_pixel_width * 0.5f;
+    const f32 view_y = (f32)rt->window_pixel_height * 0.5f;
+    ASSERT_FALSE(ui_wants_click(ui, view_x, view_y));
+    os_push_mouse_event(rt->window, view_x, view_y, OS_Key::None, false);
+    os_push_mouse_event(rt->window, view_x, view_y, OS_Key::MouseLeft, true);
+    os_push_mouse_event(rt->window, view_x, view_y, OS_Key::MouseLeft, false);
     for (u32 i = 0; i < 100 && !rt->mouse_captured; i++)
     {
         frame();
