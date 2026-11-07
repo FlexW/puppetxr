@@ -189,6 +189,7 @@
             "configurePreset": "clang-tsan",
             "environment": { "TSAN_OPTIONS": "halt_on_error=1 second_deadlock_stack=1 suppressions=${sourceDir}/tests/tsan.supp" }
         },
+        { "name": "clang-tidy", "inherits": "base", "configurePreset": "clang-tidy" },
         { "name": "dist", "inherits": "base", "configurePreset": "dist" },
         { "name": "gcc-headless", "inherits": "base", "configurePreset": "gcc-headless" },
         { "name": "mingw-debug", "inherits": "base", "configurePreset": "mingw-debug" },

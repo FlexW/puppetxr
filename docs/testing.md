@@ -17,6 +17,37 @@ when a suite gets slower:
 | core apps | `tools/sample_tests.py --apps openxr_sdk,openxr_simple_example,xrgears` | about 20 s |
 | macOS `samples` | `ctest --preset mac-debug -R '^samples$'` (8 Godot `_vk` tests, hello_xr Vulkan and Vulkan2, one at a time) | about 1 min |
 
+## CI
+
+Two tiers on hosted runners (4 CPUs), everything in the pinned image of `tools/samples/Dockerfile`
+through `tools/samples/run.sh`. Linux for now; Windows and macOS join the same jobs.
+
+| workflow | when | what | time |
+|---|---|---|---|
+| `.github/workflows/ci-fast.yml` | every push to a pull request and to `main` | unit tests of `gcc-debug` and `clang-debug` | about 4 min with warm caches, 7 min cold |
+| `.github/workflows/ci-full.yml` | a pull request with the label `full-ci`, each push while it has it, every push to `main`, by hand | unit tests of the other presets, all samples, `tools/dist/dist.sh` with its tests | about 16 min with warm caches (the release build is not cached), 22 min cold |
+
+- The job `full-ci` of `ci-full.yml` is the check to require on `main`. It fails until the label is
+  on and the other jobs passed, as a required check counts a skipped job as passed.
+- `tools/dist/dist.sh` runs but nothing is uploaded: CI publishes no release binaries. Only logs
+  and sample screenshots of failed runs become artifacts (7 days).
+- Caches: LFS files and the image (`.github/actions/setup`), `ccache` per preset
+  (`.github/actions/unit`), `build/docker-samples` keyed on what the samples are built from. Each
+  is saved even when a test fails.
+- Run a tier's suites locally: `tools/samples/run.sh --unit <preset>`, `tools/samples/run.sh`.
+  `PUPPETXR_DOCKER_ARGS=--cpuset-cpus=0-3` and `--jobs 4` come close to a runner; `--jobs` is
+  needed as the sample driver counts the host's CPUs.
+
+## Wall-clock bounds
+
+A test with an upper bound on wall-clock time goes into `puppetxr_timed_tests` in
+`tests/CMakeLists.txt`, which runs them alone (`RUN_SERIAL`). Its bound is what the bug it catches
+would take, not how fast this machine draws: `FRAME_BOUND_NS` is half of the main thread timeout a
+blocked frame waits for, and `frames_never_wait_for_the_display` allows 45 of its 60 display
+periods. `TEST_TIME_SCALE` scales such bounds under the sanitizers.
+
+## Vulkan device
+
 Tests needing a Vulkan device skip themselves when none is found. CI uses lavapipe:
 `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json` (Arch, as in `tools/samples/Dockerfile`: `lvp_icd.json`).
 
@@ -223,7 +254,11 @@ them as end-to-end tests (`cmake/samples.cmake`, ctest entry `samples`, driver
   frame a second each); the 16 Godot tests about 4 minutes on 4 threads, the longest (`godot_spectator_view_vk`) about
   2 minutes beside the others.
 - A test is an entry in `TESTS` with a script; `script_still` is a single screenshot after
-  60 frames. `--tests a,b` runs some, `--update` rewrites the references for review.
+  60 frames. `--tests a,b` runs some, `--update` rewrites the references for review. Asked for
+  nothing in particular it runs the apps built in `--samples` and names the others; a named test
+  whose app is missing fails.
+- Names of other projects stay as they are when this project is renamed: the vendors samples
+  quit given `--xrsim-automated-tests`, upstream's flag for Meta's XR Simulator.
 - Rendering: GLES apps run on llvmpipe through `EGL_PLATFORM=surfaceless`,
   `LIBGL_ALWAYS_SOFTWARE=1` (surfaceless EGL otherwise picks the GPU; radeonsi lacks
   `GL_OVR_multiview` on GLES, so XrPassthroughOcclusion aborts there), `LP_NUM_THREADS=0` and
@@ -465,8 +500,8 @@ with `--vz-rosetta`; QEMU works but is several times slower). The Dockerfile nee
 (`docker buildx`). A proxy (`HTTPS_PROXY`) and its CA (`SSL_CERT_FILE`)
 are passed through; `PUPPETXR_CMAKE_ARGS` and `PUPPETXR_DOCKER_ARGS` add configure and `docker run`
 arguments, e.g. `FETCHCONTENT_SOURCE_DIR_<dep>` with a `-v` mount for local dependency
-checkouts. All sample references come from it. llvmpipe JITs for the host CPU, so another CPU may
-move pixels by 1 (TODO step 12).
+checkouts. All sample references come from it. llvmpipe JITs for the host CPU, so another x86 CPU
+moves pixels by 1 (TODO step 12): `run.sh` and the Linux `samples` entry pass `--tolerance 1`.
 
 ## End-to-end tests for apps
 
@@ -522,6 +557,10 @@ begins, renders and ends them one frame behind; Unity renders on its render thre
 main thread polls events, syncs actions, locates spaces and finally ends the session. Every
 entry point holds the runtime mutex (`OXR_Lock`), so these tests only find something under
 the `clang-tsan` preset. Removing one `OXR_Lock` makes them fail there.
+
+Only our targets are instrumented, so TSan does not see SDL's atomics as ordering anything: a plain
+field published through an `SDL_AtomicInt` shows as a race now and then. Make the field atomic too.
+SDL's mutexes and semaphores are seen, through the pthread calls under them.
 
 `tests/tsan.supp` holds suppressions for code we do not build (dbus under SDL video, Mesa's
 drivers: `libgallium` where lavapipe is merged into it, `libvulkan_lvp` where it is not, and the

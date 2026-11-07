@@ -1,0 +1,106 @@
+# The full tier (docs/testing.md, CI): the other presets, every sample and the release build. A
+# pull request runs it with the label full-ci, shortly before merging, and again on each push while
+# the label is on. Pushes to main always run it, and it can be started by hand. Linux for now;
+# Windows and macOS join these jobs.
+
+name: ci-full
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-full-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: unit (${{ matrix.preset }})
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [gcc-release, clang-release, clang-asan, clang-tsan, clang-tidy, gcc-headless]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/unit
+        with:
+          preset: ${{ matrix.preset }}
+
+  samples:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      # The samples, Godot and the imported projects, rebuilt only when what they are built from
+      # changes; the compiler cache covers puppetxr, whose sources the checkout makes look new
+      - id: build
+        uses: actions/cache/restore@v4
+        with:
+          path: build/docker-samples
+          key: samples-build-${{ hashFiles('cmake/samples.cmake', 'tests/samples/**/*.patch', 'tests/samples/**/*.cmake', 'tools/samples/Dockerfile') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: samples-build-${{ hashFiles('cmake/samples.cmake', 'tests/samples/**/*.patch', 'tests/samples/**/*.cmake', 'tools/samples/Dockerfile') }}-
+      - id: test
+        env:
+          PUPPETXR_SAMPLES_IMAGE_READY: 1
+          PUPPETXR_CCACHE: 1
+        run: tools/samples/run.sh
+      - if: failure() && steps.test.conclusion == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: samples-out
+          path: build/docker-samples/samples_out
+          if-no-files-found: ignore
+          retention-days: 7
+      # Saved with the same path it is restored with; timings.json stays for the next run's order
+      - if: always() && steps.test.conclusion != 'skipped'
+        run: find build/docker-samples/samples_out -name '*.png' -delete
+      - if: always() && steps.test.conclusion != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: build/docker-samples
+          key: samples-build-${{ hashFiles('cmake/samples.cmake', 'tests/samples/**/*.patch', 'tests/samples/**/*.cmake', 'tools/samples/Dockerfile') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+  release:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - run: tools/dist/dist.sh
+
+  # The required check: a skipped job counts as passed there, so this one always runs and fails
+  # until the label is on and everything above passed
+  full-ci:
+    if: always() && github.event_name == 'pull_request'
+    needs: [unit, samples, release]
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          LABELED: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          UNIT: ${{ needs.unit.result }}
+          SAMPLES: ${{ needs.samples.result }}
+          RELEASE: ${{ needs.release.result }}
+        run: |
+          if [[ "$LABELED" != true ]]
+          then
+              echo "::error::add the label full-ci to run the full suite before merging"
+              exit 1
+          fi
+          if [[ "$UNIT" != success || "$SAMPLES" != success || "$RELEASE" != success ]]
+          then
+              echo "::error::unit: $UNIT, samples: $SAMPLES, release: $RELEASE"
+              exit 1
+          fi

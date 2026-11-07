@@ -14,7 +14,7 @@ repeat it bit-identically.
 | App | Uses | Role in verification |
 |---|---|---|
 | `apps/body_dump` (new) | `XR_FB_body_tracking`, `XR_META_body_tracking_full_body` | prints the T-pose and one located frame; run on puppetxr and on a device that tracks the body, the diff checks joint axes, parents and units |
-| Godot OpenXR vendors `body-tracking-sample` (`vendors_body_tracking_gl`) | the same, OpenXR only | sample test: the avatar follows head and controllers; today it stands in T-pose |
+| Godot OpenXR vendors `body-tracking-sample` (`vendors_body_tracking_gl`) | the same, OpenXR only | sample test: the avatar follows head and controllers |
 | Meta `XrBodyFaceEyeSocial` (native) | `XR_FB_body_tracking`, `XR_FB_face_tracking2`, `XR_FB_eye_tracking_social` | draws the skeleton without retargeting |
 | Meta `Unity-Movement` | body through OVRPlugin | retargeting under shape and pose changes; known to be fragile, a difference counts against puppetxr only when `body_dump` or `XrBodyFaceEyeSocial` show it too |
 | Meta `Unreal-Movement` | the same through the Meta XR plugin | the same; sample test `unreal_movement_body` |

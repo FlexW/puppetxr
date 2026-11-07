@@ -1,0 +1,38 @@
+# Builds a preset and runs its unit tests in the pinned image, with the compiler cache kept
+# between runs. The cache is saved even when a test fails, so fixing that test builds fast.
+
+name: unit
+description: Unit tests of a preset in the pinned image
+
+inputs:
+  preset:
+    description: CMake preset
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/setup
+    - uses: actions/cache/restore@v4
+      with:
+        path: build/docker-samples/home/.cache/ccache
+        key: ccache-${{ inputs.preset }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: ccache-${{ inputs.preset }}-
+    - id: test
+      shell: bash
+      env:
+        PUPPETXR_SAMPLES_IMAGE_READY: 1
+        PUPPETXR_CCACHE: 1
+      run: tools/samples/run.sh --unit ${{ inputs.preset }}
+    - if: always() && steps.test.conclusion != 'skipped'
+      uses: actions/cache/save@v4
+      with:
+        path: build/docker-samples/home/.cache/ccache
+        key: ccache-${{ inputs.preset }}-${{ github.run_id }}-${{ github.run_attempt }}
+    - if: failure() && steps.test.conclusion == 'failure'
+      uses: actions/upload-artifact@v4
+      with:
+        name: unit-log-${{ inputs.preset }}
+        path: build/${{ inputs.preset }}/Testing/Temporary/LastTest.log
+        if-no-files-found: ignore
+        retention-days: 7

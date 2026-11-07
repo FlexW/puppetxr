@@ -21,6 +21,7 @@
 
 import argparse
 import concurrent.futures
+import contextlib
 import ctypes
 import json
 import math
@@ -605,8 +606,9 @@ def vendors_tests():
         "meta_space_warp":         {"project": "samples/meta-space-warp-sample",        "renderer": "gl", "room": "none",        "script": script_vendors_space_warp},
         "performance_metrics":     {"project": "samples/performance-metrics-sample",    "renderer": "vk", "room": "living_room", "script": script_vendors_metrics},
     }
-    # The samples skip their animations and quit when the session stops given this argument
-    return {f"vendors_{name}_{spec['renderer']}": dict(spec, app="godot_vendors", args=["--", "--puppetxr-automated-tests"]) for name, spec in samples.items()}
+    # The samples skip their animations and quit when the session stops given this argument. The
+    # name is upstream's, for Meta's XR Simulator, and has nothing to do with this project's names
+    return {f"vendors_{name}_{spec['renderer']}": dict(spec, app="godot_vendors", args=["--", "--xrsim-automated-tests"]) for name, spec in samples.items()}
 
 
 TESTS.update(vendors_tests())
@@ -2216,24 +2218,22 @@ class App:
         self.log = open(os.path.join(out, f"{prefix}app.log"), "w")
         # hello_xr quits when stdin reaches its end, so its stdin stays open until the test ends
         stdin = subprocess.PIPE if test.get("stdin_open") else subprocess.DEVNULL
-        if test.get("start_alone"):
-            START_ALONE.acquire()
-        self.started = time.time()
-        self.proc = subprocess.Popen(command, cwd=cwd, env=env, stdin=stdin, stdout=self.log, stderr=subprocess.STDOUT)
-        self.job = kill_children_at_end(self.proc)
-        self.deadline = time.time() + test.get("timeout", opts.timeout)
-        started = min(self.deadline, time.time() + START_SECONDS)
-        while not discovered(self.proc.pid, test.get("instance")):
-            if self.proc.poll() is not None or time.time() > started:
-                break
-            time.sleep(0.05)
-        if self.proc.poll() is None and not discovered(self.proc.pid, test.get("instance")):
-            save_stacks(self.proc.pid, os.path.join(out, f"{prefix}start_stacks.txt"))
-            self.problems.append(f"{prefix}no simulator within {START_SECONDS} s (thread stacks in start_stacks.txt when cdb is installed)")
-            self.proc.kill()
-            self.proc.wait()
-        if test.get("start_alone"):
-            START_ALONE.release()
+        # A with block: an app that cannot start must not keep the others waiting for the lock
+        with START_ALONE if test.get("start_alone") else contextlib.nullcontext():
+            self.started = time.time()
+            self.proc = subprocess.Popen(command, cwd=cwd, env=env, stdin=stdin, stdout=self.log, stderr=subprocess.STDOUT)
+            self.job = kill_children_at_end(self.proc)
+            self.deadline = time.time() + test.get("timeout", opts.timeout)
+            started = min(self.deadline, time.time() + START_SECONDS)
+            while not discovered(self.proc.pid, test.get("instance")):
+                if self.proc.poll() is not None or time.time() > started:
+                    break
+                time.sleep(0.05)
+            if self.proc.poll() is None and not discovered(self.proc.pid, test.get("instance")):
+                save_stacks(self.proc.pid, os.path.join(out, f"{prefix}start_stacks.txt"))
+                self.problems.append(f"{prefix}no simulator within {START_SECONDS} s (thread stacks in start_stacks.txt when cdb is installed)")
+                self.proc.kill()
+                self.proc.wait()
         if self.proc.poll() is None and time.time() <= self.deadline:
             # Godot on lavapipe beside other tests can take minutes for a step of 10 frames; Unreal
             # loads for a while without a call to its first instance, whose server answers in them;
@@ -2397,6 +2397,16 @@ def main():
         return 2
     if not opts.unreal:
         names = [n for n in names if "unreal" not in TESTS[n]]
+    # Named tests and apps must run; asked for nothing in particular, the build decides what exists
+    if not opts.tests and not apps:
+        built = [n for n in names if os.path.isdir(os.path.join(opts.samples, TESTS[n]["app"]))]
+        missing = sorted({TESTS[n]["app"] for n in names if n not in built})
+        if missing:
+            print(f"not built, so not run: {', '.join(missing)}")
+        if not built:
+            print(f"no sample app is built in {opts.samples}")
+            return 2
+        names = built
 
     xvfb = None
     opts.display = None
