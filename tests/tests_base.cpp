@@ -1262,6 +1262,53 @@ TEST(Platform, a_window_without_vulkan_still_opens)
     os_destroy_window(window);
 }
 
+static void nothing_to_do (void* user)
+{
+    (void)user;
+}
+
+static i32 wake_the_window_thread (void* user)
+{
+    SDL_AtomicInt* stop = (SDL_AtomicInt*)user;
+    while (!SDL_GetAtomicInt(stop))
+    {
+        os_post_to_window_thread(nothing_to_do, nullptr);
+        SDL_DelayNS(20000);
+    }
+    return 0;
+}
+
+// Regression: SDL's wakeup takes the window the window thread waits on and then sends it an event
+// over a second X connection. A window closed in between ended the process with X's BadWindow
+TEST(Platform, windows_close_while_other_threads_wake_the_window_thread)
+{
+    os_shutdown();
+    ASSERT_TRUE(os_initialize(false));
+    defer { os_shutdown(); };
+    if (os_is_headless())
+    {
+        GTEST_SKIP() << "no display";
+    }
+    SDL_AtomicInt stop = {};
+    OS_Thread*    wakers[2];
+    for (OS_Thread*& waker : wakers)
+    {
+        waker = os_thread_create("waker", wake_the_window_thread, &stop);
+    }
+    for (u32 i = 0; i < 100; i++)
+    {
+        OS_Window* window = os_create_window("closing", 64, 64, true);
+        ASSERT_NE(window, nullptr);
+        os_serve_posted(1000000);
+        os_destroy_window(window);
+    }
+    SDL_SetAtomicInt(&stop, 1);
+    for (OS_Thread* waker : wakers)
+    {
+        os_thread_join(waker);
+    }
+}
+
 static u32 count_text (const char* text, const char* needle)
 {
     u32 count = 0;

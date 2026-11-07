@@ -9,4 +9,5 @@ config start with **Breaking:**.
 
 - `xrQuerySpacesFB` refuses a component filter without `XrSpaceStorageLocationFilterInfoFB`, as a Quest 3 does.
 - The sources build with MSVC again.
+- Linux: closing the mirror window no longer can end the app with X's BadWindow error.
 - First public release.

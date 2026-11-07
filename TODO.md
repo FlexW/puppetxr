@@ -179,9 +179,8 @@ GPUs:
 - [ ] once the repository is public: build provenance of the release files (`actions/attest-build-provenance` in the `release` job of `.github/workflows/release.yml`, permissions `id-token: write` and `attestations: write`; private repositories need GitHub Enterprise Cloud); done when `gh attestation verify <file> --repo FlexW/puppetxr` passes and docs/building.md "Releasing" says how to verify
 - [ ] Windows: sign the DLL and puppetxrctl.exe (needs a code signing certificate)
 - [x] Linux CI: `.github/workflows/ci-fast.yml` (unit tests of gcc-debug and clang-debug on every push), `ci-full.yml` (label `full-ci`: the other presets, all samples, the release build uploading nothing), docs/testing.md "CI"
-- [x] the checks required on `main`: the fast tier's `unit` jobs and `full-ci`
+- [x] the checks required on `main`: all `unit` jobs of the fast tier and `full-ci`
 - [x] Windows and macOS in the fast tier: `win-clang-debug`, `msvc-debug`, `mac-debug` in `ci-fast.yml` (docs/testing.md, CI)
-- [ ] require `unit (win-clang-debug)`, `unit (msvc-debug)` and `unit (mac-debug)` on `main`, once they have stayed green for a while
 - [ ] Windows in the full tier: the other presets (`win-clang-release`, `win-clang-asan`, `win-clang-tidy`, `msvc-release`, `msvc-asan`), `samples` and the release build uploading nothing in `ci-full.yml`. Done when they run on `windows-2022`
 - [ ] macOS in the full tier: `mac-release`, `mac-asan`, `samples` and the release build uploading nothing in `ci-full.yml` (`docs/building.md`, macOS). Done when they run on a hosted macOS runner
 - [ ] the OpenGL tests on the Windows runner: 80 skip as it has no OpenGL driver. Mesa's `opengl32.dll` and `libgallium_wgl.dll` of `.github/actions/windows-vulkan` next to the test binary should provide one (`tools/sample_tests.py` does this for Godot); done when they run in `ci-fast.yml`
