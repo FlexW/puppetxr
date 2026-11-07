@@ -1,0 +1,67 @@
+# A Vulkan loader and lavapipe for the Windows jobs, whose runners have neither, so the Vulkan tests
+# run instead of skipping. The loader is of the SDK version of the headers in
+# third_party/CMakeLists.txt, Mesa the mesa-dist-win of cmake/samples.cmake.
+
+name: windows-vulkan
+description: Vulkan loader on PATH and lavapipe registered as its driver
+
+runs:
+  using: composite
+  steps:
+    - id: mesa
+      name: Mesa version
+      shell: pwsh
+      run: |
+        $samples = Get-Content cmake/samples.cmake -Raw
+        $match = [regex]::Match($samples, 'URL (\S+mesa-dist-win\S+)\s+URL_HASH SHA256=(\w+)')
+        "url=$($match.Groups[1].Value)" >> $env:GITHUB_OUTPUT
+        "hash=$($match.Groups[2].Value)" >> $env:GITHUB_OUTPUT
+    - id: cache
+      uses: actions/cache/restore@v4
+      with:
+        path: C:\vulkan
+        key: windows-vulkan-1.4.363.0-${{ steps.mesa.outputs.hash }}
+    - name: Build the loader, fetch lavapipe
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      env:
+        MESA_URL: ${{ steps.mesa.outputs.url }}
+        MESA_HASH: ${{ steps.mesa.outputs.hash }}
+      run: |
+        $PSNativeCommandUseErrorActionPreference = $true
+        $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+        Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+        function Get-Pinned($url, $hash, $path)
+        {
+            Invoke-WebRequest $url -OutFile $path
+            if ((Get-FileHash $path -Algorithm SHA256).Hash -ne $hash)
+            {
+                throw "$url does not have the pinned hash"
+            }
+        }
+        $temp = $env:RUNNER_TEMP
+        Get-Pinned https://github.com/KhronosGroup/Vulkan-Loader/archive/refs/tags/vulkan-sdk-1.4.363.0.tar.gz 941eff558fc74f248745fb7df367640cf89a8457f216dae498a74ae14b6ba6f7 "$temp\loader.tar.gz"
+        tar -xzf "$temp\loader.tar.gz" -C $temp
+        $src = "$temp\Vulkan-Loader-vulkan-sdk-1.4.363.0"
+        cmake -S $src -B "$src\build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DUPDATE_DEPS=ON
+        ninja -C "$src\build" vulkan
+        New-Item -ItemType Directory -Force C:\vulkan | Out-Null
+        Copy-Item "$src\build\loader\vulkan-1.dll" C:\vulkan\
+        Get-Pinned $env:MESA_URL $env:MESA_HASH "$temp\mesa.7z"
+        7z x "$temp\mesa.7z" "-o$temp\mesa" | Out-Null
+        Copy-Item "$temp\mesa\x64" C:\vulkan\mesa -Recurse
+    # Saved here, as a post step saves only when the whole job passes
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: C:\vulkan
+        key: windows-vulkan-1.4.363.0-${{ steps.mesa.outputs.hash }}
+    # The runner is elevated, so the Vulkan loader ignores VK_DRIVER_FILES and reads the registry;
+    # the virtual machine ends with the job
+    - name: Register lavapipe
+      shell: pwsh
+      run: |
+        'C:\vulkan' | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+        New-Item -Force HKLM:\SOFTWARE\Khronos\Vulkan\Drivers | Out-Null
+        New-ItemProperty HKLM:\SOFTWARE\Khronos\Vulkan\Drivers -Name C:\vulkan\mesa\lvp_icd.x86_64.json -PropertyType DWord -Value 0 | Out-Null

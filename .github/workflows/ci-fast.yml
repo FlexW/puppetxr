@@ -1,5 +1,5 @@
-# The fast tier (docs/testing.md, CI): every push to a pull request and to main builds with GCC
-# and clang and runs the unit tests. Linux for now; Windows and macOS join this matrix.
+# The fast tier (docs/testing.md, CI): every push to a pull request and to main builds with GCC,
+# clang and MSVC on Linux, Windows and macOS and runs the unit tests.
 
 name: ci-fast
 
@@ -30,3 +30,83 @@ jobs:
       - uses: ./.github/actions/unit
         with:
           preset: ${{ matrix.preset }}
+
+  windows:
+    name: unit (${{ matrix.preset }})
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [win-clang-debug, msvc-debug]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/lfs
+      - uses: ./.github/actions/windows-toolchain
+      - uses: ./.github/actions/windows-vulkan
+      # The runner is elevated, so the loader ignores XR_RUNTIME_JSON and reads the registry
+      # (docs/building.md, Windows); the virtual machine ends with this job
+      - name: Active runtime
+        env:
+          PRESET: ${{ matrix.preset }}
+        run: |
+          New-Item -Force HKLM:\SOFTWARE\Khronos\OpenXR\1 | Out-Null
+          Set-ItemProperty HKLM:\SOFTWARE\Khronos\OpenXR\1 ActiveRuntime "$env:GITHUB_WORKSPACE\build\$env:PRESET\puppetxr-dev.json"
+      - id: test
+        name: Build and test
+        env:
+          PRESET: ${{ matrix.preset }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          # The developer shell puts the clang bundled with Visual Studio first, as in tools/dist/dist.ps1
+          $clang = (Get-Command clang).Source
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+          $env:PATH = "$(Split-Path $clang);$env:PATH"
+          cmake --preset $env:PRESET
+          cmake --build --preset $env:PRESET -- -k 0
+          ctest --preset $env:PRESET -E '^samples$' --parallel $env:NUMBER_OF_PROCESSORS
+      - if: failure() && steps.test.conclusion == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-log-${{ matrix.preset }}
+          path: |
+            build/${{ matrix.preset }}/Testing/Temporary/LastTest.log
+            build/${{ matrix.preset }}/*_dump.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  macos:
+    name: unit (${{ matrix.preset }})
+    runs-on: macos-15
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [mac-debug]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: brew install cmake ninja shaderc spirv-cross vulkan-loader vulkan-headers molten-vk vulkan-validationlayers git-lfs
+      - uses: ./.github/actions/lfs
+      - id: test
+        name: Build and test
+        env:
+          PRESET: ${{ matrix.preset }}
+        run: |
+          cmake --preset "$PRESET"
+          cmake --build --preset "$PRESET"
+          ctest --preset "$PRESET" -E '^samples$' -j"$(sysctl -n hw.ncpu)"
+      - if: failure() && steps.test.conclusion == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-log-${{ matrix.preset }}
+          path: build/${{ matrix.preset }}/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 7
