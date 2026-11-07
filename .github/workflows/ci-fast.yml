@@ -47,14 +47,9 @@ jobs:
       - uses: ./.github/actions/lfs
       - uses: ./.github/actions/windows-toolchain
       - uses: ./.github/actions/windows-vulkan
-      # The runner is elevated, so the loader ignores XR_RUNTIME_JSON and reads the registry
-      # (docs/building.md, Windows); the virtual machine ends with this job
-      - name: Active runtime
-        env:
-          PRESET: ${{ matrix.preset }}
-        run: |
-          New-Item -Force HKLM:\SOFTWARE\Khronos\OpenXR\1 | Out-Null
-          Set-ItemProperty HKLM:\SOFTWARE\Khronos\OpenXR\1 ActiveRuntime "$env:GITHUB_WORKSPACE\build\$env:PRESET\puppetxr-dev.json"
+      - uses: ./.github/actions/windows-runtime
+        with:
+          manifest: build/${{ matrix.preset }}/puppetxr-dev.json
       - id: test
         name: Build and test
         env:

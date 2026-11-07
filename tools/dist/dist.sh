@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# tools/dist/dist.sh [--no-tests]
+# tools/dist/dist.sh [--no-tests] [--image]
 # Builds the Linux release in the container of tools/dist/Dockerfile (docs/building.md, Linux
 # releases): preset dist, glibc 2.28 enforced by the tests, then build/dist-linux/out/ holds
 # puppetxr-<version>-linux-<arch>.tar.gz, the matching -debug.tar.gz and a .buildinfo with the
 # toolchain versions and checksums. Same commit and image give byte-identical tarballs.
+#
+# --image only builds the image and prints its name; PUPPETXR_DIST_IMAGE_READY=1 skips building it,
+# for an image loaded from a cache (CI).
 #
 # DOCKER (default docker, podman works) picks the engine, PUPPETXR_DIST_DOCKER_ARGS adds run
 # arguments (e.g. "--network host" behind a local proxy), PUPPETXR_DIST_CMAKE_ARGS adds configure
@@ -67,14 +70,18 @@ fi
 #
 
 tests=1
+image_only=0
 for arg in "$@"
 do
     case "$arg" in
         --no-tests)
             tests=0
             ;;
+        --image)
+            image_only=1
+            ;;
         *)
-            echo "usage: $0 [--no-tests]" >&2
+            echo "usage: $0 [--no-tests] [--image]" >&2
             exit 2
             ;;
     esac
@@ -92,7 +99,15 @@ then
 fi
 epoch=$(git -C "$root" log -1 --format=%ct)
 
-"$docker" build -t "$image" "$root/tools/dist"
+if [[ -z "${PUPPETXR_DIST_IMAGE_READY:-}" ]]
+then
+    "$docker" build -t "$image" "$root/tools/dist"
+fi
+if [[ "$image_only" == 1 ]]
+then
+    echo "$image"
+    exit 0
+fi
 # The layers, not the image id: BuildKit's provenance attestation gives every build of the same
 # layers a new id
 image_layers=$("$docker" image inspect --format '{{range .RootFS.Layers}}{{.}} {{end}}' "$image" | sha256sum | cut -d' ' -f1)

@@ -25,11 +25,11 @@ through `tools/samples/run.sh`. The full tier is Linux only for now; Windows and
 | workflow | when | what | time |
 |---|---|---|---|
 | `.github/workflows/ci-fast.yml` | every push to a pull request and to `main` | unit tests of `gcc-debug`, `clang-debug`, `win-clang-debug`, `msvc-debug` and `mac-debug` | Linux about 4 min with warm caches, 7 min cold; macOS about 6 min; Windows about 9 min, 15 min cold |
-| `.github/workflows/ci-full.yml` | a pull request with the label `full-ci`, each push while it has it, every push to `main`, by hand | unit tests of the other presets, all samples, `tools/dist/dist.sh` with its tests | about 16 min with warm caches (the release build is not cached), 22 min cold |
+| `.github/workflows/ci-full.yml` | a pull request with the label `full-ci`, each push while it has it, every push to `main`, by hand | unit tests of the other presets, all samples, `tools/dist/dist.sh` and `tools/dist/dist-macos.sh` with their tests | about 16 min with warm caches, 22 min cold; the release image on a cache miss up to 40 min more |
 
 - The job `full-ci` of `ci-full.yml` is the check to require on `main`. It fails until the label is
   on and the other jobs passed, as a required check counts a skipped job as passed.
-- `tools/dist/dist.sh` runs but nothing is uploaded: CI publishes no release binaries. Only logs
+- The release builds run but nothing is uploaded: CI publishes no release binaries. Only logs
   and sample screenshots of failed runs become artifacts (7 days).
 - Caches: LFS files and the image (`.github/actions/setup`), `ccache` per preset
   (`.github/actions/unit`), `build/docker-samples` keyed on what the samples are built from. Each

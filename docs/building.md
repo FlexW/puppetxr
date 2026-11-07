@@ -144,6 +144,7 @@ in `build/dist-linux/out/`:
 ```
 tools/dist/dist.sh              # build, all tests, package
 tools/dist/dist.sh --no-tests   # build, portability check only, package
+tools/dist/dist.sh --image      # only build the image, print its name
 ```
 
 | Piece | Choice | Why |
@@ -158,6 +159,10 @@ tools/dist/dist.sh --no-tests   # build, portability check only, package
   Rebuilding an old release byte for byte needs an image with the same layers (keep it); the
   `image layers` line identifies it. Not the image id: BuildKit's provenance attestation gives
   every build of the same layers a new id.
+- CI keeps the image in the actions cache (`.github/actions/dist-image`, keyed on the
+  Dockerfile) and passes `PUPPETXR_DIST_IMAGE_READY=1`, which skips its build: its packages come
+  from AlmaLinux's mirrors, which took half an hour on a slow day. Its packages stay as they were
+  until the Dockerfile changes or the cache goes unused for a week.
 - The container runs as the calling user with the checkout at `/src`. `DOCKER=podman` switches
   the engine, `PUPPETXR_DIST_DOCKER_ARGS` adds `run` arguments (`--network host` behind a local
   proxy), `PUPPETXR_DIST_CMAKE_ARGS` adds configure arguments (`FETCHCONTENT_SOURCE_DIR_*`).
@@ -393,9 +398,10 @@ Unreleased, commits `release X.Y.Z`, tags `vX.Y.Z` (annotated) and pushes both a
 | Job | Runner | Does |
 |---|---|---|
 | `check` | ubuntu-24.04 | the tag equals `v` + the CMake version; the notes are the changelog section of the version (Unreleased for a manual run), which must not be empty |
-| `linux` | ubuntu-24.04 | `tools/dist/dist.sh`, all tests in the container |
+| `linux` | ubuntu-24.04 | `tools/dist/dist.sh` in the cached image, all tests in the container |
 | `source` | ubuntu-24.04 | `tools/dist/dist-src.sh` |
-| `windows` | windows-2022 | LLVM `LLVM_VERSION` from Chocolatey, `glslc` built from the shaderc tag and commit of `tools/dist/Dockerfile` (cached), `tools/dist/dist.ps1`, all tests |
+| `windows` | windows-2022 | LLVM `LLVM_VERSION` from Chocolatey, `glslc` built from the shaderc tag and commit of `tools/dist/Dockerfile` (cached), the Vulkan loader and lavapipe, the runtime registered in `HKLM` (the runner is elevated; docs/testing.md, CI), `tools/dist/dist.ps1`, all tests |
+| `macos` | macos-15 | the Homebrew packages of macOS above, `tools/dist/dist-macos.sh`, all tests |
 | `release` | ubuntu-24.04 | tags only: `SHA256SUMS` over all files, draft release `puppetxr X.Y.Z` with every file; a re-run replaces the files of the existing draft |
 
 - Dry run: run the workflow by hand (Actions, release, Run workflow) on any branch; it builds

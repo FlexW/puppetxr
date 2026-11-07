@@ -1,0 +1,21 @@
+# The runner is elevated, so the OpenXR loader ignores XR_RUNTIME_JSON and reads the registry
+# (docs/building.md, Windows); the virtual machine ends with the job. A test that names another
+# manifest through the environment still gets this one there.
+
+name: windows-runtime
+description: A manifest registered as the active OpenXR runtime
+
+inputs:
+  manifest:
+    description: Path of the runtime manifest, relative to the workspace
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      env:
+        MANIFEST: ${{ inputs.manifest }}
+      run: |
+        New-Item -Force HKLM:\SOFTWARE\Khronos\OpenXR\1 | Out-Null
+        Set-ItemProperty HKLM:\SOFTWARE\Khronos\OpenXR\1 ActiveRuntime (Join-Path $env:GITHUB_WORKSPACE $env:MANIFEST)
