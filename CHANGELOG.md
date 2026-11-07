@@ -7,6 +7,8 @@ config start with **Breaking:**.
 
 ## Unreleased
 
+## 0.1.0 - 2026-11-07
+
 - Body tracking: `body_tracking.skeleton_change_period_ms` (or `PUPPETXR_SKELETON_CHANGE_PERIOD_MS`) makes the skeleton change count rise once per period with the same shape, as some runtimes do; off by default.
 - Recordings are format 2: the header holds the skeleton change period. Format 1 still reads.
 
