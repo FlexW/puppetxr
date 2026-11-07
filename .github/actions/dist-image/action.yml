@@ -1,0 +1,33 @@
+# The image of tools/dist/Dockerfile for the Linux release jobs (docs/building.md, Linux releases),
+# from the actions cache: its packages come from AlmaLinux's mirrors, which took half an hour on a
+# slow day. Keyed on the Dockerfile, so its packages stay as they were until it changes or the cache
+# goes unused for a week; dist.sh records their versions in the .buildinfo.
+
+name: dist-image
+description: The Linux release image, cached, and PUPPETXR_DIST_IMAGE_READY for tools/dist/dist.sh
+
+runs:
+  using: composite
+  steps:
+    - id: cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ runner.temp }}/puppetxr-dist.tar.zst
+        key: dist-image-${{ hashFiles('tools/dist/Dockerfile') }}
+    - name: Load the image
+      if: steps.cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: zstd -dc "$RUNNER_TEMP/puppetxr-dist.tar.zst" | docker load
+    - name: Build the image
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        image=$(tools/dist/dist.sh --image | tail -1)
+        docker save "$image" | zstd -T0 -o "$RUNNER_TEMP/puppetxr-dist.tar.zst"
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.temp }}/puppetxr-dist.tar.zst
+        key: dist-image-${{ hashFiles('tools/dist/Dockerfile') }}
+    - shell: bash
+      run: echo PUPPETXR_DIST_IMAGE_READY=1 >> "$GITHUB_ENV"

@@ -76,7 +76,9 @@ done
     echo "  $(cmake --version | head -1)"
     echo "  ninja $(ninja --version)"
     echo "  glslc $(glslc --version | head -1)"
-    echo "  $(spirv-cross --revision 2>/dev/null | head -1 || echo spirv-cross)"
+    # Homebrew's spirv-cross prints no revision
+    spirv_cross=$(spirv-cross --revision 2>/dev/null | head -1 || true)
+    echo "  ${spirv_cross:-spirv-cross $(brew list --versions spirv-cross 2>/dev/null | cut -d' ' -f2)}"
     echo "sha256:"
     (cd "$out" && shasum -a 256 ./*.tar.gz | sed 's/^/  /')
 } > "$out/$name.buildinfo"

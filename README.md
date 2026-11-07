@@ -91,7 +91,7 @@ cmake --preset gcc-debug && cmake --build --preset gcc-debug && ctest --preset g
 - Unit tests per layer and end-to-end tests that run apps headless and compare screenshots
   and recordings. GPU tests also pass on software rasterizers (lavapipe, llvmpipe, WARP).
 - CI runs the unit tests of every pull request on Linux, Windows and macOS; the label `full-ci` adds
-  the other presets, all samples and the release build, on Linux for now (`docs/testing.md`, CI).
+  the other presets, all samples and the Linux and macOS release builds (`docs/testing.md`, CI).
 - The OpenXR conformance test suite (`-DPUPPETXR_BUILD_CTS=ON`) runs as ctest entries, including
   the interactive input, composition and scenario tests, scripted and checked against
   approved images; on Windows also on D3D11, D3D12 and OpenGL over WGL.

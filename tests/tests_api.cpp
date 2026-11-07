@@ -1141,15 +1141,18 @@ struct ApiControlTest : ApiTest
         ASSERT_NE(client, nullptr);
     }
 
-    // Sends one request line and runs frames until its reply arrives; the server answers from xrWaitFrame
-    JsonParser* request (const char* line, u32 max_frames = 20)
+    // Sends one request line and runs frames until its reply arrives; the server answers from
+    // xrWaitFrame. Bounded by time, not frames: headless frames take next to nothing, and 20 of them
+    // passed before a loaded macOS runner answered, so each reply went to the next request
+    JsonParser* request (const char* line)
     {
         usize sent = 0;
         EXPECT_EQ(os_socket_send(client, line, cstr_length(line), sent), OS_SocketResult::Ok);
         EXPECT_EQ(os_socket_send(client, "\n", 1, sent), OS_SocketResult::Ok);
         static char reply[8192];
         usize       length = 0;
-        for (u32 i = 0; i < max_frames; i++)
+        const u64   start  = os_monotonic_ns();
+        while (os_monotonic_ns() - start < 5000000000ull)
         {
             frame();
             usize received = 0;

@@ -1,6 +1,6 @@
 # Builds the releases of tools/dist/ and drafts a GitHub release from them (docs/building.md,
 # Releasing).
-# A pushed tag vX.Y.Z builds the Linux, Windows and source releases and uploads them with
+# A pushed tag vX.Y.Z builds the Linux, Windows, macOS and source releases and uploads them with
 # SHA256SUMS to a draft release named after the tag, its notes taken from
 # CHANGELOG.md. Run by hand, it builds the same from any branch without releasing (a dry run), or
 # with "pin" writes tools/dist/windows-toolchain.json from the runner's toolchain to commit.
@@ -69,8 +69,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: true
+      - uses: ./.github/actions/lfs
+      - uses: ./.github/actions/dist-image
       - run: tools/dist/dist.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -103,9 +103,14 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: true
+      - uses: ./.github/actions/lfs
       - uses: ./.github/actions/windows-toolchain
+      - if: ${{ !inputs.pin }}
+        uses: ./.github/actions/windows-vulkan
+      - if: ${{ !inputs.pin }}
+        uses: ./.github/actions/windows-runtime
+        with:
+          manifest: build/dist-windows/puppetxr-dev.json
       - name: Pin
         if: ${{ inputs.pin }}
         run: ./tools/dist/dist.ps1 -Pin
@@ -126,8 +131,26 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  macos:
+    needs: check
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: brew install cmake ninja shaderc spirv-cross vulkan-loader vulkan-headers molten-vk vulkan-validationlayers git-lfs
+      - uses: ./.github/actions/lfs
+      - run: tools/dist/dist-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: build/mac-dist/out/*
+          if-no-files-found: error
+          retention-days: 3
+
   release:
-    needs: [check, linux, source, windows]
+    needs: [check, linux, source, windows, macos]
     if: ${{ github.ref_type == 'tag' }}
     runs-on: ubuntu-24.04
     permissions:
@@ -139,7 +162,7 @@ jobs:
       - name: Checksums
         run: |
           mkdir dist
-          mv artifacts/linux/* artifacts/source/* artifacts/windows/* dist/
+          mv artifacts/linux/* artifacts/source/* artifacts/windows/* artifacts/macos/* dist/
           (cd dist && sha256sum -- * > SHA256SUMS)
           cat dist/SHA256SUMS
       - name: Draft release
