@@ -54,7 +54,10 @@ jobs:
         env:
           PUPPETXR_SAMPLES_IMAGE_READY: 1
           PUPPETXR_CCACHE: 1
-        run: tools/samples/run.sh
+        # llvmpipe's pixels depend on the CPU, so a failed comparison needs its model
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          tools/samples/run.sh
       - if: failure() && steps.test.conclusion == 'failure'
         uses: actions/upload-artifact@v4
         with:
