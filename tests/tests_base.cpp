@@ -1137,9 +1137,12 @@ static void stop_app (void* app)
     objc_send<void>(app, "postEvent:atStart:", wake, (signed char)0);
 }
 
+// Posted here, not before the loop runs: the loop may dispatch an event posted earlier before it
+// runs this, which made the app's own dispatch look like the pump's
 static void pump_inside_the_loop (void* user)
 {
     PumpProbe& probe = *(PumpProbe*)user;
+    objc_send<void>(probe.test->app, "postEvent:atStart:", probe.test->key_event(13, true), (signed char)0);
     os_pump_window_events();
     probe.after_pump = probe.test->count(OS_EventType::KeyDown, OS_Key::W);
     probe.stopped    = true;
@@ -1161,7 +1164,6 @@ static void safety_stop (void* user)
 TEST_F(PlatformAppEventsTest, the_pump_leaves_events_to_the_app_running_its_event_loop)
 {
     PumpProbe probe = { .test = this };
-    objc_send<void>(app, "postEvent:atStart:", key_event(13, true), (signed char)0);
     dispatch_async_f(dispatch_get_main_queue(), &probe, pump_inside_the_loop);
     dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 5 * (i64)NSEC_PER_SEC), dispatch_get_main_queue(), &probe, safety_stop);
     objc_send<void>(app, "run");
