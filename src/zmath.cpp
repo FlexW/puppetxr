@@ -1,5 +1,9 @@
 #include "zmath.h"
 
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <math.h>
+#endif
+
 namespace zm
 {
 
@@ -25,6 +29,25 @@ static const f64 D_SQRT2   = 1.41421356237309504880;
 static const f64 D_PIO2_1 = 1.57079632673412561417e+00;
 static const f64 D_PIO2_2 = 6.07710050650619224932e-11;
 static const f64 D_PIO2_3 = 2.02226624879595063154e-21;
+
+// IEEE 754 rounds a square root correctly, so all of these give the same bits. cl has no builtin
+static f32 sqrt_f32 (f32 x)
+{
+#if defined(_MSC_VER) && !defined(__clang__)
+    return ::sqrtf(x);
+#else
+    return __builtin_sqrtf(x);
+#endif
+}
+
+static f64 sqrt_f64 (f64 x)
+{
+#if defined(_MSC_VER) && !defined(__clang__)
+    return ::sqrt(x);
+#else
+    return __builtin_sqrt(x);
+#endif
+}
 
 static u64 f64_bits (f64 x)
 {
@@ -346,7 +369,7 @@ static Quat quat_from_axes (Vec3 x_axis, Vec3 y_axis, Vec3 z_axis)
 
 f32 sqrt (f32 x)
 {
-    return __builtin_sqrtf(x);
+    return sqrt_f32(x);
 }
 
 f32 sin (f32 x)
@@ -392,7 +415,7 @@ f32 asin (f32 x)
         return f32_from_bits(0x7FC00000u);
     }
     const f64 d = (f64)x;
-    return (f32)atan2_f64(d, __builtin_sqrt(1.0 - d * d));
+    return (f32)atan2_f64(d, sqrt_f64(1.0 - d * d));
 }
 
 f32 acos (f32 x)
@@ -402,7 +425,7 @@ f32 acos (f32 x)
         return f32_from_bits(0x7FC00000u);
     }
     const f64 d = (f64)x;
-    return (f32)atan2_f64(__builtin_sqrt(1.0 - d * d), d);
+    return (f32)atan2_f64(sqrt_f64(1.0 - d * d), d);
 }
 
 f32 atan (f32 x)

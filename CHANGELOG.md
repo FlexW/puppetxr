@@ -8,4 +8,5 @@ config start with **Breaking:**.
 ## Unreleased
 
 - `xrQuerySpacesFB` refuses a component filter without `XrSpaceStorageLocationFilterInfoFB`, as a Quest 3 does.
+- The sources build with MSVC again.
 - First public release.
