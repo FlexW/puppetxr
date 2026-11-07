@@ -1349,7 +1349,14 @@ TEST(Profile, zones_cost_next_to_nothing_while_stopped)
     {
         nested_zones();
     }
-    EXPECT_LT(os_monotonic_ns() - start, 50000000ull) << "two million stopped zones under 50 ms";
+    // Sanitizers make everything several times slower, as in tests_oxr.cpp (TEST_TIME_SCALE)
+    u64 bound_ns = 50000000ull;
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer) || __has_feature(address_sanitizer)
+    bound_ns *= 8;
+#endif
+#endif
+    EXPECT_LT(os_monotonic_ns() - start, bound_ns) << "two million stopped zones under 50 ms";
 }
 
 // A Chrome trace: complete events per zone, a name per thread; counted in the raw text, as a JSON
