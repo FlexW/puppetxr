@@ -5,3 +5,5 @@
 *.jpeg filter=lfs diff=lfs merge=lfs -text
 # README screenshots stay in plain git so the README renders in any clone and source tarball
 docs/images/*.png !filter !diff !merge -text
+# Compared byte for byte with what the dump apps write
+tests/*_dump_puppetxr.json -text

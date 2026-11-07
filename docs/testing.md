@@ -19,12 +19,12 @@ when a suite gets slower:
 
 ## CI
 
-Two tiers on hosted runners (4 CPUs), everything in the pinned image of `tools/samples/Dockerfile`
-through `tools/samples/run.sh`. Linux for now; Windows and macOS join the same jobs.
+Two tiers on hosted runners. Linux jobs run in the pinned image of `tools/samples/Dockerfile`
+through `tools/samples/run.sh`. The full tier is Linux only for now; Windows and macOS join its jobs.
 
 | workflow | when | what | time |
 |---|---|---|---|
-| `.github/workflows/ci-fast.yml` | every push to a pull request and to `main` | unit tests of `gcc-debug` and `clang-debug` | about 4 min with warm caches, 7 min cold |
+| `.github/workflows/ci-fast.yml` | every push to a pull request and to `main` | unit tests of `gcc-debug`, `clang-debug`, `win-clang-debug`, `msvc-debug` and `mac-debug` | Linux about 4 min with warm caches, 7 min cold; macOS about 6 min; Windows about 9 min, 15 min cold |
 | `.github/workflows/ci-full.yml` | a pull request with the label `full-ci`, each push while it has it, every push to `main`, by hand | unit tests of the other presets, all samples, `tools/dist/dist.sh` with its tests | about 16 min with warm caches (the release build is not cached), 22 min cold |
 
 - The job `full-ci` of `ci-full.yml` is the check to require on `main`. It fails until the label is
@@ -34,6 +34,15 @@ through `tools/samples/run.sh`. Linux for now; Windows and macOS join the same j
 - Caches: LFS files and the image (`.github/actions/setup`), `ccache` per preset
   (`.github/actions/unit`), `build/docker-samples` keyed on what the samples are built from. Each
   is saved even when a test fails.
+- Windows (`windows-2022`): the toolchain comes from `.github/actions/windows-toolchain`. The
+  runner has no Vulkan loader and no OpenGL driver, so `.github/actions/windows-vulkan` builds the
+  loader and registers lavapipe of mesa-dist-win, and the D3D tests run on WARP; the OpenGL tests
+  skip. The runner is elevated, so both loaders ignore their environment variables: the job
+  registers the runtime and the driver in `HKLM`.
+- macOS (`macos-15`, Apple silicon): the Homebrew packages of `docs/building.md`; the Vulkan tests
+  run on MoltenVK and the Metal tests on the virtual machine's GPU.
+- Windows and macOS builds have no compiler cache yet. Their caches are the LFS files, `glslc`, the
+  loader and lavapipe, saved right after they are made, as a post step saves only when a job passes.
 - Run a tier's suites locally: `tools/samples/run.sh --unit <preset>`, `tools/samples/run.sh`.
   `PUPPETXR_DOCKER_ARGS=--cpuset-cpus=0-3` and `--jobs 4` come close to a runner; `--jobs` is
   needed as the sample driver counts the host's CPUs.

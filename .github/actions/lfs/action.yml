@@ -1,0 +1,29 @@
+# The LFS files for the CI jobs (docs/testing.md, CI), from the actions cache: LFS bandwidth is
+# metered. The runtime embeds the rooms, so every build needs them.
+
+name: lfs
+description: LFS files, cached
+
+runs:
+  using: composite
+  steps:
+    - name: LFS file list
+      shell: bash
+      run: git lfs ls-files --long | cut -d' ' -f1 | sort > "$RUNNER_TEMP/lfs-files"
+    - id: lfs-id
+      shell: bash
+      run: echo "hash=$(git hash-object "$RUNNER_TEMP/lfs-files")" >> "$GITHUB_OUTPUT"
+    - id: lfs
+      uses: actions/cache/restore@v4
+      with:
+        path: .git/lfs
+        key: lfs-${{ steps.lfs-id.outputs.hash }}
+        restore-keys: lfs-
+    - name: LFS files
+      shell: bash
+      run: git lfs pull
+    - if: steps.lfs.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: .git/lfs
+        key: lfs-${{ steps.lfs-id.outputs.hash }}

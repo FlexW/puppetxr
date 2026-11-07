@@ -85,7 +85,9 @@ static b8 check (XrResult result, const char* what)
     return true;
 }
 
+#if defined(__GNUC__) || defined(__clang__)
 static void print (const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+#endif
 static void print (const char* fmt, ...)
 {
     va_list args;
