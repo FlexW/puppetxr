@@ -139,7 +139,7 @@ struct OS_State
     SDL_Semaphore*  window_wake;
     SDL_Mutex*      queue_mutex;
     OS_QueuedEvent* queue;            // OS_WINDOW_EVENT_QUEUE entries, a ring
-    u32             wake_event;       // pushed to end the window thread's wait on Linux, never queued
+    SDL_Semaphore*  window_poll;      // ends the window thread's sleep between polls on Linux
     i32             call_tickets;
     i32             call_ticket;      // of the waiting call, 0 when none
     SDL_AtomicInt   window_waiting;   // the window thread waits in os_mutex_lock
@@ -428,10 +428,6 @@ static SDL_EnumerationResult SDLCALL list_entry (void* user, const char* dirname
 // Events beyond the queue's capacity are dropped, as os_poll_events drops what does not fit
 static void queue_event (OS_QueuedEvent& queued)
 {
-    if (os_state.wake_event && queued.event.type == os_state.wake_event)
-    {
-        return;
-    }
     if (queued.event.type == SDL_EVENT_TEXT_INPUT || queued.event.type == SDL_EVENT_TEXT_EDITING)
     {
         cstr_copy(queued.text, sizeof(queued.text), queued.event.text.text);
@@ -476,9 +472,10 @@ static void queue_event (OS_QueuedEvent& queued)
 // A message to the thread ends its wait, and stays queued if it comes before the wait
 #define OS_WINDOW_WAIT_MS 100
 #else
-// SDL wakes a waiting thread only once it waits: a wakeup sent between its look at the queue and
-// its wait is lost, and the call then waits out the wait (os_run_on_window_thread)
-#define OS_WINDOW_WAIT_MS 10
+// Polls instead of waiting in SDL: SDL's wakeup takes the window a thread waits on and sends it an
+// event over a second X connection, and a window closed in between ends the process with X's
+// BadWindow. So events reach the queue this much later; a wake only ends the sleep
+#define OS_WINDOW_POLL_MS 2
 #endif
 
 static void wake_window_thread ()
@@ -486,12 +483,7 @@ static void wake_window_thread ()
 #if HAVE_WINDOWS
     PostThreadMessageW((DWORD)SDL_GetThreadID(os_state.window_thread), WM_NULL, 0, 0);
 #else
-    if (os_state.wake_event)
-    {
-        SDL_Event wake = {};
-        wake.type      = os_state.wake_event;
-        SDL_PushEvent(&wake);
-    }
+    SDL_SignalSemaphore(os_state.window_poll);
 #endif
 }
 
@@ -519,16 +511,23 @@ static int SDLCALL window_thread_main (void* user) // NOLINT(misc-const-correctn
         SDL_SignalSemaphore(os_state.window_ready);
         return 0;
     }
-    os_state.wake_event = SDL_RegisterEvents(1);
     SDL_SignalSemaphore(os_state.window_ready);
 
     while (!SDL_GetAtomicInt(&os_state.window_quit))
     {
         OS_QueuedEvent queued = {};
+#if HAVE_WINDOWS
         if (!SDL_WaitEventTimeout(&queued.event, OS_WINDOW_WAIT_MS))
         {
             continue;
         }
+#else
+        if (!SDL_PollEvent(&queued.event))
+        {
+            SDL_WaitSemaphoreTimeout(os_state.window_poll, OS_WINDOW_POLL_MS);
+            continue;
+        }
+#endif
         queue_event(queued);
     }
     // The rest of SDL stays up for the other threads until os_shutdown
@@ -547,6 +546,7 @@ static b8 start_window_thread ()
     os_state.call_mutex   = SDL_CreateMutex();
     os_state.call_done    = SDL_CreateSemaphore(0);
     os_state.window_wake  = SDL_CreateSemaphore(0);
+    os_state.window_poll  = SDL_CreateSemaphore(0);
     os_state.call_slot    = SDL_CreateMutex();
     os_state.call_ticket  = 0;
     SDL_SetAtomicInt(&os_state.window_quit, 0);
@@ -582,6 +582,7 @@ static void stop_window_thread ()
     SDL_DestroySemaphore(os_state.window_ready);
     SDL_DestroySemaphore(os_state.call_done);
     SDL_DestroySemaphore(os_state.window_wake);
+    SDL_DestroySemaphore(os_state.window_poll);
     SDL_DestroyMutex(os_state.call_mutex);
     SDL_DestroyMutex(os_state.call_slot);
     os_state.call_slot   = nullptr;
@@ -593,7 +594,7 @@ static void stop_window_thread ()
     os_state.window_ready = nullptr;
     os_state.queue_mutex  = nullptr;
     os_state.queue        = nullptr;
-    os_state.wake_event   = 0;
+    os_state.window_poll  = nullptr;
 }
 #endif
 

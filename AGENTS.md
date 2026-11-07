@@ -136,6 +136,8 @@ More in `docs/building.md` and `docs/testing.md`.
   ranges you need (grep for the `prefix_verb_noun` function name).
 - After a task: tests green, docs updated, `TODO.md` updated, short lowercase
   imperative commit message.
+- Before a pull request merges, its history holds only commits that stand on their own, usually
+  one: squash fixups and CI trial and error into them, then let CI pass on the final commits.
 - An extension that lands or changes updates its row in `docs/extensions.md`.
 - A change users notice adds a line under `## Unreleased` in `CHANGELOG.md`; a break of the C API,
   the recording format or the config starts with **Breaking:**.

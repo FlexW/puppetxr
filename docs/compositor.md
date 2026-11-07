@@ -448,8 +448,9 @@ every window call from the frame waited out `OS_MAIN_THREAD_TIMEOUT_MS`. So:
 - The frame reads only caches: a click is checked against the cached size, a resize event carries
   its pixel size, and capturing the mouse only marks relative mode pending.
 - Windows and Linux have a window thread of their own (`HAVE_WINDOW_THREAD` in `platform.cpp`),
-  macOS the app's main thread. On Linux a wakeup SDL sends before the thread waits is lost, so the
-  thread waits at most 10 ms for events and a blocking call repeats its wake until it ran.
+  macOS the app's main thread. On Linux the thread never waits inside SDL, whose wakeup can
+  end the process with X's BadWindow when the window it targets just closed: it polls and sleeps on
+  a semaphore of its own, at most 2 ms (`OS_WINDOW_POLL_MS`), which a wake ends.
 - A posted tick on the window thread waits for the runtime lock, whose holder may wait for a
   window call there (`xrDestroySession` shutting the panels down): the window thread waiting in
   `os_mutex_lock` runs the waiting call (`call_ticket`: SDL's queued callback or the waiting

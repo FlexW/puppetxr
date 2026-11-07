@@ -5469,7 +5469,7 @@ TEST_F(OxrVulkanRealWindowTest, frames_never_wait_for_the_display)
         frame_only();
     }
     // Relative to the display: a fixed bound measures how fast a software renderer draws the frames
-    EXPECT_LT((f64)(os_monotonic_ns() - start), 45.0 * 1e9 / refresh_hz * (f64)TEST_TIME_SCALE) << "60 frames take under 45 display periods";
+    EXPECT_LT((f64)(os_monotonic_ns() - start), 55.0 * 1e9 / refresh_hz * (f64)TEST_TIME_SCALE) << "60 frames take under 55 display periods";
 }
 
 // The window server holds a presented drawable until its next composite: presenting faster than

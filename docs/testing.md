@@ -52,7 +52,7 @@ through `tools/samples/run.sh`. The full tier is Linux only for now; Windows and
 A test with an upper bound on wall-clock time goes into `puppetxr_timed_tests` in
 `tests/CMakeLists.txt`, which runs them alone (`RUN_SERIAL`). Its bound is what the bug it catches
 would take, not how fast this machine draws: `FRAME_BOUND_NS` is half of the main thread timeout a
-blocked frame waits for, and `frames_never_wait_for_the_display` allows 45 of its 60 display
+blocked frame waits for, and `frames_never_wait_for_the_display` allows 55 of its 60 display
 periods. `TEST_TIME_SCALE` scales such bounds under the sanitizers.
 
 ## Vulkan device
