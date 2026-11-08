@@ -510,7 +510,9 @@ with `--vz-rosetta`; QEMU works but is several times slower). The Dockerfile nee
 are passed through; `PUPPETXR_CMAKE_ARGS` and `PUPPETXR_DOCKER_ARGS` add configure and `docker run`
 arguments, e.g. `FETCHCONTENT_SOURCE_DIR_<dep>` with a `-v` mount for local dependency
 checkouts. All sample references come from it. llvmpipe JITs for the host CPU, so another x86 CPU
-moves pixels by 1 (TODO step 12): `run.sh` and the Linux `samples` entry pass `--tolerance 1`.
+moves pixels by 1 and an Intel one some by up to 3 (the references are from AMD CPUs): `run.sh` and
+the Linux `samples` entry pass `--tolerance 1 --intel-tolerance 3`, and the driver prints which it
+took (`tolerance 3 on GenuineIntel`; `--cpuinfo` reads another file than `/proc/cpuinfo`).
 
 ## End-to-end tests for apps
 
