@@ -288,6 +288,15 @@ advertised: cts_vulkan2 103 cases, 0 failing (2026-10-20).
 - [x] render: depth attachments, depth-only passes, two-texture pipelines; comp: passthrough layer from the visual mesh
 - [x] XR_FB_passthrough with styles, ALPHA_BLEND environment blend mode
 - [x] XR_META_environment_depth (visual mesh depth, D16 array swapchain), XR_META_environment_raycast
+- [ ] environment depth from cameras apart from the eyes: the depth is rendered from the eye views, so an app that maps a
+  pixel into the wrong depth view (the eye's pose or field of view where the depth view's belongs, the other eye's, a
+  reprojection that drops the offset) still lines up and no test of it can fail. On a Quest the depth comes from
+  cameras offset from the eyes, with fields of view of their own, at a lower rate than frames and some milliseconds
+  old. Start: a config block (`docs/config.md`) for the depth views' offset from each eye (position, orientation),
+  their field of view, and how many frames old an image is; `comp_render_depth` renders from those views and
+  `xrAcquireEnvironmentDepthImageMETA` reports them (`docs/compositor.md`, Environment depth). Done when a gtest
+  shows an occluder's edge, mapped with the reported views, where the room has it, and mapped with the eye's views,
+  off by the offset; the default stays the eye views so existing goldens hold
 - [x] Blender exporter add-on (`tools/blender`), rooms: bedroom, office, living_room, l_shaped
 - [x] disabled_extensions: config, `PUPPETXR_DISABLE_EXTENSIONS`, C API, for testing apps without an extension
 - [x] tracking origin offset: stage space placed in the room fixed or per run (`origin_offset`, `docs/anchors.md`)
