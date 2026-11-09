@@ -2370,6 +2370,20 @@ def timed_test(name, opts):
     return shots, problems, time.time() - start
 
 
+# llvmpipe compiles its shaders for the host CPU: the references come from AMD CPUs, and Intel ones
+# draw a few pixels of them 2 or 3 steps apart
+def cpu_vendor(path):
+    try:
+        with open(path) as f:
+            for line in f:
+                key, _, value = line.partition(":")
+                if key.strip() == "vendor_id":
+                    return value.strip()
+    except OSError:
+        pass
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--samples", required=True)
@@ -2381,6 +2395,8 @@ def main():
     parser.add_argument("--tests", default="")
     parser.add_argument("--apps", default="", help="only tests of these sample projects, comma separated")
     parser.add_argument("--tolerance", type=int, default=0)
+    parser.add_argument("--intel-tolerance", type=int, help="the tolerance on an Intel CPU, if higher")
+    parser.add_argument("--cpuinfo", default="/proc/cpuinfo", help="where to read the CPU vendor")
     parser.add_argument("--pixel-budget", type=float, default=0.0, help="percent of a screenshot's pixels that may differ by more than the tolerance")
     parser.add_argument("--timeout", type=float, default=300.0)
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1)
@@ -2388,6 +2404,10 @@ def main():
     opts = parser.parse_args()
     for key in ("samples", "runtime", "puppetxrctl", "references", "out"):
         setattr(opts, key, os.path.abspath(getattr(opts, key)))
+    vendor = cpu_vendor(opts.cpuinfo)
+    if vendor == "GenuineIntel" and opts.intel_tolerance is not None:
+        opts.tolerance = max(opts.tolerance, opts.intel_tolerance)
+    print(f"tolerance {opts.tolerance} on {vendor or 'an unknown CPU'}")
 
     apps = [a for a in opts.apps.split(",") if a]
     names = [n for n in opts.tests.split(",") if n] or [n for n in TESTS if not apps or TESTS[n]["app"] in apps]

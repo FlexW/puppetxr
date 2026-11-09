@@ -74,4 +74,4 @@ fi
 run sh -c "cmake -S . -B $build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPUPPETXR_BUILD_SAMPLES=ON -DPUPPETXR_BUILD_TESTS=OFF ${PUPPETXR_CMAKE_ARGS:-} >/dev/null \
     && cmake --build $build \
     && python3 tools/sample_tests.py --samples $build/samples --runtime $build/puppetxr-dev.json --puppetxrctl $build/bin/puppetxrctl \
-        --references tests/samples --out $build/samples_out --tolerance 1 \"\$@\"" sh "$@"
+        --references tests/samples --out $build/samples_out --tolerance 1 --intel-tolerance 3 \"\$@\"" sh "$@"

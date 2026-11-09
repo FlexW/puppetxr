@@ -420,9 +420,10 @@ if (NOT PUPPETXR_SAMPLE_APPS)
 endif ()
 list(JOIN PUPPETXR_SAMPLE_APPS "," PUPPETXR_SAMPLE_APPS_ARG)
 # The Mesa of mesa-dist-win draws a few pixels of the Linux references up to 3 apart
-# llvmpipe JITs for the host CPU, so another x86 CPU moves pixels by 1 (docs/testing.md)
+# llvmpipe JITs for the host CPU, so another x86 CPU moves pixels by 1, an Intel one by up to 3
+# (docs/testing.md)
 set(PUPPETXR_SAMPLES_TOLERANCE 1)
-set(PUPPETXR_SAMPLES_EXTRA "")
+set(PUPPETXR_SAMPLES_EXTRA --intel-tolerance 3)
 if (WIN32)
     set(PUPPETXR_SAMPLES_TOLERANCE 3)
 endif ()
