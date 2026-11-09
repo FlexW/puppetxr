@@ -3971,6 +3971,51 @@ TEST(SimBody, editing_an_arm_joint_poses_the_arm)
     EXPECT_EQ(sim_get_body(sim).limbs[(u32)SIM_Limb::RightLeg], SIM_LimbMode::Posed);
 }
 
+static SIM_BodyJoint right_hand_joint (SIM_HandJoint joint)
+{
+    return (SIM_BodyJoint)((u32)SIM_BodyJoint::RightHandPalm + (u32)joint);
+}
+
+TEST(SimBody, an_untracked_hand_takes_the_finger_rotations)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    SIM_Sample sample = body_sample();
+    sample.devices[(u32)SIM_Device::RightHand].active = false;
+    const SIM_BodyJoint proximal = right_hand_joint(SIM_HandJoint::IndexProximal);
+    const SIM_BodyJoint tip      = right_hand_joint(SIM_HandJoint::IndexTip);
+    const SIM_BodyJoint palm     = SIM_BodyJoint::RightHandPalm;
+    SIM_BodyJoints      open     = {};
+    sim_body_joints(sim, sample, open);
+
+    // In the T-pose the right fingers point along +X, the palm down: -90 degrees about Z curls
+    sim_set_body_joint(sim, proximal, zm::quat_from_axis_angle({ 0.0f, 0.0f, 1.0f }, -0.5f * zm::PI));
+    SIM_BodyJoints curled = {};
+    sim_body_joints(sim, sample, curled);
+    EXPECT_TRUE(zm::near(joint_at(curled, proximal), joint_at(open, proximal), 1e-5f)) << "the knuckle stays";
+    EXPECT_LT(zm::length(joint_at(curled, tip) - joint_at(curled, palm)), zm::length(joint_at(open, tip) - joint_at(open, palm)) - 0.02f) << "the index curls toward the palm";
+    EXPECT_NEAR(bone(curled.poses, proximal, tip), bone(open.poses, proximal, tip), 1e-4f) << "the finger keeps its length";
+    const Vec3 along = zm::rotate(curled.poses[(u32)proximal].orientation, { 1.0f, 0.0f, 0.0f });
+    EXPECT_GT(zm::dot(along, zm::normalize(joint_at(curled, right_hand_joint(SIM_HandJoint::IndexIntermediate)) - joint_at(curled, proximal))), 0.999f) << "Meta's right hand: +X toward the fingertips";
+
+    sim_set_body_joint(sim, proximal, zm::quat_from_axis_angle({ 1.0f, 0.0f, 0.0f }, -0.5f * zm::PI));
+    SIM_BodyJoints twisted = {};
+    sim_body_joints(sim, sample, twisted);
+    EXPECT_GT(zm::length(joint_at(twisted, tip) - joint_at(curled, tip)), 0.02f) << "another axis, another pose";
+
+    SIM_BodyJoints low = {};
+    sim_body_joints(sim, sample, low, false);
+    EXPECT_TRUE(zm::near(joint_at(low, tip) - joint_at(low, palm), joint_at(open, tip) - joint_at(open, palm), 1e-4f)) << "low fidelity keeps the hand open";
+
+    sample.devices[(u32)SIM_Device::RightHand].active = true;
+    SIM_BodyJoints held = {};
+    sim_body_joints(sim, sample, held);
+    sim_set_body_joint(sim, proximal, zm::QUAT_IDENTITY);
+    SIM_BodyJoints unrotated = {};
+    sim_body_joints(sim, sample, unrotated);
+    EXPECT_TRUE(zm::near(joint_at(held, tip), joint_at(unrotated, tip), 1e-6f)) << "a tracked hand is the simulated one";
+}
+
 TEST(SimBody, feet_stay_on_the_floor_until_the_legs_cannot_follow)
 {
     SIM_Sim* sim = make_sim();

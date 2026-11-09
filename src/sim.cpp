@@ -2245,6 +2245,20 @@ static Vec3 limb_normal (Vec3 line, Vec3 pole)
     return zm::normalize(zm::cross(dir, bend));
 }
 
+// Whether any joint of the hand starting at `first` past its wrist is rotated; an open hand keeps
+// the exact rest hand
+static b8 body_fingers_posed (const SIM_BodyState& body, u32 first)
+{
+    for (u32 j = 0; j < SIM_HAND_JOINT_COUNT; j++)
+    {
+        if (j != (u32)SIM_HandJoint::Wrist && !zm::equal(body.rotations[first + j], zm::QUAT_IDENTITY))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 static SIM_Limb body_limb (u32 joint)
 {
     u32 first = 0;
@@ -5223,6 +5237,27 @@ void sim_body_joints (const SIM_Sim* sim, const SIM_Sample& sample, SIM_BodyJoin
             for (u32 j = 0; j < SIM_HAND_JOINT_COUNT; j++)
             {
                 hand_poses[j] = { hand.poses[j].position + shift, hand.poses[j].orientation };
+            }
+        }
+        else if (!held && body_fingers_posed(body, first))
+        {
+            // Forward kinematics on the T-pose hand from the posed wrist; the palm turns with the
+            // wrist, not the wrist twist, as on the open hand
+            Pose posed[SIM_HAND_JOINT_COUNT];
+            posed[(u32)SIM_HandJoint::Wrist] = frames[wrist];
+            for (u32 j = 0; j < SIM_HAND_JOINT_COUNT; j++)
+            {
+                if (j == (u32)SIM_HandJoint::Wrist)
+                {
+                    continue;
+                }
+                const u32   p      = j == (u32)SIM_HandJoint::Palm ? (u32)SIM_HandJoint::Wrist : (u32)body_parent(first + j) - first;
+                const Pose& parent = posed[p];
+                posed[j]           = { parent.position + zm::rotate(parent.orientation, bind[side][j].position - bind[side][p].position), zm::normalize(parent.orientation * body.rotations[first + j]) };
+            }
+            for (u32 j = 0; j < SIM_HAND_JOINT_COUNT; j++)
+            {
+                hand_poses[j] = { posed[j].position, zm::normalize(posed[j].orientation * bind[side][j].orientation) };
             }
         }
         else

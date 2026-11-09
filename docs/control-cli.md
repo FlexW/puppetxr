@@ -83,7 +83,7 @@ puppetxrctl [--target <pid|app|host:port>] [--json] [--timeout <ms>] <command> [
 | `body get`, `body set <json>`, `body reset` | the body as JSON, JSON merged onto it, back to the configured body (`get_body`, `set_body`, `reset_body`) |
 | `body save <file>`, `body load <file>` | the body as JSON into a file of this machine; the configured body with the file's on top, in one request |
 | `body height <m>`, `body pose stand\|t_pose\|a_pose\|arms_forward\|sit`, `body bone <joint> <scale>` | the shape and the pose; a bone scale lengthens the bones from the joint to its children |
-| `body joint <joint> rot <x y z w>`, `body joint <joint> tracked on\|off`, `body joint <joint> confidence <c>` | a joint's rotation relative to the T-pose in the body's axes (an arm or leg joint poses its limb), whether it is tracked, its confidence |
+| `body joint <joint> rot <x y z w>`, `body joint <joint> tracked on\|off`, `body joint <joint> confidence <c>` | a joint's rotation relative to the T-pose in the body's axes (an arm, hand or leg joint poses its limb; a hand joint bends its finger while the hand is untracked), whether it is tracked, its confidence |
 | `body arm\|leg left\|right follow\|posed` | an arm follows its controller and a leg the floor, or the limb holds its pose |
 | `face` | the 70 face weights and where the eyes look (`get_face_weights`, `get_eye_gazes`, `docs/face-tracking.md`) |
 | `face get`, `face set <json>`, `face reset`, `face save <file>`, `face load <file>` | as for `body` |
