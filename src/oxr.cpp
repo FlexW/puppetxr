@@ -14624,7 +14624,8 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrGetBodySkeletonFB (XrBodyTrackerFB b
 
     SIM_BodySkeleton source = {};
     sim_body_skeleton(runtime()->sim, source);
-    const i32 none = tracker->full_body ? (i32)XR_FULL_BODY_JOINT_NONE_META : (i32)XR_BODY_JOINT_NONE_FB;
+    // -1 in both joint sets, as a Quest 3 reports, not XR_FULL_BODY_JOINT_NONE_META
+    const i32 none = (i32)XR_BODY_JOINT_NONE_FB;
     for (u32 j = 0; j < count; j++)
     {
         skeleton->joints[j] = { .joint = (i32)j, .parentJoint = source.parents[j] == SIM_BODY_NO_PARENT ? none : (i32)source.parents[j], .pose = pose_to_xr(source.poses[j]) };

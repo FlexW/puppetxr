@@ -3877,13 +3877,8 @@ TEST(SimBody, bones_keep_their_lengths_in_every_pose)
                 sample.devices[(u32)SIM_Device::RightHand].pose.position = head + Vec3{ 1.5f, 0.3f, 0.0f };
                 SIM_BodyJoints joints = {};
                 sim_body_joints(sim, sample, joints);
-                // The palm hangs from the wrist twist across the turning wrist, so its distance varies
                 for (u32 j = 2; j < SIM_BODY_JOINT_COUNT; j++)
                 {
-                    if (j == (u32)SIM_BodyJoint::LeftHandPalm || j == (u32)SIM_BodyJoint::RightHandPalm)
-                    {
-                        continue;
-                    }
                     const SIM_BodyJoint parent = (SIM_BodyJoint)skeleton.parents[j];
                     EXPECT_NEAR(bone(joints.poses, parent, (SIM_BodyJoint)j), bone(skeleton.poses, parent, (SIM_BodyJoint)j), 2e-4f) << sim_body_joint_name((SIM_BodyJoint)j) << " in " << sim_body_pose_name((SIM_BodyPose)preset) << " at height " << head.y;
                 }

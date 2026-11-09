@@ -16280,12 +16280,18 @@ TEST_F(OxrBodyTest, skeleton_is_the_simulated_t_pose)
         for (u32 j = 0; j < count; j++)
         {
             EXPECT_EQ(joints[j].joint, (i32)j);
-            const i32 none = full ? (i32)XR_FULL_BODY_JOINT_NONE_META : -1;
-            EXPECT_EQ(joints[j].parentJoint, expected.parents[j] == SIM_BODY_NO_PARENT ? none : (i32)expected.parents[j]) << j;
+            EXPECT_EQ(joints[j].parentJoint, expected.parents[j] == SIM_BODY_NO_PARENT ? (i32)XR_BODY_JOINT_NONE_FB : (i32)expected.parents[j]) << j;
             EXPECT_TRUE(zm::near(body_vec(joints[j].pose.position), expected.poses[j].position, 1e-6f)) << j;
             EXPECT_TRUE(zm::near(body_quat(joints[j].pose.orientation), expected.poses[j].orientation, 1e-6f)) << j;
         }
-        EXPECT_EQ(joints[XR_BODY_JOINT_LEFT_HAND_WRIST_FB].parentJoint, XR_BODY_JOINT_LEFT_HAND_WRIST_TWIST_FB) << "Meta's hierarchy";
+        // As a Quest 3 reports it: the hand's wrist hangs from the lower arm, beside the wrist twist,
+        // the palm from the wrist, and the root's parent is -1 in both joint sets
+        EXPECT_EQ(joints[XR_BODY_JOINT_ROOT_FB].parentJoint, XR_BODY_JOINT_NONE_FB);
+        EXPECT_EQ(joints[XR_BODY_JOINT_LEFT_HAND_WRIST_TWIST_FB].parentJoint, XR_BODY_JOINT_LEFT_ARM_LOWER_FB);
+        EXPECT_EQ(joints[XR_BODY_JOINT_LEFT_HAND_WRIST_FB].parentJoint, XR_BODY_JOINT_LEFT_ARM_LOWER_FB);
+        EXPECT_EQ(joints[XR_BODY_JOINT_LEFT_HAND_PALM_FB].parentJoint, XR_BODY_JOINT_LEFT_HAND_WRIST_FB);
+        EXPECT_EQ(joints[XR_BODY_JOINT_RIGHT_HAND_WRIST_FB].parentJoint, XR_BODY_JOINT_RIGHT_ARM_LOWER_FB);
+        EXPECT_EQ(joints[XR_BODY_JOINT_RIGHT_HAND_PALM_FB].parentJoint, XR_BODY_JOINT_RIGHT_HAND_WRIST_FB);
         EXPECT_EQ(destroy_tracker(body_tracker), XR_SUCCESS);
     }
 }
