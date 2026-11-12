@@ -72,7 +72,9 @@ Per frame, from that state and the simulated devices:
    pose. Editing an arm joint switches that arm to `posed`; `follow` switches back.
 3. **Hands**: the 26 hand joints are the simulated hand's (`sim_hand_joints`), its fingers
    following the hand's inputs; an inactive or untracked hand is the open rest hand on the
-   posed wrist.
+   posed wrist, its fingers posed by their joints' rotations (forward kinematics on the T-pose
+   hand, the palm turning with the hand's wrist rather than the wrist twist). With no hand joint
+   rotated it is the rest hand exactly (`body_fingers_posed`). A tracked hand ignores them.
 4. **Legs** (full body): mode `follow` (default) or `posed`, like the arms. In `follow` the hips
    hang below the neck along the posed spine and the feet stay flat on the floor under them, the
    ankles' rotation keeping the soles level; two-bone IK bends the knees toward a pole ahead of
@@ -113,7 +115,9 @@ wrist twist, the ankle from the ankle twist. `xrGetBodySkeletonFB` gives model-s
 root at the origin; the feet are on the floor.
 
 Internally a joint's frame is the body's axes in the T-pose and `SIM_BodyState.rotations` are
-in it; `body_basis` turns a frame into Meta's when the joints are reported.
+in it; `body_basis` turns a frame into Meta's when the joints are reported. A rotation is relative
+to the joint's parent, except the palm's: it turns on the hand's wrist, not on the wrist twist the
+skeleton reports as its parent, so rotations derived from located joints carry the wrist's in the palm.
 
 ## Recording
 
@@ -137,7 +141,8 @@ device edits are. The header holds the skeleton change period, and a replay take
   `{"height": 1.75, "pose": "t_pose", "bones": {"left_arm_upper": 1.2}, "joints":
   {"left_arm_lower": {"rotation": [x, y, z, w], "tracked": false, "confidence": 0.5}},
   "limbs": {"left_arm": "posed"}}`, every member optional, applied in that order and all or
-  nothing (`sim_body_apply_json`). A rotated arm or leg joint poses its limb; `limbs` then wins.
+  nothing (`sim_body_apply_json`). A rotated arm or leg joint poses its limb; `limbs` then wins. A
+  hand joint's rotation poses the arm too, and bends that finger while the hand is untracked.
   `sim_body_to_json` writes what differs from standing; its floats (`json_format_f32`) and the
   rotations (kept as given when of unit length) load back bit-exactly.
 - C API: `get_body_joints`, `get_body`, `set_body` (merge), `reset_body`
@@ -154,7 +159,7 @@ device edits are. The header holds the skeleton change period, and a replay take
 - `tests_sim.cpp`: bone lengths equal the shape's in every frame and pose; a bone scale changes
   only that bone (and only that side); the wrist meets the controller when in reach and points
   at it out of reach; the elbow does not flip across a sweep of targets around the shoulder;
-  editing an arm joint switches it to posed; a preset gives the same joints twice; dropped
+  editing an arm joint switches it to posed; an untracked hand bends its fingers by their rotations, a tracked or low fidelity one does not; a preset gives the same joints twice; dropped
   joints report untracked; lowering the head bends the knees with the soles level on the floor,
   below the legs' fold limit the feet sink with it, above their length the feet leave the floor,
   and the knees never bend backwards across a sweep of head heights.

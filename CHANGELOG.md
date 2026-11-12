@@ -7,6 +7,8 @@ config start with **Breaking:**.
 
 ## Unreleased
 
+- Body tracking: an untracked hand bends its fingers by their joints' rotations (`body joint right_hand_index_proximal rot ...`); before, hand joint rotations were stored but had no effect.
+
 ## 0.1.0 - 2026-11-07
 
 - Body tracking: `body_tracking.skeleton_change_period_ms` (or `PUPPETXR_SKELETON_CHANGE_PERIOD_MS`) makes the skeleton change count rise once per period with the same shape, as some runtimes do; off by default.
