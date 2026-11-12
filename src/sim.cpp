@@ -2051,18 +2051,19 @@ static b8 body_hand_joint (u32 joint, u32& out_first)
     return joint >= (u32)SIM_BodyJoint::LeftHandPalm && joint < (u32)SIM_BodyJoint::LeftUpperLeg;
 }
 
-// Meta's hierarchy: the palm and the wrist hang from the wrist twist, the ankle from the ankle twist
+// Meta's hierarchy as a Quest 3 reports it: the hand's wrist hangs from the lower arm beside the
+// wrist twist, the palm from the wrist, the ankle from the ankle twist
 static u8 body_parent (u32 joint)
 {
     u32 first = 0;
     if (body_hand_joint(joint, first))
     {
         const u32 local = joint - first;
-        if (local <= (u32)SIM_HandJoint::Wrist)
+        if (local == (u32)SIM_HandJoint::Wrist)
         {
-            return (u8)(first == (u32)SIM_BodyJoint::LeftHandPalm ? SIM_BodyJoint::LeftWristTwist : SIM_BodyJoint::RightWristTwist);
+            return (u8)(first == (u32)SIM_BodyJoint::LeftHandPalm ? SIM_BodyJoint::LeftArmLower : SIM_BodyJoint::RightArmLower);
         }
-        const b8 base = local == (u32)SIM_HandJoint::ThumbMetacarpal || local == (u32)SIM_HandJoint::IndexMetacarpal || local == (u32)SIM_HandJoint::MiddleMetacarpal || local == (u32)SIM_HandJoint::RingMetacarpal || local == (u32)SIM_HandJoint::LittleMetacarpal;
+        const b8 base = local == (u32)SIM_HandJoint::Palm || local == (u32)SIM_HandJoint::ThumbMetacarpal || local == (u32)SIM_HandJoint::IndexMetacarpal || local == (u32)SIM_HandJoint::MiddleMetacarpal || local == (u32)SIM_HandJoint::RingMetacarpal || local == (u32)SIM_HandJoint::LittleMetacarpal;
         return (u8)(base ? first + (u32)SIM_HandJoint::Wrist : joint - 1);
     }
     switch ((SIM_BodyJoint)joint)
@@ -5241,8 +5242,7 @@ void sim_body_joints (const SIM_Sim* sim, const SIM_Sample& sample, SIM_BodyJoin
         }
         else if (!held && body_fingers_posed(body, first))
         {
-            // Forward kinematics on the T-pose hand from the posed wrist; the palm turns with the
-            // wrist, not the wrist twist, as on the open hand
+            // Forward kinematics on the T-pose hand from the posed wrist
             Pose posed[SIM_HAND_JOINT_COUNT];
             posed[(u32)SIM_HandJoint::Wrist] = frames[wrist];
             for (u32 j = 0; j < SIM_HAND_JOINT_COUNT; j++)
@@ -5251,7 +5251,7 @@ void sim_body_joints (const SIM_Sim* sim, const SIM_Sample& sample, SIM_BodyJoin
                 {
                     continue;
                 }
-                const u32   p      = j == (u32)SIM_HandJoint::Palm ? (u32)SIM_HandJoint::Wrist : (u32)body_parent(first + j) - first;
+                const u32   p      = (u32)body_parent(first + j) - first;
                 const Pose& parent = posed[p];
                 posed[j]           = { parent.position + zm::rotate(parent.orientation, bind[side][j].position - bind[side][p].position), zm::normalize(parent.orientation * body.rotations[first + j]) };
             }

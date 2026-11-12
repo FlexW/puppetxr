@@ -73,7 +73,7 @@ Per frame, from that state and the simulated devices:
 3. **Hands**: the 26 hand joints are the simulated hand's (`sim_hand_joints`), its fingers
    following the hand's inputs; an inactive or untracked hand is the open rest hand on the
    posed wrist, its fingers posed by their joints' rotations (forward kinematics on the T-pose
-   hand, the palm turning with the hand's wrist rather than the wrist twist). With no hand joint
+   hand). With no hand joint
    rotated it is the rest hand exactly (`body_fingers_posed`). A tracked hand ignores them.
 4. **Legs** (full body): mode `follow` (default) or `posed`, like the arms. In `follow` the hips
    hang below the neck along the posed spine and the feet stay flat on the floor under them, the
@@ -110,14 +110,16 @@ package and the per-joint corrections of Godot's OpenXR vendors plugin:
 So the bone runs along X: toward the child along -X on the left side and the spine, +X on the
 right. The table rounds: each joint's axes are those of Meta's default skeleton exactly, a few
 degrees off these on the arms, the spine and the feet (`SIM_BodyRest.basis`). The hand joints are not XR_EXT_hand_tracking's: puppetxr turns the simulated hand's joints
-into these axes (`body_hand_basis` in `src/sim.cpp`). The palm and the hand's wrist hang from the
-wrist twist, the ankle from the ankle twist. `xrGetBodySkeletonFB` gives model-space poses, the
+into these axes (`body_hand_basis` in `src/sim.cpp`). The hierarchy is the one a Quest 3 reports
+(`apps/body_dump` on the device): the hand's wrist hangs from the lower arm, beside the wrist
+twist, the palm from the hand's wrist, the ankle from the ankle twist, and the root's parent is -1
+in both joint sets rather than `XR_FULL_BODY_JOINT_NONE_META`. `xrGetBodySkeletonFB` gives model-space poses, the
 root at the origin; the feet are on the floor.
 
 Internally a joint's frame is the body's axes in the T-pose and `SIM_BodyState.rotations` are
 in it; `body_basis` turns a frame into Meta's when the joints are reported. A rotation is relative
-to the joint's parent, except the palm's: it turns on the hand's wrist, not on the wrist twist the
-skeleton reports as its parent, so rotations derived from located joints carry the wrist's in the palm.
+to the joint's parent in that hierarchy, so rotations derived from located joints and the reported
+parents pose the body back.
 
 ## Recording
 
