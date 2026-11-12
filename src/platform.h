@@ -347,6 +347,7 @@ b8            os_push_focus_lost    (OS_Window* window);                        
 // OS_MAIN_THREAD_TIMEOUT_MS is withdrawn without running, and later calls fail at once until the
 // main thread serves again (it does whenever it runs its run loop, waits for an os mutex or polls).
 #define OS_MAIN_THREAD_TIMEOUT_MS 250
+#define OS_WITHDRAWN_CALL_LOG     "The main thread did not take a window call"
 #define OS_MUTEX_SPIN_NS          200000
 typedef void  OS_WindowThreadFunction (void* user);
 void          os_run_on_window_thread (OS_WindowThreadFunction* function, void* user);

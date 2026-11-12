@@ -711,7 +711,7 @@ static b8 run_on_main_thread (OS_WindowThreadFunction* function, void* user, u32
             if (!os_main_queue.stall_logged)
             {
                 os_main_queue.stall_logged = true;
-                LOG_WARNING("The main thread did not take a window call within %u ms; window calls fail until it comes by (the app blocks it on the thread that calls OpenXR)", timeout_ms);
+                LOG_WARNING(OS_WITHDRAWN_CALL_LOG " within %u ms; window calls fail until it comes by (the app blocks it on the thread that calls OpenXR)", timeout_ms);
             }
             SDL_UnlockMutex(os_main_queue.mutex);
             return false;
