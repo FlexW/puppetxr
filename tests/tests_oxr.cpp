@@ -2641,6 +2641,20 @@ static u32 log_lines_with (const char* text)
     return count;
 }
 
+// Only the lines logged after `sequence` (os_log_sequence), however many the history dropped
+static u32 log_lines_since_with (u64 sequence, const char* text)
+{
+    const u32 kept  = os_log_history_count();
+    const u64 added = os_log_sequence() - sequence;
+    const u32 first = added < kept ? kept - (u32)added : 0;
+    u32       count = 0;
+    for (u32 i = first; i < kept; i++)
+    {
+        count += cstr_find(os_log_history(i)->text, text) != nullptr ? 1u : 0u;
+    }
+    return count;
+}
+
 // Startup time is the engine's or ours: the first frame with layers says which, once a run
 TEST_F(OxrVulkanTest, startup_is_logged_at_the_first_frame_with_layers)
 {
@@ -5238,12 +5252,8 @@ struct OxrThreadWindowedTest : OxrWindowedTest
     {
         OxrThreadWindowedTest* test;
         u32                    frames;
-        u64                    longest_ns;
-        u32                    longest_frame;
         b8                     threads_differ;
     };
-
-    u32 longest_frame = 0;
 
     static i32 frame_thread (void* user)
     {
@@ -5251,28 +5261,24 @@ struct OxrThreadWindowedTest : OxrWindowedTest
         run.threads_differ = !os_is_window_thread() || os_is_headless();
         for (u32 i = 0; i < run.frames; i++)
         {
-            const u64 start = os_monotonic_ns();
             run.test->frame_only();
-            const u64 took_ns = os_monotonic_ns() - start;
-            run.longest_frame = took_ns > run.longest_ns ? i : run.longest_frame;
-            run.longest_ns    = zm::max(run.longest_ns, took_ns);
         }
         return 0;
     }
 
-    // A frame waiting for the blocked main thread takes OS_MAIN_THREAD_TIMEOUT_MS; well below it, as
-    // a software renderer takes tens of milliseconds to draw one
-    static constexpr u64 FRAME_BOUND_NS = OS_MAIN_THREAD_TIMEOUT_MS * 1000000ull / 2 * TEST_TIME_SCALE;
-
-    // Returns the longest frame
-    u64 frames_on_a_thread (u32 count)
+    // A frame waiting for the blocked main thread has its window call withdrawn after
+    // OS_MAIN_THREAD_TIMEOUT_MS, which the platform logs once until the main thread serves again;
+    // so it serves first. A frame's time cannot tell that wait from a slow software renderer.
+    // Returns the window calls withdrawn while the frames ran
+    u32 frames_on_a_thread (u32 count)
     {
-        FrameThread run    = { .test = this, .frames = count };
-        OS_Thread*  thread = os_thread_create("frames", frame_thread, &run);
+        os_serve_posted(0);
+        const u64   sequence = os_log_sequence();
+        FrameThread run      = { .test = this, .frames = count };
+        OS_Thread*  thread   = os_thread_create("frames", frame_thread, &run);
         os_thread_join(thread);
         EXPECT_TRUE(run.threads_differ);
-        longest_frame = run.longest_frame;
-        return run.longest_ns;
+        return log_lines_since_with(sequence, OS_WITHDRAWN_CALL_LOG);
     }
 };
 
@@ -5287,7 +5293,7 @@ TEST_F(OxrThreadWindowedTest, frames_never_wait_for_a_main_thread_blocked_on_the
     begin_session();
     OXR_Runtime* rt = oxr_get_runtime();
     ASSERT_NE(rt->window, nullptr);
-    EXPECT_LT(frames_on_a_thread(30), FRAME_BOUND_NS) << "no frame waits for the main thread; the longest is frame " << longest_frame;
+    EXPECT_EQ(frames_on_a_thread(30), 0u) << "no frame waits for the main thread";
     if (os_is_window_thread())
     {
         EXPECT_TRUE(rt->window_tick_pending) << "the window's part waits for the main thread";
@@ -5380,7 +5386,7 @@ TEST_F(OxrThreadWindowedTest, taking_the_mouse_never_waits_for_a_main_thread_blo
     ticks();
     os_push_mouse_event(rt->window, 30.0f, 10.0f, OS_Key::MouseLeft, true);
     os_push_mouse_event(rt->window, 30.0f, 10.0f, OS_Key::MouseLeft, false);
-    EXPECT_LT(frames_on_a_thread(3), FRAME_BOUND_NS);
+    EXPECT_EQ(frames_on_a_thread(3), 0u);
     EXPECT_TRUE(rt->mouse_captured);
     EXPECT_TRUE(rt->window_relative_pending || !os_is_window_thread()) << "the window thread of its own may have applied it";
     ticks();
@@ -5388,7 +5394,7 @@ TEST_F(OxrThreadWindowedTest, taking_the_mouse_never_waits_for_a_main_thread_blo
 
     os_push_key_event(rt->window, OS_Key::Escape, true, false);
     os_push_key_event(rt->window, OS_Key::Escape, false, false);
-    EXPECT_LT(frames_on_a_thread(3), FRAME_BOUND_NS);
+    EXPECT_EQ(frames_on_a_thread(3), 0u);
     EXPECT_FALSE(rt->mouse_captured);
     EXPECT_TRUE(rt->window_relative_pending || !os_is_window_thread());
     ticks();

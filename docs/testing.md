@@ -51,9 +51,11 @@ through `tools/samples/run.sh`. The full tier is Linux only for now; Windows and
 
 A test with an upper bound on wall-clock time goes into `puppetxr_timed_tests` in
 `tests/CMakeLists.txt`, which runs them alone (`RUN_SERIAL`). Its bound is what the bug it catches
-would take, not how fast this machine draws: `FRAME_BOUND_NS` is half of the main thread timeout a
-blocked frame waits for, and `frames_never_wait_for_the_display` allows 55 of its 60 display
-periods. `TEST_TIME_SCALE` scales such bounds under the sanitizers.
+would take, not how fast this machine draws: `frames_never_wait_for_the_display` allows 55 of its 60
+display periods. `TEST_TIME_SCALE` scales such bounds under the sanitizers. Where the bug leaves a
+trace, assert the trace instead of a time: `OxrThreadWindowedTest` counts the window calls withdrawn
+while the frames ran (`OS_WITHDRAWN_CALL_LOG` in the log), since a frame waiting for a blocked main
+thread and a slow software-rendered frame both take about 250 ms.
 
 ## Vulkan device
 

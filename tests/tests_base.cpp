@@ -830,6 +830,8 @@ TEST(Platform, window_calls_the_main_thread_never_takes_are_withdrawn)
     EXPECT_EQ(SDL_GetAtomicInt(&first.probe.runs), 0);
     EXPECT_GE(first.took_ns, (u64)OS_MAIN_THREAD_TIMEOUT_MS * 1000000ull);
     EXPECT_LT(first.took_ns, (u64)OS_MAIN_THREAD_TIMEOUT_MS * 1000000ull + 200000000ull);
+    ASSERT_GT(os_log_history_count(), 0u);
+    EXPECT_NE(cstr_find(os_log_history(os_log_history_count() - 1)->text, OS_WITHDRAWN_CALL_LOG), nullptr) << "OxrThreadWindowedTest counts these lines";
 
     WindowCallThread stalled = {};
     thread = os_thread_create("caller", call_from_another_thread, &stalled);
