@@ -1130,8 +1130,11 @@ struct PumpProbe
 
 } // namespace
 
+static u32 stop_app_calls = 0;
+
 static void stop_app (void* app)
 {
+    stop_app_calls++;
     objc_send<void>(app, "stop:", (void*)nullptr);
     // stop: takes effect after the next event; an application-defined one wakes the loop
     void* const wake = objc_send<void*>(objc_getClass("NSEvent"), "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:",
@@ -1147,18 +1150,31 @@ static void pump_inside_the_loop (void* user)
     objc_send<void>(probe.test->app, "postEvent:atStart:", probe.test->key_event(13, true), (signed char)0);
     os_pump_window_events();
     probe.after_pump = probe.test->count(OS_EventType::KeyDown, OS_Key::W);
-    probe.stopped    = true;
     stop_app(probe.test->app);
 }
 
-static void safety_stop (void* user)
+// The app whose event loop the safety stop ends; cleared once the loop returns, as the stop fires
+// seconds later, in whatever test runs the main queue then
+static void* safety_stop_app = nullptr;
+
+static void safety_stop (void*)
 {
-    PumpProbe& probe = *(PumpProbe*)user;
-    if (!probe.stopped)
+    if (safety_stop_app)
     {
-        probe.stopped = true;
-        stop_app(probe.test->app);
+        stop_app(safety_stop_app);
+        safety_stop_app = nullptr;
     }
+}
+
+// Runs the app's event loop until `inside` stops it, or the safety stop does after
+// `safety_stop_ns` if the loop never returns
+static void run_the_event_loop (PumpProbe& probe, dispatch_function_t inside, i64 safety_stop_ns)
+{
+    dispatch_async_f(dispatch_get_main_queue(), &probe, inside);
+    safety_stop_app = probe.test->app;
+    dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, safety_stop_ns), dispatch_get_main_queue(), nullptr, safety_stop);
+    objc_send<void>(probe.test->app, "run");
+    safety_stop_app = nullptr;
 }
 
 // Inside NSApp's running event loop (Unity's editor and players) the app dispatches the events;
@@ -1166,13 +1182,33 @@ static void safety_stop (void* user)
 TEST_F(PlatformAppEventsTest, the_pump_leaves_events_to_the_app_running_its_event_loop)
 {
     PumpProbe probe = { .test = this };
-    dispatch_async_f(dispatch_get_main_queue(), &probe, pump_inside_the_loop);
-    dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 5 * (i64)NSEC_PER_SEC), dispatch_get_main_queue(), &probe, safety_stop);
-    objc_send<void>(app, "run");
+    run_the_event_loop(probe, pump_inside_the_loop, 5 * (i64)NSEC_PER_SEC);
     EXPECT_EQ(probe.after_pump, 0u) << "the pump took the app's event";
     os_serve_posted(0);
     // The app dispatched it after, as Unity does, and the monitor handed it to SDL
     EXPECT_EQ(count(OS_EventType::KeyDown, OS_Key::W), 1u);
+}
+
+static void stop_inside_the_loop (void* user)
+{
+    stop_app(((PumpProbe*)user)->test->app);
+}
+
+// The safety stop outlives the loop it guards and fires in whatever test runs the main queue then.
+// It read its probe from a stack the next test had reused, and stopped the app when what it found
+// there read as not stopped
+TEST_F(PlatformAppEventsTest, a_safety_stop_after_its_loop_returned_stops_nothing)
+{
+    PumpProbe probe = { .test = this };
+    run_the_event_loop(probe, stop_inside_the_loop, 300 * (i64)NSEC_PER_MSEC);
+    stop_app_calls = 0;
+    probe           = { .test = this }; // the next test's probe, where the stack is reused
+    const u64 start = os_time_ns();
+    while (os_time_ns() - start < 600 * NSEC_PER_MSEC)
+    {
+        os_serve_posted(50 * NSEC_PER_MSEC);
+    }
+    EXPECT_EQ(stop_app_calls, 0u) << "the safety stop stopped an app after its loop returned";
 }
 
 static void pump_in_a_run_loop_pass (void* user)
