@@ -10,7 +10,7 @@
 #
 # DOCKER (default docker, podman works) picks the engine, PUPPETXR_DIST_DOCKER_ARGS adds run
 # arguments (e.g. "--network host" behind a local proxy), PUPPETXR_DIST_CMAKE_ARGS adds configure
-# arguments (e.g. FETCHCONTENT_SOURCE_DIR_* overrides).
+# arguments.
 
 set -euo pipefail
 

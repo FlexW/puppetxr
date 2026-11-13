@@ -1,6 +1,6 @@
 # A Vulkan loader and lavapipe for the Windows jobs, whose runners have neither, so the Vulkan tests
 # run instead of skipping. The loader is of the SDK version of the headers in
-# third_party/CMakeLists.txt, Mesa the mesa-dist-win of cmake/samples.cmake.
+# third_party/README.md, Mesa the mesa-dist-win of cmake/samples.cmake.
 
 name: windows-vulkan
 description: Vulkan loader on PATH and lavapipe registered as its driver

@@ -6,7 +6,7 @@
 # matching -debug.tar.gz with the .dSYM bundles and a .buildinfo with the toolchain versions and
 # checksums. Two fresh runs of the same commit give byte-identical tarballs. Signing is ad hoc.
 #
-# PUPPETXR_DIST_CMAKE_ARGS adds configure arguments (e.g. FETCHCONTENT_SOURCE_DIR_* overrides).
+# PUPPETXR_DIST_CMAKE_ARGS adds configure arguments.
 
 set -euo pipefail
 
