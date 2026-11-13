@@ -1166,8 +1166,6 @@ static void safety_stop (void*)
     }
 }
 
-// Runs the app's event loop until `inside` stops it, or the safety stop does after
-// `safety_stop_ns` if the loop never returns
 static void run_the_event_loop (PumpProbe& probe, dispatch_function_t inside, i64 safety_stop_ns)
 {
     dispatch_async_f(dispatch_get_main_queue(), &probe, inside);
