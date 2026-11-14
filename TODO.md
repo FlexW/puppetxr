@@ -304,15 +304,30 @@ advertised: cts_vulkan2 103 cases, 0 failing (2026-10-20).
 - [x] render: depth attachments, depth-only passes, two-texture pipelines; comp: passthrough layer from the visual mesh
 - [x] XR_FB_passthrough with styles, ALPHA_BLEND environment blend mode
 - [x] XR_META_environment_depth (visual mesh depth, D16 array swapchain), XR_META_environment_raycast
-- [ ] environment depth from cameras apart from the eyes: the depth is rendered from the eye views, so an app that maps a
-  pixel into the wrong depth view (the eye's pose or field of view where the depth view's belongs, the other eye's, a
-  reprojection that drops the offset) still lines up and no test of it can fail. On a Quest the depth comes from
-  cameras offset from the eyes, with fields of view of their own, at a lower rate than frames and some milliseconds
-  old. Start: a config block (`docs/config.md`) for the depth views' offset from each eye (position, orientation),
-  their field of view, and how many frames old an image is; `comp_render_depth` renders from those views and
-  `xrAcquireEnvironmentDepthImageMETA` reports them (`docs/compositor.md`, Environment depth). Done when a gtest
-  shows an occluder's edge, mapped with the reported views, where the room has it, and mapped with the eye's views,
-  off by the offset; the default stays the eye views so existing goldens hold
+- [x] environment depth like a Quest 3's sensor (`environment_depth`, docs/config.md, Environment depth; measured on a
+  Quest 3 with runtime 210): traced into the visual mesh on the CPU (`w_trace_depth`, a SAH BVH) at 25 Hz on the
+  simulator's clock, shown 45 ms after the capture, views where the head was 26 ms after it at a fixed 64.85 mm
+  baseline with the eyes' fields of view, seeded noise and the uncovered band at the outer edges, four images,
+  `XrEnvironmentDepthImageTimestampMETA`; `eyes` keeps depth from the eyes at every frame; recordings keep the sensor
+  (format 3). `OxrQuestDepthTest.depth_lines_up_through_the_reported_views_not_the_eyes`
+- [ ] Unity and Unreal sample references with the Quest 3 depth sensor: `tools/sample_tests.py` runs the `unity_*`
+  and `unreal_*` tests with `PUPPETXR_ENVIRONMENT_DEPTH=eyes`, as their references were recorded (the other samples
+  show no depth and run on the default). Re-record the references of those that show depth (`unity_depthapi_*`, the
+  MRUK occlusion scenes, Unreal's Occlusion sample once it is compared) with the default sensor on Windows with the
+  editors and drop the pin; the noise is seeded, so they stay stable from run to run
+- [ ] environment depth: hands, controllers and props. Quest 3's depth shows the user's hands and forearms (and hand
+  removal takes the hands out, from the wrist, within a frame or two, the forearms stay); puppetxr's has only the
+  room. Start: trace the simulated hands' and props' shapes in `w_trace_depth`'s caller (`render_depth` in
+  `src/oxr.cpp`) against the room's hit; `OXR_DepthProvider::hand_removal` then removes the hands. Done when a gtest
+  sees a hand in the depth with removal off and the wall behind it with removal on
+- [ ] environment depth: Quest 3's edges are rounded, near objects' outlines bulge by a few pixels and small gaps
+  close, and a still scene's depth wanders slowly (the noise is low frequency in time too). Start:
+  `sim_depth_sensor` (`src/sim.cpp`), a dilation of near over far by a configurable radius and noise interpolated
+  between captures; compare against depth images of a Quest 3 looking at a table edge
+- [ ] environment depth off the frame: tracing takes 8 to 9 ms of `xrEndFrame` every 40 ms in the living room (two
+  views, five threads, Ryzen 7 5800X, release). Start: trace a capture on the workers as soon as its pose is known
+  (capture + pose delay) and upload it in the `xrEndFrame` before it shows; a room change waits for the trace. Done
+  when `xrEndFrame` with a running provider takes no longer than without in the Performance tab
 - [x] Blender exporter add-on (`tools/blender`), rooms: bedroom, office, living_room, l_shaped
 - [x] disabled_extensions: config, `PUPPETXR_DISABLE_EXTENSIONS`, C API, for testing apps without an extension
 - [x] tracking origin offset: stage space placed in the room fixed or per run (`origin_offset`, `docs/anchors.md`)

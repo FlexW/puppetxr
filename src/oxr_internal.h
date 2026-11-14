@@ -35,11 +35,12 @@
 #define OXR_COLOCATION_POLL_FRAMES 18 // advertisements are looked for five times a second at 90 Hz
 #define OXR_MAX_SPATIAL_ENTITIES   64 // per XR_EXT_spatial_entity context; markers seen beyond it stay undiscovered
 
-// XR_META_environment_depth: per-eye resolution and planes like Quest 3, infinite far plane
-#define OXR_DEPTH_WIDTH       320
-#define OXR_DEPTH_HEIGHT      320
-#define OXR_DEPTH_IMAGES      3
+// XR_META_environment_depth: Quest 3's image count and planes, infinite far plane; the sensor is
+// the config's (SIM_DepthModel)
+#define OXR_DEPTH_IMAGES      4
 #define OXR_DEPTH_NEAR        0.1f
+#define OXR_DEPTH_WORKERS     4  // threads tracing depth besides the one in xrEndFrame
+#define OXR_DEPTH_ROWS        16 // rows a thread takes at a time
 #define OXR_VIEW_COUNT        2
 #define OXR_FRAME_GATE_POLL_NS 100000
 #define OXR_FRAME_GATE_TIMEOUT_NS 1000000000ll // a second xrWaitFrame gives up waiting for the previous frame's xrBeginFrame
@@ -1052,6 +1053,15 @@ struct OXR_PassthroughColorLut
     b8                    destroyed = {};
 };
 
+// A capture in a swapchain image: when it was taken and where its views were, in the simulator's
+// frame, at the capture plus the sensor's pose delay
+struct OXR_DepthImage
+{
+    XrTime capture = {}; // 0 for none since the provider started
+    Pose   views[OXR_VIEW_COUNT] = {};
+    Fov    fovs[OXR_VIEW_COUNT] = {};
+};
+
 struct OXR_DepthProvider
 {
     OXR_SessionHandle        session;
@@ -1059,8 +1069,9 @@ struct OXR_DepthProvider
     b8                       running = {};
     b8                       hand_removal = {};  // no simulated hands, so it changes nothing
     u64                      acquired_frame = {};
-    XrTime                   rendered_time = {};  // of the newest image, rendered in xrEndFrame; 0 before the first after start
-    u32                      rendered_index = {};
+    XrTime                   start_time = {};    // no capture before it
+    XrTime                   last_capture = {};
+    OXR_DepthImage           images[OXR_DEPTH_IMAGES] = {};
 };
 
 struct OXR_DepthSwapchain
@@ -1068,8 +1079,12 @@ struct OXR_DepthSwapchain
     OXR_SessionHandle       session;
     OXR_DepthProviderHandle provider;
     COMP_DepthTarget*       target = {};
-    u32                     next_index = {};
+    u32                     width = {};
+    u32                     height = {};
+    Array<u16>              depth[OXR_VIEW_COUNT] = {}; // the traced views, width x height each
 };
+
+struct OXR_DepthTracer;
 
 struct OXR_Raycaster
 {
@@ -1265,6 +1280,7 @@ struct OXR_Runtime
     SIM_MirrorView             mirror_view = {};   // which eye the window shows, starts from config
 
     W_World*                   world = {};         // the simulated room, null for none
+    OXR_DepthTracer*           depth_tracer = {};  // threads tracing environment depth, from the first depth swapchain
     char                       room[W_MAX_NAME] = {};
     char                       rooms_dir[OS_MAX_PATH] = {};
     u64                        world_generation = {}; // counts room changes; scene spaces of an older generation are stale

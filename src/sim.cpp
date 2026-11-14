@@ -2414,6 +2414,85 @@ static f32 face_blink (i64 time)
 // Config
 //
 
+static i64 depth_ms_to_ns (f32 ms)
+{
+    return (i64)((f64)zm::clamp(ms, 0.0f, (f32)SIM_MAX_DEPTH_LATENCY_MS) * 1000000.0 + 0.5);
+}
+
+static void read_depth_model (const JsonValue& value, SIM_DepthModel& model)
+{
+    char name[16] = {};
+    if (json_is_string(value))
+    {
+        if (!json_as_string(value, name, nullptr, sizeof(name)) || !sim_depth_model_preset(name, model))
+        {
+            LOG_WARNING("Config: environment_depth is quest3, eyes or an object (docs/config.md, Environment depth)");
+        }
+        return;
+    }
+    if (!json_is_object(value))
+    {
+        if (json_is_valid(value))
+        {
+            LOG_WARNING("Config: environment_depth is quest3, eyes or an object (docs/config.md, Environment depth)");
+        }
+        return;
+    }
+    if (json_find_string(value, "model", name, nullptr, sizeof(name)) && !sim_depth_model_preset(name, model))
+    {
+        LOG_WARNING("Config: environment_depth.model is quest3 or eyes, not '%s'", name);
+    }
+
+    u32 width  = model.width;
+    u32 height = model.height;
+    json_find_uint(value, "width", width, width);
+    json_find_uint(value, "height", height, height);
+    model.width  = zm::clamp(width, 1u, (u32)SIM_MAX_DEPTH_SIZE);
+    model.height = zm::clamp(height, 1u, (u32)SIM_MAX_DEPTH_SIZE);
+
+    f32 rate = model.period_ns > 0 ? (f32)(1e9 / (f64)model.period_ns) : 0.0f;
+    if (json_find_float(value, "rate_hz", rate, rate))
+    {
+        model.period_ns = zm::is_finite(rate) && rate > 0.0f ? (i64)(1e9 / (f64)zm::min(rate, 1000.0f) + 0.5) : 0;
+    }
+    f32 latency = (f32)((f64)model.latency_ns / 1e6);
+    f32 delay   = (f32)((f64)model.pose_delay_ns / 1e6);
+    if (json_find_float(value, "latency_ms", latency, latency))
+    {
+        model.latency_ns = depth_ms_to_ns(latency);
+    }
+    if (json_find_float(value, "pose_delay_ms", delay, delay))
+    {
+        model.pose_delay_ns = depth_ms_to_ns(delay);
+    }
+    model.pose_delay_ns = zm::min(model.pose_delay_ns, model.latency_ns);
+
+    f32 baseline = model.baseline;
+    f32 noise    = model.noise;
+    json_find_float(value, "baseline", baseline, baseline);
+    json_find_float(value, "noise", noise, noise);
+    model.baseline = zm::is_finite(baseline) ? zm::clamp(baseline, 0.0f, 1.0f) : 0.0f;
+    model.noise    = zm::is_finite(noise) ? zm::clamp(noise, 0.0f, SIM_MAX_DEPTH_NOISE) : 0.0f;
+    u32 cell       = model.noise_cell;
+    json_find_uint(value, "noise_cell", cell, cell);
+    model.noise_cell = zm::clamp(cell, 1u, (u32)SIM_MAX_DEPTH_NOISE_CELL);
+    json_find_u64(value, "seed", model.seed, model.seed);
+
+    const JsonValue uncovered = json_find(value, "uncovered");
+    f32             u_width   = model.uncovered_width;
+    f32             u_center  = model.uncovered_center;
+    f32             u_height  = model.uncovered_height;
+    f32             u_depth   = model.uncovered_depth;
+    json_find_float(uncovered, "width", u_width, u_width);
+    json_find_float(uncovered, "center", u_center, u_center);
+    json_find_float(uncovered, "height", u_height, u_height);
+    json_find_float(uncovered, "depth", u_depth, u_depth);
+    model.uncovered_width  = zm::is_finite(u_width) ? zm::clamp(u_width, 0.0f, 0.5f) : 0.0f;
+    model.uncovered_center = zm::is_finite(u_center) ? zm::clamp(u_center, 0.0f, 1.0f) : 0.5f;
+    model.uncovered_height = zm::is_finite(u_height) ? zm::clamp(u_height, 0.0f, 1.0f) : 0.0f;
+    model.uncovered_depth  = zm::is_finite(u_depth) && u_depth > 0.0f ? u_depth : model.uncovered_depth;
+}
+
 void sim_default_config (SIM_Config& config)
 {
     config = {};
@@ -2462,6 +2541,8 @@ void sim_default_config (SIM_Config& config)
     sim_default_face(config.face);
     config.auto_touch           = true;
     config.keyboard_tracking    = true;
+    config.environment_depth    = { .width = 320, .height = 320, .noise_cell = 8 };
+    sim_depth_model_preset("quest3", config.environment_depth);
     config.analog_ramp          = 0.5f;
     config.analog_release       = 0.1f;
     config.hand_speed           = 0.3f;
@@ -2892,6 +2973,7 @@ b8 sim_parse_config (SIM_Config& config, const char* json)
 
     json_find_bool(json_find(root, "passthrough"), "default_active", config.passthrough_default_active, config.passthrough_default_active);
     json_find_bool(json_find(root, "keyboard_tracking"), "enabled", config.keyboard_tracking, config.keyboard_tracking);
+    read_depth_model(json_find(root, "environment_depth"), config.environment_depth);
 
     const JsonValue props = json_find(root, "props");
     if (json_is_array(props))
@@ -3126,6 +3208,10 @@ void sim_apply_env (SIM_Config& config)
     {
         config.keyboard_tracking = !cstr_equal(value, "0");
     }
+    if (const char* value = os_env("PUPPETXR_ENVIRONMENT_DEPTH"); value && value[0] && !sim_depth_model_preset(value, config.environment_depth))
+    {
+        LOG_WARNING("PUPPETXR_ENVIRONMENT_DEPTH is quest3 or eyes, not '%s'", value);
+    }
     if (const char* value = os_env("PUPPETXR_PROPS"))
     {
         JsonParser* parser = json_parse_from_string(value);
@@ -3185,6 +3271,134 @@ b8 sim_find_config_path (char* out_path, usize out_size)
     }
     out_path[0] = 0;
     return false;
+}
+
+b8 sim_depth_model_preset (const char* name, SIM_DepthModel& inout_model)
+{
+    SIM_DepthModel model = inout_model;
+    if (cstr_equal(name, "quest3"))
+    {
+        // Runtime 210 (docs/config.md, Environment depth)
+        model.period_ns        = 40000000;
+        model.latency_ns       = 45000000;
+        model.pose_delay_ns    = 26000000;
+        model.baseline         = 0.06485f;
+        model.noise            = 0.002f;
+        model.noise_cell       = 8;
+        model.uncovered_width  = 0.05f;
+        model.uncovered_center = 0.69f;
+        model.uncovered_height = 0.42f;
+        model.uncovered_depth  = 29.0f;
+    }
+    else if (cstr_equal(name, "eyes"))
+    {
+        model.period_ns       = 0;
+        model.latency_ns      = 0;
+        model.pose_delay_ns   = 0;
+        model.baseline        = 0.0f;
+        model.noise           = 0.0f;
+        model.uncovered_width = 0.0f;
+        model.uncovered_depth = model.uncovered_depth > 0.0f ? model.uncovered_depth : 29.0f;
+    }
+    else
+    {
+        return false;
+    }
+    inout_model = model;
+    return true;
+}
+
+static u64 depth_hash (u64 x)
+{
+    x += 0x9E3779B97F4A7C15ull;
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+    return x ^ (x >> 31);
+}
+
+// About normal with unit variance: four uniforms of 16 bits each, summed and scaled by sqrt(3)
+static f32 depth_gaussian (u64 h)
+{
+    f32 sum = 0.0f;
+    for (u32 i = 0; i < 4; i++)
+    {
+        sum += ((f32)((h >> (16 * i)) & 0xffff) + 0.5f) / 65536.0f - 0.5f;
+    }
+    return sum * 1.7320508f;
+}
+
+static f32 depth_noise_at (u64 key, i32 gx, i32 gy)
+{
+    return depth_gaussian(depth_hash(key ^ ((u64)(u32)gx << 32 | (u32)gy)));
+}
+
+void sim_depth_sensor (const SIM_DepthModel& model, u64 capture, u32 view, f32 near, u32 width, u32 height, u16* inout_image)
+{
+    ASSERT(inout_image && near > 0.0f);
+    if (model.noise > 0.0f)
+    {
+        // The random values of the grid rows above and below the pixel row, one per cell corner
+        const u32 cell    = zm::max(model.noise_cell, 1u);
+        const u64 key     = depth_hash(depth_hash(model.seed) ^ depth_hash(capture * 2 + view));
+        const u32 columns = zm::min(width / cell + 2, (u32)SIM_MAX_DEPTH_SIZE + 2);
+        f32       below[SIM_MAX_DEPTH_SIZE + 2] = {};
+        f32       above[SIM_MAX_DEPTH_SIZE + 2] = {};
+        i32       grid_row = -1;
+        for (u32 y = 0; y < height; y++)
+        {
+            const i32 gy = (i32)(y / cell);
+            const f32 ty = (f32)(y % cell) / (f32)cell;
+            if (gy != grid_row)
+            {
+                for (u32 gx = 0; gx < columns; gx++)
+                {
+                    below[gx] = depth_noise_at(key, (i32)gx, gy);
+                    above[gx] = depth_noise_at(key, (i32)gx, gy + 1);
+                }
+                grid_row = gy;
+            }
+            for (u32 x = 0; x < width; x++)
+            {
+                u16& value = inout_image[(usize)y * width + x];
+                if (value == 0 || value == 0xffff)
+                {
+                    continue;
+                }
+                const u32 gx = x / cell;
+                const f32 tx = (f32)(x % cell) / (f32)cell;
+                const f32 n0 = zm::lerp(below[gx], below[gx + 1], tx);
+                const f32 n1 = zm::lerp(above[gx], above[gx + 1], tx);
+                const f32 z  = near / (1.0f - (f32)value / 65535.0f);
+                const f32 zn = z + model.noise * z * z * zm::lerp(n0, n1, ty);
+                value        = zn <= near ? (u16)1 : (u16)zm::clamp(zm::round((1.0f - near / zn) * 65535.0f), 1.0f, 65534.0f);
+            }
+        }
+    }
+
+    const f32 band_width = model.uncovered_width * (f32)width;
+    const f32 band_half  = model.uncovered_height * (f32)height * 0.5f;
+    if (band_width > 0.0f && band_half > 0.0f && model.uncovered_depth > near)
+    {
+        const u16 far    = (u16)zm::round((1.0f - near / model.uncovered_depth) * 65535.0f);
+        const f32 center = model.uncovered_center * (f32)height;
+        const u32 reach  = (u32)zm::min(zm::ceil(band_width), (f32)width);
+        for (u32 y = 0; y < height; y++)
+        {
+            const f32 dy = ((f32)y + 0.5f - center) / band_half;
+            if (dy * dy > 1.0f)
+            {
+                continue;
+            }
+            for (u32 i = 0; i < reach; i++)
+            {
+                const f32 dx = ((f32)i + 0.5f) / band_width;
+                if (dx * dx + dy * dy <= 1.0f)
+                {
+                    inout_image[(usize)y * width + (view == 0 ? i : width - 1 - i)] = far;
+                }
+            }
+        }
+    }
 }
 
 b8 sim_apply_device (SIM_Config& config, const char* name)

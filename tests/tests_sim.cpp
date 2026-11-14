@@ -1,6 +1,8 @@
 #include "sim.h"
 
 #include <gtest/gtest.h>
+#include <math.h>
+#include <string.h>
 
 static SIM_Sim* make_sim (SIM_ClockMode mode = SIM_ClockMode::FixedStep)
 {
@@ -4432,4 +4434,236 @@ TEST(SimFace, the_eyes_profile_steers_the_gaze_with_the_mouse)
     sim_control_mouse_motion(sim, 10.0f, 0.0f);
     step(sim);
     EXPECT_FALSE(sim_get_face(sim).look_at) << "steering the eyes lets go of the point";
+}
+
+//
+// Environment depth sensor
+//
+
+// Measured on a Quest 3 (docs/config.md, Environment depth)
+TEST(SimDepth, the_default_sensor_is_a_quest_3s)
+{
+    SIM_Config config = {};
+    sim_default_config(config);
+    const SIM_DepthModel& d = config.environment_depth;
+    EXPECT_EQ(d.width, 320u);
+    EXPECT_EQ(d.height, 320u);
+    EXPECT_EQ(d.period_ns, 40000000);
+    EXPECT_EQ(d.latency_ns, 45000000);
+    EXPECT_EQ(d.pose_delay_ns, 26000000);
+    EXPECT_FLOAT_EQ(d.baseline, 0.06485f);
+    EXPECT_GT(d.noise, 0.0f);
+    EXPECT_GT(d.uncovered_width, 0.0f);
+}
+
+TEST(SimDepth, config_and_environment_set_the_sensor)
+{
+    SIM_Config config = {};
+    sim_default_config(config);
+    ASSERT_TRUE(sim_parse_config(config, R"({ "environment_depth": { "width": 160, "height": 120, "rate_hz": 50, "latency_ms": 30, "pose_delay_ms": 10,
+        "baseline": 0.07, "noise": 0.01, "noise_cell": 4, "seed": 9, "uncovered": { "width": 0.1, "center": 0.5, "height": 0.2, "depth": 20 } } })"));
+    const SIM_DepthModel& d = config.environment_depth;
+    EXPECT_EQ(d.width, 160u);
+    EXPECT_EQ(d.height, 120u);
+    EXPECT_EQ(d.period_ns, 20000000);
+    EXPECT_EQ(d.latency_ns, 30000000);
+    EXPECT_EQ(d.pose_delay_ns, 10000000);
+    EXPECT_FLOAT_EQ(d.baseline, 0.07f);
+    EXPECT_FLOAT_EQ(d.noise, 0.01f);
+    EXPECT_EQ(d.noise_cell, 4u);
+    EXPECT_EQ(d.seed, 9u);
+    EXPECT_FLOAT_EQ(d.uncovered_width, 0.1f);
+    EXPECT_FLOAT_EQ(d.uncovered_center, 0.5f);
+    EXPECT_FLOAT_EQ(d.uncovered_height, 0.2f);
+    EXPECT_FLOAT_EQ(d.uncovered_depth, 20.0f);
+
+    // "eyes": the eye views at every frame's display time, without errors
+    ASSERT_TRUE(sim_parse_config(config, R"({ "environment_depth": "eyes" })"));
+    EXPECT_EQ(d.period_ns, 0);
+    EXPECT_EQ(d.latency_ns, 0);
+    EXPECT_EQ(d.pose_delay_ns, 0);
+    EXPECT_EQ(d.baseline, 0.0f);
+    EXPECT_EQ(d.noise, 0.0f);
+    EXPECT_EQ(d.uncovered_width, 0.0f);
+    EXPECT_EQ(d.width, 160u) << "the resolution stays";
+
+    // A preset, then keys on top of it
+    ASSERT_TRUE(sim_parse_config(config, R"({ "environment_depth": { "model": "quest3", "noise": 0 } })"));
+    EXPECT_EQ(d.period_ns, 40000000);
+    EXPECT_EQ(d.noise, 0.0f);
+
+    os_set_env("PUPPETXR_ENVIRONMENT_DEPTH", "eyes");
+    sim_apply_env(config);
+    os_unset_env("PUPPETXR_ENVIRONMENT_DEPTH");
+    EXPECT_EQ(d.period_ns, 0);
+    os_set_env("PUPPETXR_ENVIRONMENT_DEPTH", "quest3");
+    sim_apply_env(config);
+    os_unset_env("PUPPETXR_ENVIRONMENT_DEPTH");
+    EXPECT_EQ(d.period_ns, 40000000);
+}
+
+TEST(SimDepth, out_of_range_values_are_clamped_or_ignored)
+{
+    os_set_assert_mode(OS_AssertMode::Log);
+    SIM_Config config = {};
+    sim_default_config(config);
+    ASSERT_TRUE(sim_parse_config(config, R"({ "environment_depth": { "width": 0, "height": 100000, "rate_hz": -5, "latency_ms": 100000, "pose_delay_ms": 100,
+        "baseline": -1, "noise": 7, "noise_cell": 0, "uncovered": { "width": 3, "center": -1, "height": 9, "depth": -2 } } })"));
+    const SIM_DepthModel& d = config.environment_depth;
+    EXPECT_EQ(d.width, 1u);
+    EXPECT_EQ(d.height, (u32)SIM_MAX_DEPTH_SIZE);
+    EXPECT_EQ(d.period_ns, 0) << "a negative rate is every frame";
+    EXPECT_EQ(d.latency_ns, (i64)SIM_MAX_DEPTH_LATENCY_MS * 1000000);
+    EXPECT_LE(d.pose_delay_ns, d.latency_ns) << "the views' pose is known when the image is";
+    EXPECT_EQ(d.baseline, 0.0f);
+    EXPECT_LE(d.noise, SIM_MAX_DEPTH_NOISE);
+    EXPECT_EQ(d.noise_cell, 1u);
+    EXPECT_LE(d.uncovered_width, 0.5f);
+    EXPECT_GE(d.uncovered_center, 0.0f);
+    EXPECT_LE(d.uncovered_height, 1.0f);
+    EXPECT_GT(d.uncovered_depth, 0.0f);
+
+    ASSERT_TRUE(sim_parse_config(config, R"({ "environment_depth": "nonsense" })"));
+    EXPECT_EQ(config.environment_depth.width, 1u) << "an unknown model changes nothing";
+    EXPECT_EQ(config.environment_depth.period_ns, 0);
+}
+
+static u16 sensor_depth_value (f32 z)
+{
+    return (u16)zm::round((1.0f - 0.1f / z) * 65535.0f);
+}
+
+static f32 sensor_depth_metres (u16 value)
+{
+    return 0.1f / (1.0f - (f32)value / 65535.0f);
+}
+
+TEST(SimDepth, noise_grows_with_the_square_of_the_distance_and_follows_the_seed)
+{
+    SIM_DepthModel model = {};
+    SIM_Config     config = {};
+    sim_default_config(config);
+    model                  = config.environment_depth;
+    model.uncovered_width  = 0.0f;
+    model.noise            = 0.004f;
+    model.noise_cell       = 1;
+    const u32 size         = 64;
+    u16       near_image[size * size];
+    u16       far_image[size * size];
+    for (u32 i = 0; i < size * size; i++)
+    {
+        near_image[i] = sensor_depth_value(0.5f);
+        far_image[i]  = sensor_depth_value(2.0f);
+    }
+    sim_depth_sensor(model, 1, 0, 0.1f, size, size, near_image);
+    sim_depth_sensor(model, 1, 0, 0.1f, size, size, far_image);
+    f64 near_sq = 0.0;
+    f64 far_sq  = 0.0;
+    for (u32 i = 0; i < size * size; i++)
+    {
+        const f64 dn = (f64)sensor_depth_metres(near_image[i]) - 0.5;
+        const f64 df = (f64)sensor_depth_metres(far_image[i]) - 2.0;
+        near_sq += dn * dn;
+        far_sq  += df * df;
+    }
+    const f64 near_std = sqrt(near_sq / (size * size));
+    const f64 far_std  = sqrt(far_sq / (size * size));
+    EXPECT_NEAR(near_std, 0.004 * 0.25, 0.0004) << "at 0.5 m";
+    EXPECT_NEAR(far_std, 0.004 * 4.0, 0.0025) << "at 2 m";
+
+    // The same seed, capture and view give the same image; another capture or view another
+    u16 again[size * size];
+    u16 next[size * size];
+    u16 right[size * size];
+    for (u32 i = 0; i < size * size; i++)
+    {
+        again[i] = next[i] = right[i] = sensor_depth_value(2.0f);
+    }
+    sim_depth_sensor(model, 1, 0, 0.1f, size, size, again);
+    sim_depth_sensor(model, 2, 0, 0.1f, size, size, next);
+    sim_depth_sensor(model, 1, 1, 0.1f, size, size, right);
+    EXPECT_EQ(memcmp(again, far_image, sizeof(again)), 0);
+    EXPECT_NE(memcmp(next, far_image, sizeof(next)), 0);
+    EXPECT_NE(memcmp(right, far_image, sizeof(right)), 0);
+    model.seed++;
+    for (u32 i = 0; i < size * size; i++)
+    {
+        again[i] = sensor_depth_value(2.0f);
+    }
+    sim_depth_sensor(model, 1, 0, 0.1f, size, size, again);
+    EXPECT_NE(memcmp(again, far_image, sizeof(again)), 0);
+
+    // Over cells of 8 pixels neighbours err alike
+    model.noise_cell = 8;
+    for (u32 i = 0; i < size * size; i++)
+    {
+        far_image[i] = sensor_depth_value(2.0f);
+    }
+    sim_depth_sensor(model, 1, 0, 0.1f, size, size, far_image);
+    f64 step_sq = 0.0;
+    for (u32 y = 0; y < size; y++)
+    {
+        for (u32 x = 1; x < size; x++)
+        {
+            const f64 d = (f64)sensor_depth_metres(far_image[y * size + x]) - (f64)sensor_depth_metres(far_image[y * size + x - 1]);
+            step_sq += d * d;
+        }
+    }
+    EXPECT_LT(sqrt(step_sq / (size * (size - 1))), far_std / 3.0) << "smooth across neighbours";
+}
+
+TEST(SimDepth, no_data_near_and_the_uncovered_edge_have_their_values)
+{
+    SIM_Config config = {};
+    sim_default_config(config);
+    SIM_DepthModel model = config.environment_depth;
+    model.noise          = 0.0f;
+    const u32 size       = 100;
+    u16       image[size * size];
+    for (u32 v = 0; v < 2; v++)
+    {
+        for (u32 i = 0; i < size * size; i++)
+        {
+            image[i] = i % 3 == 0 ? 0 : (i % 3 == 1 ? 65535 : sensor_depth_value(1.0f));
+        }
+        sim_depth_sensor(model, 1, v, 0.1f, size, size, image);
+        const u32 outer  = v == 0 ? 0 : size - 1;
+        const u32 inner  = v == 0 ? size - 1 : 0;
+        const u32 middle = (u32)(model.uncovered_center * (f32)size);
+        EXPECT_NEAR(sensor_depth_metres(image[middle * size + outer]), model.uncovered_depth, 0.5f) << "view " << v << ": the outer edge at the band's middle";
+        EXPECT_NEAR(sensor_depth_metres(image[middle * size + (v == 0 ? 3 : size - 4)]), model.uncovered_depth, 0.5f) << "view " << v;
+        for (u32 y = 0; y < size; y++)
+        {
+            const u32 i = y * size + inner;
+            const u16 expected = i % 3 == 0 ? 0 : (i % 3 == 1 ? 65535 : sensor_depth_value(1.0f));
+            ASSERT_EQ(image[i], expected) << "view " << v << ": the inner edge keeps its values, row " << y;
+        }
+        const u32 bottom = 0 * size + outer;
+        EXPECT_EQ(image[bottom], bottom % 3 == 0 ? 0 : (bottom % 3 == 1 ? 65535 : sensor_depth_value(1.0f))) << "view " << v << ": below the band";
+    }
+
+    // Noise leaves 0 (nearer than near) and 65535 (no data) alone and never makes either
+    model.noise            = 0.05f;
+    model.uncovered_width  = 0.0f;
+    for (u32 i = 0; i < size * size; i++)
+    {
+        image[i] = i % 3 == 0 ? 0 : (i % 3 == 1 ? 65535 : sensor_depth_value(4.0f));
+    }
+    sim_depth_sensor(model, 3, 0, 0.1f, size, size, image);
+    for (u32 i = 0; i < size * size; i++)
+    {
+        if (i % 3 == 0)
+        {
+            ASSERT_EQ(image[i], 0);
+        }
+        else if (i % 3 == 1)
+        {
+            ASSERT_EQ(image[i], 65535);
+        }
+        else
+        {
+            ASSERT_GT(image[i], 0);
+            ASSERT_LT(image[i], 65535);
+        }
+    }
 }

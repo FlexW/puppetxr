@@ -18,6 +18,7 @@
 #define W_MAX_IMAGE_SIZE  16384
 #define W_BVH_LEAF_SIZE   4
 #define W_BVH_STACK       64
+#define W_BVH_BINS        16
 #define W_MAX_ELEMENTS    (1u << 26)
 #define W_NONE            0xffffffffu
 #define W_ROOM_MESH_PLANAR 1e-3f // metres a room mesh face may stray from its plane
@@ -29,8 +30,24 @@ struct W_BvhNode
 {
     Vec3 min;
     Vec3 max;
-    u32  first; // leaf: first triangle in W_World::bvh_triangles; inner: index of the left child, the right one follows it
-    u32  count; // triangles of a leaf, 0 for an inner node
+    u32  first; // leaf: first entry in W_Bvh::triangles; inner: index of the left child, the right one follows it
+    u32  count; // entries of a leaf, 0 for an inner node
+};
+
+// A triangle's bounds as the build sorts it
+struct W_BvhRef
+{
+    Vec3 min;
+    Vec3 max;
+    u32  triangle;
+};
+
+struct W_Bvh
+{
+    const Vec3*      positions;
+    const u32*       indices;
+    Array<W_BvhNode> nodes;
+    Array<u32>       triangles;
 };
 
 } // namespace
@@ -53,8 +70,9 @@ struct W_World
     u8*                   albedo; // stbi allocation
     u32                   albedo_width;
     u32                   albedo_height;
-    Array<W_BvhNode>      bvh_nodes;
-    Array<u32>            bvh_triangles;
+    Array<Vec3>           visual_positions; // of visual_vertices, for visual_bvh
+    W_Bvh                 mesh_bvh;
+    W_Bvh                 visual_bvh;
 };
 
 namespace
@@ -66,10 +84,19 @@ struct W_BufferView
     u32 count;
 };
 
-struct W_SortItem
+struct W_BvhBin
 {
-    f32 key;
-    u32 triangle;
+    Vec3 min;
+    Vec3 max;
+    u32  count;
+};
+
+// A ray with what every box test needs; `parallel` marks the axes it does not move along
+struct W_Ray
+{
+    Vec3 origin;
+    Vec3 inv_direction;
+    b8   parallel[3];
 };
 
 struct W_ListContext
@@ -649,55 +676,58 @@ static b8 read_image (W_World* world, const W_RoomSource& source)
 // BVH
 //
 
-static void triangle_bounds (const W_World* world, u32 triangle, Vec3& out_min, Vec3& out_max)
+static f32 axis_of (Vec3 v, u32 axis)
 {
-    const u32* t = world->mesh_indices.data + (usize)triangle * 3;
-    const Vec3 a = world->mesh_positions[t[0]];
-    const Vec3 b = world->mesh_positions[t[1]];
-    const Vec3 c = world->mesh_positions[t[2]];
-    out_min      = zm::min(a, zm::min(b, c));
-    out_max      = zm::max(a, zm::max(b, c));
+    return axis == 0 ? v.x : (axis == 1 ? v.y : v.z);
 }
 
-static i32 compare_sort_items (const void* a, const void* b)
+static f32 surface_area (Vec3 lo, Vec3 hi)
 {
-    const W_SortItem* x = (const W_SortItem*)a;
-    const W_SortItem* y = (const W_SortItem*)b;
-    if (x->key != y->key)
-    {
-        return x->key < y->key ? -1 : 1;
-    }
-    return x->triangle < y->triangle ? -1 : (x->triangle > y->triangle ? 1 : 0);
+    const Vec3 e = hi - lo;
+    return e.x * e.y + e.y * e.z + e.z * e.x;
 }
 
-static f32 triangle_centroid (const W_World* world, u32 triangle, u32 axis)
+static u32 bin_of (const W_BvhRef& ref, u32 axis, f32 lo, f32 span)
 {
-    Vec3 lo;
-    Vec3 hi;
-    triangle_bounds(world, triangle, lo, hi);
-    const Vec3 c = (lo + hi) * 0.5f;
-    return axis == 0 ? c.x : (axis == 1 ? c.y : c.z);
+    const f32 c = axis_of((ref.min + ref.max) * 0.5f, axis);
+    return (u32)zm::min((c - lo) / span * (f32)W_BVH_BINS, (f32)(W_BVH_BINS - 1));
 }
 
-// Median split on the longest axis of the centroid bounds; deterministic for a given mesh
-static void build_bvh (W_World* world)
+// Deterministic for a given mesh
+static void build_bvh (W_Bvh& bvh, const Vec3* positions, const u32* indices, u32 triangles)
 {
-    const u32 triangles = (u32)(world->mesh_indices.length / 3);
-    world->bvh_triangles.resize(triangles);
-    for (u32 i = 0; i < triangles; i++)
-    {
-        world->bvh_triangles[i] = i;
-    }
+    bvh.positions = positions;
+    bvh.indices   = indices;
     if (triangles == 0)
     {
         return;
     }
 
-    Array<W_SortItem> scratch = {};
+    Array<W_BvhRef> refs = {};
+    defer { refs.release(); };
+    refs.resize(triangles);
+    for (u32 t = 0; t < triangles; t++)
+    {
+        const u32* v = indices + (usize)t * 3;
+        const Vec3 a = positions[v[0]];
+        const Vec3 b = positions[v[1]];
+        const Vec3 c = positions[v[2]];
+        refs[t]      = { .min = zm::min(a, zm::min(b, c)), .max = zm::max(a, zm::max(b, c)), .triangle = t };
+    }
+    const u32  count_refs = (u32)refs.length;
+    Array<u32> order      = {};
+    defer { order.release(); };
+    order.resize(count_refs);
+    for (u32 i = 0; i < count_refs; i++)
+    {
+        order[i] = i;
+    }
+
+    Array<u32> scratch = {};
     defer { scratch.release(); };
-    scratch.resize(triangles);
-    world->bvh_nodes.reserve((usize)triangles * 2);
-    world->bvh_nodes.add() = { .first = 0, .count = triangles };
+    scratch.resize(count_refs);
+    bvh.nodes.reserve((usize)count_refs * 2);
+    bvh.nodes.add() = { .first = 0, .count = count_refs };
 
     u32 stack[W_BVH_STACK];
     u32 stack_count     = 0;
@@ -705,21 +735,15 @@ static void build_bvh (W_World* world)
     while (stack_count > 0)
     {
         const u32  node_index = stack[--stack_count];
-        W_BvhNode& node       = world->bvh_nodes[node_index];
+        W_BvhNode& node       = bvh.nodes[node_index];
 
         Vec3 lo = { zm::F32_MAX, zm::F32_MAX, zm::F32_MAX };
         Vec3 hi = -lo;
-        Vec3 clo = lo;
-        Vec3 chi = hi;
         for (u32 i = 0; i < node.count; i++)
         {
-            Vec3 tlo;
-            Vec3 thi;
-            triangle_bounds(world, world->bvh_triangles[node.first + i], tlo, thi);
-            lo  = zm::min(lo, tlo);
-            hi  = zm::max(hi, thi);
-            clo = zm::min(clo, (tlo + thi) * 0.5f);
-            chi = zm::max(chi, (tlo + thi) * 0.5f);
+            const W_BvhRef& ref = refs[order[node.first + i]];
+            lo                  = zm::min(lo, ref.min);
+            hi                  = zm::max(hi, ref.max);
         }
         node.min = lo;
         node.max = hi;
@@ -729,38 +753,131 @@ static void build_bvh (W_World* world)
             continue;
         }
 
-        const Vec3 extent = chi - clo;
-        const u32  axis   = extent.x >= extent.y && extent.x >= extent.z ? 0 : (extent.y >= extent.z ? 1 : 2);
-
+        // Binned surface area heuristic: the triangles go into W_BVH_BINS bins by centroid along
+        // each axis, and the boundary between bins with the least cost, the areas of both sides
+        // weighted by their counts, splits them. Without one (all centroids in one place) the half
+        // in list order goes left
         const u32 count = node.count;
-        const u32 mid   = count / 2;
-        u32*      tris  = world->bvh_triangles.data + node.first;
+        u32*      items = order.data + node.first;
+        Vec3      clo   = { zm::F32_MAX, zm::F32_MAX, zm::F32_MAX };
+        Vec3      chi   = -clo;
         for (u32 i = 0; i < count; i++)
         {
-            scratch[i] = { .key = triangle_centroid(world, tris[i], axis), .triangle = tris[i] };
+            const Vec3 c = (refs[items[i]].min + refs[items[i]].max) * 0.5f;
+            clo          = zm::min(clo, c);
+            chi          = zm::max(chi, c);
         }
-        quicksort_raw(scratch.data, count, sizeof(W_SortItem), compare_sort_items);
-        for (u32 i = 0; i < count; i++)
+        f32 best_cost  = zm::F32_MAX;
+        u32 best_axis  = 3;
+        u32 best_split = 0;
+        for (u32 axis = 0; axis < 3; axis++)
         {
-            tris[i] = scratch[i].triangle;
+            const f32 lo_c = axis_of(clo, axis);
+            const f32 span = axis_of(chi, axis) - lo_c;
+            if (!(span > 0.0f))
+            {
+                continue;
+            }
+            W_BvhBin bins[W_BVH_BINS];
+            for (W_BvhBin& bin : bins)
+            {
+                bin = { .min = { zm::F32_MAX, zm::F32_MAX, zm::F32_MAX }, .max = { -zm::F32_MAX, -zm::F32_MAX, -zm::F32_MAX } };
+            }
+            for (u32 i = 0; i < count; i++)
+            {
+                const W_BvhRef& ref = refs[items[i]];
+                W_BvhBin&       bin = bins[bin_of(ref, axis, lo_c, span)];
+                bin.count++;
+                bin.min = zm::min(bin.min, ref.min);
+                bin.max = zm::max(bin.max, ref.max);
+            }
+            f32  right_areas[W_BVH_BINS];
+            u32  right_counts[W_BVH_BINS];
+            Vec3 rlo = { zm::F32_MAX, zm::F32_MAX, zm::F32_MAX };
+            Vec3 rhi = -rlo;
+            u32  rn  = 0;
+            for (u32 b = W_BVH_BINS; b-- > 1;)
+            {
+                rlo             = zm::min(rlo, bins[b].min);
+                rhi             = zm::max(rhi, bins[b].max);
+                rn             += bins[b].count;
+                right_areas[b]  = surface_area(rlo, rhi);
+                right_counts[b] = rn;
+            }
+            Vec3 llo = { zm::F32_MAX, zm::F32_MAX, zm::F32_MAX };
+            Vec3 lhi = -llo;
+            u32  ln  = 0;
+            for (u32 b = 1; b < W_BVH_BINS; b++)
+            {
+                llo = zm::min(llo, bins[b - 1].min);
+                lhi = zm::max(lhi, bins[b - 1].max);
+                ln += bins[b - 1].count;
+                if (ln == 0 || right_counts[b] == 0)
+                {
+                    continue;
+                }
+                const f32 cost = surface_area(llo, lhi) * (f32)ln + right_areas[b] * (f32)right_counts[b];
+                if (cost < best_cost)
+                {
+                    best_cost  = cost;
+                    best_axis  = axis;
+                    best_split = b;
+                }
+            }
+        }
+
+        // A stable partition keeps the build deterministic
+        u32 mid = count / 2;
+        if (best_axis < 3)
+        {
+            const f32 lo_c = axis_of(clo, best_axis);
+            const f32 span = axis_of(chi, best_axis) - lo_c;
+            u32       left = 0;
+            for (u32 i = 0; i < count; i++)
+            {
+                left += bin_of(refs[items[i]], best_axis, lo_c, span) < best_split ? 1u : 0u;
+            }
+            u32 l = 0;
+            u32 r = left;
+            for (u32 i = 0; i < count; i++)
+            {
+                scratch[bin_of(refs[items[i]], best_axis, lo_c, span) < best_split ? l++ : r++] = items[i];
+            }
+            memory_copy(items, scratch.data, (usize)count * sizeof(u32));
+            mid = left;
         }
 
         const u32 first      = node.first;
-        const u32 left_index = (u32)world->bvh_nodes.length;
-        world->bvh_nodes.add() = { .first = first, .count = mid };
-        world->bvh_nodes.add() = { .first = first + mid, .count = count - mid };
-        world->bvh_nodes[node_index].first = left_index;
-        world->bvh_nodes[node_index].count = 0;
+        const u32 left_index = (u32)bvh.nodes.length;
+        bvh.nodes.add() = { .first = first, .count = mid };
+        bvh.nodes.add() = { .first = first + mid, .count = count - mid };
+        bvh.nodes[node_index].first = left_index;
+        bvh.nodes[node_index].count = 0;
         stack[stack_count++] = left_index;
         stack[stack_count++] = left_index + 1;
     }
+
+    bvh.triangles.resize(count_refs);
+    for (u32 i = 0; i < count_refs; i++)
+    {
+        bvh.triangles[i] = refs[order[i]].triangle;
+    }
+}
+
+static W_Ray make_ray (Vec3 origin, Vec3 direction)
+{
+    W_Ray ray         = { .origin = origin, .inv_direction = { 1.0f / direction.x, 1.0f / direction.y, 1.0f / direction.z } };
+    ray.parallel[0]   = !zm::is_finite(ray.inv_direction.x);
+    ray.parallel[1]   = !zm::is_finite(ray.inv_direction.y);
+    ray.parallel[2]   = !zm::is_finite(ray.inv_direction.z);
+    return ray;
 }
 
 // A ray parallel to an axis has an infinite inverse there, and on a face of the box the slab
 // would be 0 * inf, NaN: that axis only asks whether the ray lies within the slab
-static b8 ray_slab (f32 origin, f32 inv_direction, f32 lo, f32 hi, f32& inout_tmin, f32& inout_tmax)
+static b8 ray_slab (f32 origin, f32 inv_direction, b8 parallel, f32 lo, f32 hi, f32& inout_tmin, f32& inout_tmax)
 {
-    if (!zm::is_finite(inv_direction))
+    if (parallel)
     {
         return origin >= lo && origin <= hi;
     }
@@ -771,15 +888,16 @@ static b8 ray_slab (f32 origin, f32 inv_direction, f32 lo, f32 hi, f32& inout_tm
     return true;
 }
 
-static b8 ray_box (Vec3 origin, Vec3 inv_direction, const W_BvhNode& node, f32 max_t)
+static b8 ray_box (const W_Ray& ray, const W_BvhNode& node, f32 max_t, f32& out_tmin)
 {
     f32 tmin = 0.0f;
     f32 tmax = max_t;
-    if (!ray_slab(origin.x, inv_direction.x, node.min.x, node.max.x, tmin, tmax) || !ray_slab(origin.y, inv_direction.y, node.min.y, node.max.y, tmin, tmax) ||
-        !ray_slab(origin.z, inv_direction.z, node.min.z, node.max.z, tmin, tmax))
+    if (!ray_slab(ray.origin.x, ray.inv_direction.x, ray.parallel[0], node.min.x, node.max.x, tmin, tmax) || !ray_slab(ray.origin.y, ray.inv_direction.y, ray.parallel[1], node.min.y, node.max.y, tmin, tmax) ||
+        !ray_slab(ray.origin.z, ray.inv_direction.z, ray.parallel[2], node.min.z, node.max.z, tmin, tmax))
     {
         return false;
     }
+    out_tmin = tmin;
     return tmin <= tmax;
 }
 
@@ -809,6 +927,70 @@ static b8 ray_triangle (Vec3 origin, Vec3 direction, Vec3 a, Vec3 b, Vec3 c, f32
     }
     out_t = zm::dot(e2, q) * inv;
     return out_t > 0.0f;
+}
+
+// The nearest triangle within (0, inout_best] in units of `direction`, which need not be unit
+// length; ties go to the lower triangle index. Nearer children are visited first, so most boxes
+// behind the first hit are skipped
+static u32 nearest_hit (const W_Bvh& bvh, Vec3 origin, Vec3 direction, f32& inout_best)
+{
+    if (bvh.nodes.length == 0)
+    {
+        return W_NONE;
+    }
+    const W_Ray ray          = make_ray(origin, direction);
+    u32        best_triangle = W_NONE;
+    u32        stack[W_BVH_STACK];
+    f32        stack_tmin[W_BVH_STACK];
+    u32        stack_count = 0;
+    f32        root_tmin   = 0.0f;
+    if (!ray_box(ray, bvh.nodes[0], inout_best, root_tmin))
+    {
+        return W_NONE;
+    }
+    stack[stack_count]        = 0;
+    stack_tmin[stack_count++] = root_tmin;
+    while (stack_count > 0)
+    {
+        stack_count--;
+        if (stack_tmin[stack_count] > inout_best)
+        {
+            continue;
+        }
+        const W_BvhNode& node = bvh.nodes[stack[stack_count]];
+        if (node.count == 0)
+        {
+            f32      tmin_left  = 0.0f;
+            f32      tmin_right = 0.0f;
+            const b8 left       = ray_box(ray, bvh.nodes[node.first], inout_best, tmin_left);
+            const b8 right      = ray_box(ray, bvh.nodes[node.first + 1], inout_best, tmin_right);
+            // The nearer child goes on top
+            const b8 left_first = !right || (left && tmin_left <= tmin_right);
+            if (left && right)
+            {
+                stack[stack_count]        = left_first ? node.first + 1 : node.first;
+                stack_tmin[stack_count++] = left_first ? tmin_right : tmin_left;
+            }
+            if (left || right)
+            {
+                stack[stack_count]        = left_first ? node.first : node.first + 1;
+                stack_tmin[stack_count++] = left_first ? tmin_left : tmin_right;
+            }
+            continue;
+        }
+        for (u32 i = 0; i < node.count; i++)
+        {
+            const u32  triangle = bvh.triangles[node.first + i];
+            const u32* t        = bvh.indices + (usize)triangle * 3;
+            f32        hit_t    = 0.0f;
+            if (ray_triangle(origin, direction, bvh.positions[t[0]], bvh.positions[t[1]], bvh.positions[t[2]], hit_t) && (hit_t < inout_best || (hit_t == inout_best && triangle < best_triangle)))
+            {
+                inout_best    = hit_t;
+                best_triangle = triangle;
+            }
+        }
+    }
+    return best_triangle;
 }
 
 static i32 compare_names (const char* a, const char* b)
@@ -1480,7 +1662,14 @@ W_World* w_parse_room (const W_RoomSource& source)
     h     = hash_combine(h, source.image, source.image ? source.image_size : 0);
     world->content_hash = h;
 
-    build_bvh(world);
+    const u32 visual_count = (u32)world->visual_vertices.length;
+    world->visual_positions.resize(visual_count);
+    for (u32 i = 0; i < visual_count; i++)
+    {
+        world->visual_positions[i] = world->visual_vertices[i].position;
+    }
+    build_bvh(world->mesh_bvh, world->mesh_positions.data, world->mesh_indices.data, (u32)(world->mesh_indices.length / 3));
+    build_bvh(world->visual_bvh, world->visual_positions.data, world->visual_indices.data, (u32)(world->visual_indices.length / 3));
     success = true;
     return world;
 }
@@ -1577,8 +1766,11 @@ void w_destroy (W_World* world)
     world->room_mesh_indices.release();
     world->visual_vertices.release();
     world->visual_indices.release();
-    world->bvh_nodes.release();
-    world->bvh_triangles.release();
+    world->visual_positions.release();
+    world->mesh_bvh.nodes.release();
+    world->mesh_bvh.triangles.release();
+    world->visual_bvh.nodes.release();
+    world->visual_bvh.triangles.release();
     if (world->albedo)
     {
         stbi_image_free(world->albedo);
@@ -1778,7 +1970,7 @@ b8 w_raycast (const W_World* world, Vec3 origin, Vec3 direction, f32 max_distanc
 {
     ASSERT(world);
     const f32 length = zm::length(direction);
-    if (!zm::is_finite(length) || length < zm::EPSILON || !(max_distance > 0.0f) || !zm::is_finite(origin.x) || !zm::is_finite(origin.y) || !zm::is_finite(origin.z) || world->bvh_nodes.length == 0)
+    if (!zm::is_finite(length) || length < zm::EPSILON || !(max_distance > 0.0f) || !zm::is_finite(origin.x) || !zm::is_finite(origin.y) || !zm::is_finite(origin.z) || world->mesh_bvh.nodes.length == 0)
     {
         return false;
     }
@@ -1787,39 +1979,9 @@ b8 w_raycast (const W_World* world, Vec3 origin, Vec3 direction, f32 max_distanc
         max_distance = zm::F32_MAX;
     }
 
-    const Vec3 d   = direction / length;
-    const Vec3 inv = { 1.0f / d.x, 1.0f / d.y, 1.0f / d.z };
-
-    f32 best          = max_distance;
-    u32 best_triangle = W_NONE;
-    u32 stack[W_BVH_STACK];
-    u32 stack_count      = 0;
-    stack[stack_count++] = 0;
-    while (stack_count > 0)
-    {
-        const W_BvhNode& node = world->bvh_nodes[stack[--stack_count]];
-        if (!ray_box(origin, inv, node, best))
-        {
-            continue;
-        }
-        if (node.count == 0)
-        {
-            stack[stack_count++] = node.first;
-            stack[stack_count++] = node.first + 1;
-            continue;
-        }
-        for (u32 i = 0; i < node.count; i++)
-        {
-            const u32  triangle = world->bvh_triangles[node.first + i];
-            const u32* t        = world->mesh_indices.data + (usize)triangle * 3;
-            f32        hit_t    = 0.0f;
-            if (ray_triangle(origin, d, world->mesh_positions[t[0]], world->mesh_positions[t[1]], world->mesh_positions[t[2]], hit_t) && (hit_t < best || (hit_t == best && triangle < best_triangle)))
-            {
-                best          = hit_t;
-                best_triangle = triangle;
-            }
-        }
-    }
+    const Vec3 d             = direction / length;
+    f32        best          = max_distance;
+    const u32  best_triangle = nearest_hit(world->mesh_bvh, origin, d, best);
     if (best_triangle == W_NONE)
     {
         return false;
@@ -1834,6 +1996,41 @@ b8 w_raycast (const W_World* world, Vec3 origin, Vec3 direction, f32 max_distanc
     }
     out_hit = { .distance = best, .point = origin + d * best, .normal = normal };
     return true;
+}
+
+void w_trace_depth (const W_World* world, const Pose& view, const Fov& fov, f32 near, u32 width, u32 height, u32 row_first, u32 row_count, u16* out_image)
+{
+    ASSERT(world && out_image && near > 0.0f);
+    const u32 row_end = (u32)zm::min((u64)row_first + row_count, (u64)height);
+    const f32 tl      = zm::tan(fov.angle_left);
+    const f32 tr      = zm::tan(fov.angle_right);
+    const f32 tu      = zm::tan(fov.angle_up);
+    const f32 td      = zm::tan(fov.angle_down);
+    const b8  valid   = zm::is_finite(view.position.x) && zm::is_finite(view.position.y) && zm::is_finite(view.position.z) && zm::is_finite(zm::length(view.orientation)) && zm::is_finite(tl) && zm::is_finite(tr) &&
+                     zm::is_finite(tu) && zm::is_finite(td) && near > 0.0f;
+    for (u32 y = row_first; y < row_end; y++)
+    {
+        u16*      row = out_image + (usize)y * width;
+        const f32 ty  = td + (tu - td) * ((f32)y + 0.5f) / (f32)height;
+        for (u32 x = 0; x < width; x++)
+        {
+            if (!valid)
+            {
+                row[x] = 0xffff;
+                continue;
+            }
+            // Along (tx, ty, -1) in the view's frame the ray parameter is the distance along -Z
+            const f32  tx        = tl + (tr - tl) * ((f32)x + 0.5f) / (f32)width;
+            const Vec3 direction = zm::rotate(view.orientation, { tx, ty, -1.0f });
+            f32        z         = zm::F32_MAX;
+            if (nearest_hit(world->visual_bvh, view.position, direction, z) == W_NONE)
+            {
+                row[x] = 0xffff;
+                continue;
+            }
+            row[x] = z < near ? (u16)0 : (u16)zm::min(zm::round((1.0f - near / z) * 65535.0f), 65535.0f);
+        }
+    }
 }
 
 const char* w_label_name (W_Label label)

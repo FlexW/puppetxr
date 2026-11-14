@@ -1,6 +1,6 @@
 # Recording format
 
-`src/rec.h`, `src/rec.cpp`. Format version 2; version 1 still reads. File extension `.xrrec` by convention.
+`src/rec.h`, `src/rec.cpp`. Format version 3; versions 1 and 2 still read. File extension `.xrrec` by convention.
 
 A recording stores the simulator state an app observes, once per `xrWaitFrame`, not
 the keyboard and mouse events that produced it. Replays therefore do not depend on
@@ -42,6 +42,7 @@ Header payload:
 | hand tracking cone | f32 full angle in degrees, `hands.tracking_fov_degrees` |
 | frame faults       | u8 count, count x (i32 XrResult, u32 remaining), by `OXR_FrameOp` (`docs/openxr.md`, Frame faults); a remaining fault must be negative |
 | skeleton change period | from version 2: u64 ns, `body_tracking.skeleton_change_period_ms`, 0 never. Version 1 has none and reads as 0 |
+| environment depth sensor | from version 3 (`SIM_DepthModel`, `environment_depth` in docs/config.md): u32 width, u32 height, u64 period ns, u64 latency ns, u64 pose delay ns, f32 baseline, f32 noise, u32 noise cell, u64 seed, f32 uncovered width, center, height, depth; values outside the config's ranges fail the load. Versions 1 and 2 recorded depth from the eye views at every frame and read as the `eyes` model at 320 x 320 |
 
 A Name is a u8 length (1..63) followed by that many bytes of `[a-z0-9_/.-]`.
 

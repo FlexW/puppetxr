@@ -745,6 +745,31 @@ static void put_header (REC_Out& out, const REC_Header& header)
         put_u32(out, fault.remaining);
     }
     put_u64(out, (u64)header.skeleton_change_period_ns);
+
+    const SIM_DepthModel& depth = header.environment_depth;
+    put_u32(out, depth.width);
+    put_u32(out, depth.height);
+    put_u64(out, (u64)depth.period_ns);
+    put_u64(out, (u64)depth.latency_ns);
+    put_u64(out, (u64)depth.pose_delay_ns);
+    put_f32(out, depth.baseline);
+    put_f32(out, depth.noise);
+    put_u32(out, depth.noise_cell);
+    put_u64(out, depth.seed);
+    put_f32(out, depth.uncovered_width);
+    put_f32(out, depth.uncovered_center);
+    put_f32(out, depth.uncovered_height);
+    put_f32(out, depth.uncovered_depth);
+}
+
+// The ranges sim_parse_config clamps to
+static b8 depth_model_valid (const SIM_DepthModel& d)
+{
+    const i64 max_latency = (i64)SIM_MAX_DEPTH_LATENCY_MS * 1000000;
+    return d.width >= 1 && d.width <= SIM_MAX_DEPTH_SIZE && d.height >= 1 && d.height <= SIM_MAX_DEPTH_SIZE && d.period_ns >= 0 && d.latency_ns >= 0 && d.latency_ns <= max_latency && d.pose_delay_ns >= 0 &&
+           d.pose_delay_ns <= d.latency_ns && d.baseline >= 0.0f && d.baseline <= 1.0f && d.noise >= 0.0f && d.noise <= SIM_MAX_DEPTH_NOISE && d.noise_cell >= 1 && d.noise_cell <= SIM_MAX_DEPTH_NOISE_CELL &&
+           d.uncovered_width >= 0.0f && d.uncovered_width <= 0.5f && d.uncovered_center >= 0.0f && d.uncovered_center <= 1.0f && d.uncovered_height >= 0.0f && d.uncovered_height <= 1.0f && d.uncovered_depth > 0.0f &&
+           zm::is_finite(d.uncovered_depth);
 }
 
 static b8 get_table (REC_In& in, b8 devices, REC_Layout& layout)
@@ -917,6 +942,30 @@ static b8 get_header (u32 version, REC_In& in, REC_Header& out, REC_Layout& layo
     {
         return false;
     }
+
+    // Before format 3 environment depth came from the eye views at every frame
+    SIM_DepthModel& depth = out.environment_depth;
+    depth                 = { .width = 320, .height = 320, .noise_cell = 1, .uncovered_center = 0.5f, .uncovered_depth = 29.0f };
+    if (version >= 3)
+    {
+        depth.width            = get_u32(in);
+        depth.height           = get_u32(in);
+        depth.period_ns        = (i64)get_u64(in);
+        depth.latency_ns       = (i64)get_u64(in);
+        depth.pose_delay_ns    = (i64)get_u64(in);
+        depth.baseline         = get_f32(in);
+        depth.noise            = get_f32(in);
+        depth.noise_cell       = get_u32(in);
+        depth.seed             = get_u64(in);
+        depth.uncovered_width  = get_f32(in);
+        depth.uncovered_center = get_f32(in);
+        depth.uncovered_height = get_f32(in);
+        depth.uncovered_depth  = get_f32(in);
+    }
+    if (!depth_model_valid(depth))
+    {
+        return false;
+    }
     return !in.failed && pose_valid(out.room_from_stage);
 }
 
@@ -928,6 +977,7 @@ static b8 read_header (u32 version, REC_In& in, REC_Header& out, REC_Layout& lay
     {
     case 1:
     case 2:
+    case 3:
         return get_header(version, in, out, layout);
     default:
         return false;
@@ -940,6 +990,7 @@ static b8 read_state (u32 version, REC_In& in, const REC_Layout& layout, SIM_Fra
     {
     case 1:
     case 2:
+    case 3:
         return get_state(in, layout, out);
     default:
         return false;
@@ -1189,6 +1240,7 @@ void rec_header_from_config (const SIM_Config& config, const SIM_Snapshot& initi
         .anchor_localize_frames = config.anchor_localize_frames,
         .hand_tracking_fov_degrees = config.hand_tracking_fov_degrees,
         .skeleton_change_period_ns = config.skeleton_change_period_ns,
+        .environment_depth         = config.environment_depth,
     };
     cstr_copy(out_header.room, sizeof(out_header.room), config.room);
 }
@@ -1212,6 +1264,7 @@ void rec_apply_header (const REC_Header& header, SIM_Config& config)
     config.anchor_localize_frames = header.anchor_localize_frames;
     config.hand_tracking_fov_degrees = header.hand_tracking_fov_degrees;
     config.skeleton_change_period_ns = header.skeleton_change_period_ns;
+    config.environment_depth         = header.environment_depth;
 }
 
 REC_Writer* rec_writer_create (const char* path, const REC_Header& header, const W_Store* store)
