@@ -780,6 +780,11 @@ static void put_header (REC_Out& out, const REC_Header& header)
     put_f32(out, depth.uncovered_center);
     put_f32(out, depth.uncovered_height);
     put_f32(out, depth.uncovered_depth);
+    put_u32(out, (u32)depth.raycast);
+    put_u64(out, (u64)depth.raycast_latency_ns);
+    put_f32(out, depth.lower_pitch);
+    put_f32(out, depth.lower_width);
+    put_f32(out, depth.lower_height);
 }
 
 // The ranges sim_parse_config clamps to
@@ -789,7 +794,8 @@ static b8 depth_model_valid (const SIM_DepthModel& d)
     return d.width >= 1 && d.width <= SIM_MAX_DEPTH_SIZE && d.height >= 1 && d.height <= SIM_MAX_DEPTH_SIZE && d.period_ns >= 0 && d.latency_ns >= 0 && d.latency_ns <= max_latency && d.pose_delay_ns >= 0 &&
            d.pose_delay_ns <= d.latency_ns && d.baseline >= 0.0f && d.baseline <= 1.0f && d.noise >= 0.0f && d.noise <= SIM_MAX_DEPTH_NOISE && d.noise_cell >= 1 && d.noise_cell <= SIM_MAX_DEPTH_NOISE_CELL &&
            d.uncovered_width >= 0.0f && d.uncovered_width <= 0.5f && d.uncovered_center >= 0.0f && d.uncovered_center <= 1.0f && d.uncovered_height >= 0.0f && d.uncovered_height <= 1.0f && d.uncovered_depth > 0.0f &&
-           zm::is_finite(d.uncovered_depth);
+           zm::is_finite(d.uncovered_depth) && (d.raycast == SIM_DepthRaycast::Depth || d.raycast == SIM_DepthRaycast::Mesh) && d.raycast_latency_ns >= 0 && d.raycast_latency_ns <= max_latency && d.lower_pitch >= -90.0f &&
+           d.lower_pitch <= 90.0f && d.lower_width >= 0.0f && d.lower_width <= SIM_MAX_DEPTH_LOWER_FOV && d.lower_height >= 0.0f && d.lower_height <= SIM_MAX_DEPTH_LOWER_FOV;
 }
 
 static b8 get_table (REC_In& in, b8 devices, REC_Layout& layout)
@@ -963,9 +969,10 @@ static b8 get_header (u32 version, REC_In& in, REC_Header& out, REC_Layout& layo
         return false;
     }
 
-    // Before format 3 environment depth came from the eye views at every frame
+    // Before format 3 environment depth came from the eye views at every frame; before format 5
+    // raycasts hit the global mesh exactly
     SIM_DepthModel& depth = out.environment_depth;
-    depth                 = { .width = 320, .height = 320, .noise_cell = 1, .uncovered_center = 0.5f, .uncovered_depth = 29.0f };
+    depth                 = { .width = 320, .height = 320, .noise_cell = 1, .uncovered_center = 0.5f, .uncovered_depth = 29.0f, .raycast = SIM_DepthRaycast::Mesh };
     if (version >= 3)
     {
         depth.width            = get_u32(in);
@@ -981,6 +988,14 @@ static b8 get_header (u32 version, REC_In& in, REC_Header& out, REC_Layout& layo
         depth.uncovered_center = get_f32(in);
         depth.uncovered_height = get_f32(in);
         depth.uncovered_depth  = get_f32(in);
+    }
+    if (version >= 5)
+    {
+        depth.raycast            = (SIM_DepthRaycast)get_u32(in);
+        depth.raycast_latency_ns = (i64)get_u64(in);
+        depth.lower_pitch        = get_f32(in);
+        depth.lower_width        = get_f32(in);
+        depth.lower_height       = get_f32(in);
     }
     if (!depth_model_valid(depth))
     {
@@ -999,6 +1014,7 @@ static b8 read_header (u32 version, REC_In& in, REC_Header& out, REC_Layout& lay
     case 2:
     case 3:
     case 4:
+    case 5:
         return get_header(version, in, out, layout);
     default:
         return false;
@@ -1013,6 +1029,7 @@ static b8 read_state (u32 version, REC_In& in, const REC_Layout& layout, SIM_Fra
     case 2:
     case 3:
     case 4:
+    case 5:
         return get_state(in, version, layout, out);
     default:
         return false;

@@ -2309,8 +2309,10 @@ def run_test(name, test, opts):
         "MESA_SHADER_CACHE_DISABLE": "true",
     })
     if test["app"].startswith(("unity", "unreal")):
-        # Their references were recorded with environment depth from the eyes (TODO.md)
+        # Their references were recorded with environment depth from the eyes and raycasts against
+        # the global mesh (TODO.md)
         env["PUPPETXR_ENVIRONMENT_DEPTH"] = "eyes"
+        env["PUPPETXR_ENVIRONMENT_RAYCAST"] = "mesh"
     env.update(test.get("env", {}))
     apps = [App(test, opts, out, env, "")]
     if test.get("peer"):

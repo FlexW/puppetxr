@@ -4604,6 +4604,13 @@ TEST(SimDepth, the_default_sensor_is_a_quest_3s)
     EXPECT_FLOAT_EQ(d.baseline, 0.06485f);
     EXPECT_GT(d.noise, 0.0f);
     EXPECT_GT(d.uncovered_width, 0.0f);
+
+    // Environment raycasts read the sensor's older captures and a view below the eyes
+    EXPECT_EQ(d.raycast, SIM_DepthRaycast::Depth);
+    EXPECT_EQ(d.raycast_latency_ns, 130000000);
+    EXPECT_FLOAT_EQ(d.lower_pitch, -55.0f);
+    EXPECT_FLOAT_EQ(d.lower_width, 109.0f);
+    EXPECT_FLOAT_EQ(d.lower_height, 62.0f);
 }
 
 TEST(SimDepth, config_and_environment_set_the_sensor)
@@ -4627,7 +4634,18 @@ TEST(SimDepth, config_and_environment_set_the_sensor)
     EXPECT_FLOAT_EQ(d.uncovered_height, 0.2f);
     EXPECT_FLOAT_EQ(d.uncovered_depth, 20.0f);
 
-    // "eyes": the eye views at every frame's display time, without errors
+    ASSERT_TRUE(sim_parse_config(config, R"({ "environment_depth": { "raycast": { "mode": "mesh", "latency_ms": 80, "lower_view": { "pitch": -40, "width": 90, "height": 50 } } } })"));
+    EXPECT_EQ(d.raycast, SIM_DepthRaycast::Mesh);
+    EXPECT_EQ(d.raycast_latency_ns, 80000000);
+    EXPECT_FLOAT_EQ(d.lower_pitch, -40.0f);
+    EXPECT_FLOAT_EQ(d.lower_width, 90.0f);
+    EXPECT_FLOAT_EQ(d.lower_height, 50.0f);
+    EXPECT_EQ(d.width, 160u) << "keys it lacks stay";
+    ASSERT_TRUE(sim_parse_config(config, R"({ "environment_depth": { "raycast": "depth" } })"));
+    EXPECT_EQ(d.raycast, SIM_DepthRaycast::Depth);
+    EXPECT_EQ(d.raycast_latency_ns, 80000000);
+
+    // "eyes": the eye views at every frame's display time, without errors; raycasts read the newest capture of the eyes alone
     ASSERT_TRUE(sim_parse_config(config, R"({ "environment_depth": "eyes" })"));
     EXPECT_EQ(d.period_ns, 0);
     EXPECT_EQ(d.latency_ns, 0);
@@ -4635,6 +4653,9 @@ TEST(SimDepth, config_and_environment_set_the_sensor)
     EXPECT_EQ(d.baseline, 0.0f);
     EXPECT_EQ(d.noise, 0.0f);
     EXPECT_EQ(d.uncovered_width, 0.0f);
+    EXPECT_EQ(d.raycast, SIM_DepthRaycast::Depth);
+    EXPECT_EQ(d.raycast_latency_ns, 0);
+    EXPECT_EQ(d.lower_width, 0.0f);
     EXPECT_EQ(d.width, 160u) << "the resolution stays";
 
     // A preset, then keys on top of it
@@ -4650,6 +4671,11 @@ TEST(SimDepth, config_and_environment_set_the_sensor)
     sim_apply_env(config);
     os_unset_env("PUPPETXR_ENVIRONMENT_DEPTH");
     EXPECT_EQ(d.period_ns, 40000000);
+    os_set_env("PUPPETXR_ENVIRONMENT_RAYCAST", "mesh");
+    sim_apply_env(config);
+    os_unset_env("PUPPETXR_ENVIRONMENT_RAYCAST");
+    EXPECT_EQ(d.raycast, SIM_DepthRaycast::Mesh);
+    EXPECT_EQ(d.period_ns, 40000000) << "the sensor stays";
 }
 
 TEST(SimDepth, out_of_range_values_are_clamped_or_ignored)
@@ -4676,6 +4702,13 @@ TEST(SimDepth, out_of_range_values_are_clamped_or_ignored)
     ASSERT_TRUE(sim_parse_config(config, R"({ "environment_depth": "nonsense" })"));
     EXPECT_EQ(config.environment_depth.width, 1u) << "an unknown model changes nothing";
     EXPECT_EQ(config.environment_depth.period_ns, 0);
+
+    ASSERT_TRUE(sim_parse_config(config, R"({ "environment_depth": { "raycast": { "mode": "nonsense", "latency_ms": -4, "lower_view": { "pitch": -200, "width": 400, "height": -1 } } } })"));
+    EXPECT_EQ(d.raycast, SIM_DepthRaycast::Depth) << "an unknown mode changes nothing";
+    EXPECT_EQ(d.raycast_latency_ns, 0);
+    EXPECT_EQ(d.lower_pitch, -90.0f);
+    EXPECT_EQ(d.lower_width, SIM_MAX_DEPTH_LOWER_FOV);
+    EXPECT_EQ(d.lower_height, 0.0f);
 }
 
 static u16 sensor_depth_value (f32 z)
@@ -4760,6 +4793,66 @@ TEST(SimDepth, noise_grows_with_the_square_of_the_distance_and_follows_the_seed)
         }
     }
     EXPECT_LT(sqrt(step_sq / (size * (size - 1))), far_std / 3.0) << "smooth across neighbours";
+}
+
+// The eyes model has no lower view; its angles of 0 once made a size of 0 / 0 converted to u32
+TEST(SimDepth, the_lower_view_has_a_size_only_when_it_has_a_field_of_view)
+{
+    SIM_Config config = {};
+    sim_default_config(config);
+    SIM_DepthModel model  = config.environment_depth;
+    u32            width  = 7;
+    u32            height = 7;
+    ASSERT_TRUE(sim_depth_lower_view_size(model, width, height));
+    EXPECT_EQ(width, 320u);
+    EXPECT_EQ(height, 137u) << "tan(31 degrees) / tan(54.5 degrees) of the width";
+
+    ASSERT_TRUE(sim_depth_model_preset("eyes", model));
+    EXPECT_FALSE(sim_depth_lower_view_size(model, width, height));
+    EXPECT_EQ(width, 0u);
+    EXPECT_EQ(height, 0u);
+    model.lower_width = 90.0f;
+    EXPECT_FALSE(sim_depth_lower_view_size(model, width, height)) << "no height";
+    model.lower_width  = 0.0f;
+    model.lower_height = 40.0f;
+    EXPECT_FALSE(sim_depth_lower_view_size(model, width, height)) << "no width";
+}
+
+// Environment raycasts read the texels they need one at a time
+TEST(SimDepth, a_texel_gets_the_errors_the_image_gets)
+{
+    SIM_Config config = {};
+    sim_default_config(config);
+    SIM_DepthModel model = config.environment_depth;
+    model.noise          = 0.01f;
+    model.seed           = 5;
+    const u32 width      = 61;
+    const u32 height     = 43;
+    u16       image[width * height];
+    for (u32 view = 0; view < 3; view++)
+    {
+        for (u32 i = 0; i < width * height; i++)
+        {
+            image[i] = i % 7 == 0 ? 0 : (i % 7 == 1 ? 65535 : sensor_depth_value(0.5f + 0.001f * (f32)i));
+        }
+        sim_depth_sensor(model, 12, view, 0.1f, width, height, image);
+        for (u32 y = 0; y < height; y++)
+        {
+            for (u32 x = 0; x < width; x++)
+            {
+                const u32 i = y * width + x;
+                const u16 traced = i % 7 == 0 ? 0 : (i % 7 == 1 ? 65535 : sensor_depth_value(0.5f + 0.001f * (f32)i));
+                ASSERT_EQ(sim_depth_sensor_texel(model, 12, view, 0.1f, width, height, x, y, traced), image[i]) << "view " << view << " at " << x << " " << y;
+            }
+        }
+    }
+
+    // The band no camera covers is at the forward views' outer edges, not the lower view's
+    const u32 middle = (u32)(model.uncovered_center * (f32)height);
+    EXPECT_NEAR(sensor_depth_metres(sim_depth_sensor_texel(model, 12, 0, 0.1f, width, height, 0, middle, sensor_depth_value(1.0f))), model.uncovered_depth, 0.5f);
+    EXPECT_NEAR(sensor_depth_metres(sim_depth_sensor_texel(model, 12, 1, 0.1f, width, height, width - 1, middle, sensor_depth_value(1.0f))), model.uncovered_depth, 0.5f);
+    EXPECT_LT(sensor_depth_metres(sim_depth_sensor_texel(model, 12, 2, 0.1f, width, height, 0, middle, sensor_depth_value(1.0f))), 1.2f);
+    EXPECT_LT(sensor_depth_metres(sim_depth_sensor_texel(model, 12, 2, 0.1f, width, height, width - 1, middle, sensor_depth_value(1.0f))), 1.2f);
 }
 
 TEST(SimDepth, no_data_near_and_the_uncovered_edge_have_their_values)

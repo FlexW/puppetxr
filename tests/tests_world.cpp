@@ -799,6 +799,29 @@ TEST_F(WorldTest, trace_depth_rows_split_the_image_and_near_and_empty_have_their
     w_destroy(world);
 }
 
+// Environment raycasts trace the texels they read one at a time
+TEST_F(WorldTest, a_traced_texel_is_the_one_in_the_traced_image)
+{
+    W_World* world = parse(room);
+    ASSERT_NE(world, nullptr);
+    const Fov  fov    = { -0.9f, 0.7f, 0.8f, -0.95f };
+    const Pose view   = { .position = { 0.3f, 1.2f, 0.2f }, .orientation = zm::quat_from_axis_angle(zm::normalize(Vec3{ 0.3f, 1.0f, 0.1f }), 0.7f) };
+    const u32  width  = 24;
+    const u32  height = 17;
+    u16        image[width * height];
+    w_trace_depth(world, nullptr, 0, view, fov, DEPTH_NEAR, width, height, 0, height, image);
+    for (u32 y = 0; y < height; y++)
+    {
+        for (u32 x = 0; x < width; x++)
+        {
+            ASSERT_EQ(w_trace_depth_texel(world, nullptr, 0, view, fov, DEPTH_NEAR, width, height, x, y), image[y * width + x]) << x << " " << y;
+        }
+    }
+    const Pose broken = { .position = { NAN, 1.2f, 0.0f }, .orientation = zm::QUAT_IDENTITY };
+    EXPECT_EQ(w_trace_depth_texel(world, nullptr, 0, broken, fov, DEPTH_NEAR, width, height, 3, 4), 65535);
+    w_destroy(world);
+}
+
 //
 // Names
 //
@@ -1851,6 +1874,43 @@ TEST_F(ModelTest, instances_hide_the_room_in_depth_and_raycasts)
     W_Instance flat = instance;
     flat.scale      = { 0.5f, 0.0f, 0.4f };
     EXPECT_FALSE(w_raycast_instances(&flat, 1, view.position, { 0.0f, 0.0f, -1.0f }, 10.0f, hit, index)) << "a degenerate scale hides nothing";
+}
+
+// Environment raycasts trace the texels they read one at a time, props included
+TEST_F(ModelTest, a_traced_texel_with_instances_is_the_one_in_the_traced_image)
+{
+    TestRoom room = {};
+    test_room_build(room);
+    W_World* world = parse(room);
+    ASSERT_NE(world, nullptr);
+    Array<u8> file = {};
+    defer {
+        file.release();
+        w_destroy(world);
+    };
+    cube_glb(CUBE_JSON, file);
+    W_Model* model = load_model(file);
+    ASSERT_NE(model, nullptr);
+    defer { w_destroy_model(model); };
+    const W_Instance instances[2] = {
+        { model, { { 0.0f, 1.2f, -1.0f }, zm::quat_from_axis_angle({ 0.0f, 1.0f, 0.0f }, 0.7f) }, { 0.3f, 0.5f, 0.2f } },
+        { model, { { -0.4f, 1.5f, -0.8f }, zm::QUAT_IDENTITY }, { 0.1f, 0.1f, 0.1f } },
+    };
+    const Pose view = { { 0.05f, 1.3f, 0.2f }, zm::quat_from_axis_angle({ 1.0f, 0.0f, 0.0f }, -0.15f) };
+    const Fov  fov  = { -0.6f, 0.5f, 0.45f, -0.55f };
+    const u32  size = 32;
+    static u16 image[size * size];
+    w_trace_depth(world, instances, 2, view, fov, DEPTH_NEAR, size, size, 0, size, image);
+    u32 nearer = 0;
+    for (u32 y = 0; y < size; y++)
+    {
+        for (u32 x = 0; x < size; x++)
+        {
+            ASSERT_EQ(w_trace_depth_texel(world, instances, 2, view, fov, DEPTH_NEAR, size, size, x, y), image[y * size + x]) << x << " " << y;
+            nearer += image[y * size + x] < w_trace_depth_texel(world, nullptr, 0, view, fov, DEPTH_NEAR, size, size, x, y) ? 1u : 0u;
+        }
+    }
+    EXPECT_GT(nearer, 20u) << "the boxes hide the room in part of the image";
 }
 
 // The bounding spheres that let most rays skip an instance never drop a hit: every pixel of the

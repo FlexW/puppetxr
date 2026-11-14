@@ -777,6 +777,14 @@ enum class SIM_OriginOffset : u8
 #define SIM_MAX_DEPTH_LATENCY_MS 1000
 #define SIM_MAX_DEPTH_NOISE      0.1f // metres at 1 m
 #define SIM_MAX_DEPTH_NOISE_CELL 64
+#define SIM_MAX_DEPTH_LOWER_FOV  170.0f // degrees
+
+// What XR_META_environment_raycast casts against
+enum class SIM_DepthRaycast : u32
+{
+    Depth, // the sensor's captures, as a Quest 3 does
+    Mesh,  // the global mesh exactly, at the display time, where either eye sees
+};
 
 struct SIM_DepthModel
 {
@@ -793,6 +801,12 @@ struct SIM_DepthModel
     f32 uncovered_center; // the row of its widest extent, a fraction of the height from the bottom
     f32 uncovered_height; // its extent, a fraction of the height
     f32 uncovered_depth;  // metres it reads
+
+    SIM_DepthRaycast raycast;
+    i64              raycast_latency_ns; // a raycast reads the newest capture at least this much older than the frame's display time
+    f32              lower_pitch;        // degrees a third view, for raycasts only, is turned up from the depth views; negative looks down
+    f32              lower_width;        // degrees of its horizontal field of view; 0 none
+    f32              lower_height;       // degrees of its vertical field of view
 };
 
 struct SIM_Config
@@ -940,9 +954,12 @@ const char*       sim_late_discovery_module  (const SIM_Config& config, b8 (*loa
 void              sim_load_full_config       (SIM_Config& out_config); // defaults, known modules, the config file, then the environment
 b8                sim_depth_model_preset     (const char* name, SIM_DepthModel& inout_model); // "quest3" or "eyes" (the eye views at every frame, no errors), keeping the resolution; false and unchanged for another name
 // The sensor's errors on a traced image of D16 values (w_trace_depth): noise and the uncovered area
-// at the outer edge, view 0 being the left one, whose outer edge is column 0. 0 (nearer than near)
+// at the outer edge, view 0 being the left one, whose outer edge is column 0, view 1 the right one,
+// views from 2 on (the raycasts' lower view) without an uncovered area. 0 (nearer than near)
 // and 65535 (no data) stay and noise makes neither. Deterministic in the seed, capture and view
 void              sim_depth_sensor           (const SIM_DepthModel& model, u64 capture, u32 view, f32 near, u32 width, u32 height, u16* inout_image);
+b8                sim_depth_lower_view_size  (const SIM_DepthModel& model, u32& out_width, u32& out_height); // the raycasts' lower view at the depth views' width; false and 0 x 0 without one
+u16               sim_depth_sensor_texel     (const SIM_DepthModel& model, u64 capture, u32 view, f32 near, u32 width, u32 height, u32 x, u32 y, u16 traced); // the value sim_depth_sensor makes of `traced` at column x, row y
 b8                sim_extension_disabled     (const SIM_Config& config, const char* name);
 b8                sim_graphics_api_allowed   (const SIM_Config& config, SIM_GraphicsApi api);
 const char*       sim_graphics_api_name      (SIM_GraphicsApi api); // "unknown" when out of range
