@@ -9853,6 +9853,76 @@ TEST_F(OxrPassthroughTest, layers_created_paused_need_starting)
     EXPECT_RGB(center(layers, 1, pixels), 255, 0, 0);
 }
 
+static f32 srgb_to_linear (u8 value)
+{
+    const f32 c = (f32)value / 255.0f;
+    return c <= 0.04045f ? c / 12.92f : zm::pow((c + 0.055f) / 1.055f, 2.4f);
+}
+
+// Regression: a dimmed passthrough layer blended every triangle of the room on its own, so where
+// the visual mesh overlaps (the table over the floor, furniture before a wall) the surfaces behind
+// showed through the ones in front, the mesh's triangles plain to see. Dimmed, each pixel is the
+// nearest surface's color times the opacity, but for a few pixels where surfaces tie in depth
+TEST_F(OxrPassthroughTest, dimmed_passthrough_shows_only_the_nearest_surface)
+{
+    start();
+    if (IsSkipped())
+    {
+        return;
+    }
+    XrCompositionLayerPassthroughFB     composition = passthrough_layer();
+    const XrCompositionLayerBaseHeader* layers[1]   = { (XrCompositionLayerBaseHeader*)&composition };
+    Array<u8>                           opaque      = {};
+    Array<u8>                           dimmed      = {};
+    defer {
+        opaque.release();
+        dimmed.release();
+    };
+    const Pose views[2] = {
+        { { 0.5f, 1.6f, 0.0f }, { -0.70710678f, 0.0f, 0.0f, 0.70710678f } },                                        // down at the table over the floor
+        { { -1.5f, 1.2f, 0.0f }, zm::normalize(zm::quat_from_axis_angle({ 0.0f, 1.0f, 0.0f }, -0.5f * zm::PI) * zm::quat_from_axis_angle({ 1.0f, 0.0f, 0.0f }, -0.3f)) }, // at a chair and the table before the +x wall
+    };
+    // A chair before the table in the second view, so a mesh prop over the room is dimmed too
+    SIM_Prop chair = { .kind = SIM_PropKind::Mesh, .pose = { { -0.6f, 0.0f, 0.1f }, zm::quat_from_axis_angle({ 0.0f, 1.0f, 0.0f }, -0.5f * zm::PI) } };
+    cstr_copy(chair.model, sizeof(chair.model), "chair");
+    ASSERT_NE(sim_add_prop(oxr_get_sim(), chair), 0u);
+    for (u32 v = 0; v < 2; v++)
+    {
+        sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, views[v]);
+        u32 width  = 0;
+        u32 height = 0;
+        XrPassthroughStyleFB style = { .type = XR_TYPE_PASSTHROUGH_STYLE_FB, .textureOpacityFactor = 1.0f, .edgeColor = { 0, 0, 0, 0 } };
+        ASSERT_EQ(pt.xrPassthroughLayerSetStyleFB(layer, &style), XR_SUCCESS);
+        submit_and_read(layers, 1, opaque, width, height);
+        style.textureOpacityFactor = 0.5f;
+        ASSERT_EQ(pt.xrPassthroughLayerSetStyleFB(layer, &style), XR_SUCCESS);
+        submit_and_read(layers, 1, dimmed, width, height);
+        if (os_env("PUPPETXR_TEST_DUMP_DIR"))
+        {
+            char shot[OS_MAX_PATH];
+            cstr_format(shot, sizeof(shot), "%s/passthrough_dimmed_%u.png", os_env("PUPPETXR_TEST_DUMP_DIR"), v);
+            EXPECT_TRUE(oxr_save_screenshot(shot));
+        }
+        ASSERT_EQ(opaque.length, dimmed.length);
+        u32 wrong = 0;
+        u32 lit   = 0;
+        for (usize i = 0; i + 3 < opaque.length; i += 4)
+        {
+            for (u32 c = 0; c < 3; c++)
+            {
+                const f32 expected = 0.5f * srgb_to_linear(opaque[i + c]);
+                const f32 got      = srgb_to_linear(dimmed[i + c]);
+                wrong += zm::abs(got - expected) > 0.01f ? 1u : 0u;
+                lit += opaque[i + c] > 0 ? 1u : 0u;
+            }
+        }
+        EXPECT_GT(lit, (u32)(opaque.length / 8)) << "view " << v << " shows the room";
+        // Where two surfaces meet at exactly the same depth, the outline of a closed shape, a pixel
+        // may blend twice: one pixel in a view on lavapipe, none on a GPU; before, millions
+        EXPECT_LE(wrong, 3u * 8u) << "view " << v << ": channels that are not half the opaque passthrough";
+    }
+}
+
 TEST_F(OxrPassthroughTest, styles)
 {
     start();

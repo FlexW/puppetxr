@@ -216,7 +216,8 @@ TEST(RenderBlockTest, push_blocks_have_the_std140_layout)
     EXPECT_EQ(offsetof(COMP_PassthroughPush, adjust), 80u);
     EXPECT_EQ(offsetof(COMP_PassthroughPush, color_map), 96u);
     EXPECT_EQ(offsetof(COMP_PassthroughPush, source_alpha), 100u);
-    EXPECT_EQ(sizeof(COMP_PassthroughPush), 112u);
+    EXPECT_EQ(offsetof(COMP_PassthroughPush, depth_pass), 112u);
+    EXPECT_EQ(sizeof(COMP_PassthroughPush), 128u) << "the push constant space every Vulkan device has";
 
     EXPECT_EQ(sizeof(COMP_DepthPush), 64u);
 
