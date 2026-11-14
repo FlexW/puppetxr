@@ -354,7 +354,7 @@ static OS_Key cocoa_key (u16 code)
     // ISO keyboards report the key left of 1 and the one right of left shift swapped
     if (os_cocoa.iso_keyboard && (code == kVK_ISO_Section || code == kVK_ANSI_Grave))
     {
-        code = code == kVK_ISO_Section ? kVK_ANSI_Grave : kVK_ISO_Section;
+        code = code == kVK_ISO_Section ? (u16)kVK_ANSI_Grave : (u16)kVK_ISO_Section;
     }
     return code < 0x80 ? keys[code] : OS_Key::None;
 }
@@ -1056,7 +1056,7 @@ static b8 cocoa_key_label (OS_Key key, char* out, usize size)
         u16 raw = code;
         if (os_cocoa.iso_keyboard && (raw == kVK_ISO_Section || raw == kVK_ANSI_Grave))
         {
-            raw = raw == kVK_ISO_Section ? kVK_ANSI_Grave : kVK_ISO_Section;
+            raw = raw == kVK_ISO_Section ? (u16)kVK_ANSI_Grave : (u16)kVK_ISO_Section;
         }
         if (layout && UCKeyTranslate((const UCKeyboardLayout*)CFDataGetBytePtr(layout), raw, kUCKeyActionDisplay, 0, LMGetKbdType(), kUCKeyTranslateNoDeadKeysBit, &dead, 4, &length, chars) == noErr && length > 0 && chars[0] > 0x20)
         {

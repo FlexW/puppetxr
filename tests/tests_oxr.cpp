@@ -461,15 +461,19 @@ TEST_F(OxrTest, frames_are_timed_for_the_performance_tab)
         frame();
     }
     ASSERT_EQ(times.count, start + 10);
-    // A headless frame's work can fit in one tick of macOS's 42 ns clock, so only the sum is above zero
+    // macOS's CLOCK_MONOTONIC ticks in microseconds, and a headless release frame can fit in one
+    // tick, so only the sums are above zero
+    f32 frames   = 0.0f;
     f32 puppetxr = 0.0f;
     for (u32 i = 0; i < times.count; i++)
     {
-        EXPECT_GT(times.frame_ms[i], 0.0f) << i;
+        EXPECT_GE(times.frame_ms[i], 0.0f) << i;
         EXPECT_GE(times.puppetxr_ms[i], 0.0f) << i;
         EXPECT_LE(times.puppetxr_ms[i], times.frame_ms[i]) << "the lock is held within the frame";
+        frames += times.frame_ms[i];
         puppetxr += times.puppetxr_ms[i];
     }
+    EXPECT_GT(frames, 0.0f);
     EXPECT_GT(puppetxr, 0.0f);
     for (u32 i = 0; i < UI_FRAME_TIMES; i++)
     {

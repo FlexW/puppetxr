@@ -18,9 +18,10 @@ if (PUPPETXR_BUILD_TESTS)
     if (CMAKE_MSVC_RUNTIME_LIBRARY)
         set_target_properties(gtest gtest_main PROPERTIES MSVC_RUNTIME_LIBRARY "${CMAKE_MSVC_RUNTIME_LIBRARY}")
     endif ()
-    # The MSVC STL annotates its containers under ASan, and the linker refuses objects that
-    # disagree (/failifmismatch annotate_string), so gtest is built sanitized like the tests
-    if (WIN32 AND PUPPETXR_SANITIZE STREQUAL "address")
+    # The MSVC STL and libc++ annotate their containers under ASan: the MSVC linker refuses objects
+    # that disagree (/failifmismatch annotate_string), and libc++ reports a container overflow when
+    # gtest grows a vector the tests' code annotated. So gtest is built sanitized like the tests
+    if ((WIN32 OR APPLE) AND PUPPETXR_SANITIZE STREQUAL "address")
         if (MSVC AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
             target_compile_options(gtest PRIVATE /fsanitize=address)
             target_compile_options(gtest_main PRIVATE /fsanitize=address)
