@@ -311,11 +311,24 @@ advertised: cts_vulkan2 103 cases, 0 failing (2026-10-20).
 - [x] XR_FB_passthrough with styles, ALPHA_BLEND environment blend mode
 - [x] XR_META_environment_depth (visual mesh depth, D16 array swapchain), XR_META_environment_raycast
 - [x] environment depth like a Quest 3's sensor (`environment_depth`, docs/config.md, Environment depth; measured on a
-  Quest 3 with runtime 210): traced into the visual mesh on the CPU (`w_trace_depth`, a SAH BVH) at 25 Hz on the
+  Quest 3): traced into the visual mesh on the CPU (`w_trace_depth`, a SAH BVH) at 25 Hz on the
   simulator's clock, shown 45 ms after the capture, views where the head was 26 ms after it at a fixed 64.85 mm
   baseline with the eyes' fields of view, seeded noise and the uncovered band at the outer edges, four images,
   `XrEnvironmentDepthImageTimestampMETA`; `eyes` keeps depth from the eyes at every frame; recordings keep the sensor
   (format 3). `OxrQuestDepthTest.depth_lines_up_through_the_reported_views_not_the_eyes`
+- [x] environment raycasts like a Quest 3's (`environment_depth.raycast`, docs/openxr.md, Environment raycast; measured
+  on a Quest 3): a march through the sensor's captures read 130 ms after them, texels traced when
+  first read, a lower view 55 degrees down, every status; `mesh` keeps the exact global mesh hits; recordings are
+  format 5. `OxrQuestRaycastTest`, `OxrEyesRaycastTest`
+- [ ] environment raycasts: what a Quest 3 does that puppetxr does not yet. A ray from an origin away from the head
+  pointing sideways out of every view is `RAY_OCCLUDED` on the headset at 60 to 120 degrees from the view direction
+  (puppetxr: `HIT_POINT_OUTSIDE_OF_FOV`); hits wander by about 10 mm over 30 s (the depth noise is new every capture,
+  see the rounded edges item below). Start: `raycast_depth` in `src/oxr.cpp`; measure the sideways case with
+  origins at known offsets from the head on a Quest 3 first. Done when a gtest reproduces each measured status
+- [ ] Unity and Unreal sample references with Quest 3 raycasts: `tools/sample_tests.py` runs the `unity_*` and
+  `unreal_*` tests with `PUPPETXR_ENVIRONMENT_RAYCAST=mesh`, as their references were recorded. Re-record those that
+  raycast (`unreal_mruk_environmentraycast`, `unity_mruk_environmentpanelplacement`) with the default on Windows with
+  the editors, together with the depth references below, and drop the pin
 - [ ] Unity and Unreal sample references with the Quest 3 depth sensor: `tools/sample_tests.py` runs the `unity_*`
   and `unreal_*` tests with `PUPPETXR_ENVIRONMENT_DEPTH=eyes`, as their references were recorded (the other samples
   show no depth and run on the default). Re-record the references of those that show depth (`unity_depthapi_*`, the

@@ -11,10 +11,10 @@ scene-understanding extension maps onto. File format: `room-format.md`.
 
 | Product | Used by | Accessor |
 |---|---|---|
-| visual mesh + albedo atlas | passthrough, environment depth | `w_visual_mesh`, `w_albedo` |
+| visual mesh + albedo atlas | passthrough, environment depth and raycast | `w_visual_mesh`, `w_albedo`, `w_trace_depth`, `w_trace_depth_texel` |
 | semantic entities | FB scene, META discovery, later EXT spatial entities | `w_entity`, `w_room`, `w_room_indices`, `w_boundary_points` |
-| global mesh | META spatial entity mesh, environment raycast | `w_global_mesh`, `w_raycast` |
-| models | mesh props in passthrough, environment depth and raycast (docs/props.md, Models) | `w_pack_model`, `w_create_model`, `w_raycast_instances` |
+| global mesh | META spatial entity mesh, environment raycast in `mesh` mode | `w_global_mesh`, `w_raycast` |
+| models | mesh props in passthrough, environment depth and raycast (docs/props.md, Models) | `w_pack_model`, `w_create_model`, `w_raycast_instances`, `w_trace_depth_texel` |
 
 ## Entity model
 
@@ -42,6 +42,8 @@ view in room space and writes `XR_META_environment_depth`'s D16 values:
 Nearer than `near` is 0, no hit or a view that is not finite 65535. It writes a range of rows, so
 threads can share an image; each row depends only on the view. Cost on the starter rooms (1300 to
 3200 visual triangles), 320 x 320, one core of a Ryzen 7 5800X, release: 14 to 20 ms.
+`w_trace_depth_texel` traces one texel, the same value the image has there, for environment
+raycasts, which read only the texels along their rays.
 
 Instances (`W_Instance`: a model, a pose in room space, a scale along its axes) hide what is
 behind them: each ray goes into every instance's model space (the inverse pose, then divided by

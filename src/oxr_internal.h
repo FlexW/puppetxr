@@ -41,6 +41,7 @@
 #define OXR_DEPTH_NEAR        0.1f
 #define OXR_DEPTH_WORKERS     4  // threads tracing depth besides the one in xrEndFrame
 #define OXR_DEPTH_ROWS        16 // rows a thread takes at a time
+#define OXR_RAYCAST_VIEWS     3  // the two depth views and the raycasts' lower view
 #define OXR_VIEW_COUNT        2
 #define OXR_FRAME_GATE_POLL_NS 100000
 #define OXR_FRAME_GATE_TIMEOUT_NS 1000000000ll // a second xrWaitFrame gives up waiting for the previous frame's xrBeginFrame
@@ -1091,6 +1092,26 @@ struct OXR_Raycaster
     OXR_SessionHandle session;
 };
 
+// The capture environment raycasts read (docs/openxr.md, Environment raycast), its texels traced
+// and given the sensor's errors when a ray first reads them
+struct OXR_RaycastDepth
+{
+    XrTime     capture = {};
+    u64        world_generation = {};
+    u32        generation = {}; // texels stamped with it belong to this capture; 0 before the first
+    u32        views = {};      // 2, or 3 with the lower view
+    Pose       poses[OXR_RAYCAST_VIEWS] = {};   // room space
+    Pose       inverse[OXR_RAYCAST_VIEWS] = {}; // view from room
+    Fov        fovs[OXR_RAYCAST_VIEWS] = {};
+    f32        tangents[OXR_RAYCAST_VIEWS][4] = {}; // left, right, up, down
+    u32        widths[OXR_RAYCAST_VIEWS] = {};
+    u32        heights[OXR_RAYCAST_VIEWS] = {};
+    Array<u16> depth[OXR_RAYCAST_VIEWS] = {};
+    Array<u32> stamps[OXR_RAYCAST_VIEWS] = {};
+    W_Instance instances[SIM_MAX_PROPS] = {}; // the props of the raycast in progress
+    u32        instances_count = {};
+};
+
 // XR_FB_spatial_entity_user: a person to share anchors with
 struct OXR_SpaceUser
 {
@@ -1226,6 +1247,7 @@ struct OXR_Runtime
     SparseArray<OXR_DepthProvider>    depth_providers = {};
     SparseArray<OXR_DepthSwapchain>   depth_swapchains = {};
     SparseArray<OXR_Raycaster>        raycasters = {};
+    OXR_RaycastDepth                  raycast_depth = {};
     SparseArray<OXR_SpaceUser>        space_users = {};
     SparseArray<OXR_TriangleMesh>     triangle_meshes = {};
     SparseArray<OXR_HandTracker>      hand_trackers = {};

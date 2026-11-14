@@ -3789,6 +3789,12 @@ b8 oxr_release_runtime ()
     rt->depth_swapchains.release();
     rt->camera_providers.release();
     rt->raycasters.release();
+    for (u32 v = 0; v < OXR_RAYCAST_VIEWS; v++)
+    {
+        rt->raycast_depth.depth[v].release();
+        rt->raycast_depth.stamps[v].release();
+    }
+    rt->raycast_depth = {};
     rt->space_users.release();
     rt->triangle_meshes.release();
     rt->geometry_instances.release();
@@ -11818,6 +11824,10 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrReleasePassthroughCameraImageMETAX1 
 }
 
 // Environment raycast: XR_META_environment_raycast
+//
+// As on a Quest 3 (docs/openxr.md, Environment raycast) a ray marches through the newest capture
+// at least raycast_latency_ns old, read in the two depth views and a lower view; the mesh mode
+// hits the global mesh exactly instead.
 
 static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrCreateEnvironmentRaycasterAsyncMETA (XrSession session, const XrEnvironmentRaycasterCreateInfoMETA* info, XrFutureEXT* out_future)
 {
@@ -11826,7 +11836,20 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrCreateEnvironmentRaycasterAsyncMETA 
     UNUSED(sess);
     OXR_CHECK(!info || info->type == XR_TYPE_ENVIRONMENT_RAYCASTER_CREATE_INFO_META);
     OXR_CHECK(out_future);
-    OXR_Runtime*              rt        = runtime();
+    OXR_Runtime*          rt    = runtime();
+    const SIM_DepthModel& model = sim_get_config(rt->sim).environment_depth;
+    if (model.raycast == SIM_DepthRaycast::Depth)
+    {
+        u32 lower_width  = 0;
+        u32 lower_height = 0;
+        sim_depth_lower_view_size(model, lower_width, lower_height);
+        for (u32 v = 0; v < OXR_RAYCAST_VIEWS; v++)
+        {
+            const usize texels = v < 2 ? (usize)model.width * model.height : (usize)lower_width * lower_height;
+            rt->raycast_depth.depth[v].resize(zm::max(rt->raycast_depth.depth[v].length, texels));
+            rt->raycast_depth.stamps[v].resize(zm::max(rt->raycast_depth.stamps[v].length, texels));
+        }
+    }
     const OXR_RaycasterHandle raycaster = rt->raycasters.add({ .session = session_handle(session) });
     const OXR_FutureHandle    future    = rt->futures.add({ .session = session_handle(session), .kind = OXR_FutureKind::CreateRaycaster, .result = XR_SUCCESS, .payload = raycaster.value });
     *out_future = future_xr(future);
@@ -11861,7 +11884,7 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrDestroyEnvironmentRaycasterMETA (XrE
     return XR_SUCCESS;
 }
 
-// The simulated depth cameras see what either eye sees
+// The mesh mode's cameras see what either eye sees
 static b8 point_in_view (const SIM_Sim* sim, const SIM_Sample& sample, Vec3 point)
 {
     for (u32 v = 0; v < OXR_VIEW_COUNT; v++)
@@ -11882,6 +11905,333 @@ static b8 point_in_view (const SIM_Sim* sim, const SIM_Sample& sample, Vec3 poin
         }
     }
     return false;
+}
+
+namespace
+{
+
+// A ray's hit in the simulator's frame, before it is put in the base space
+struct OXR_RayHit
+{
+    XrEnvironmentRaycastHitStatusMETA status;
+    Vec3                              point;
+    Vec3                              normal; // only for HIT
+};
+
+enum class OXR_RayPoint : u8
+{
+    Outside, // in no view
+    NoData,  // the depth there is unknown or nearer than near
+    Free,    // in front of the surface the depth shows
+    Behind,
+};
+
+struct OXR_RaySample
+{
+    OXR_RayPoint kind;
+    u32          view;
+    u32          x;
+    u32          y;
+    f32          ray_z;     // distance along the view's -Z
+    f32          surface_z; // of the texel, for Free and Behind
+};
+
+} // namespace
+
+static OXR_RayHit raycast_mesh (const SIM_Sample& sample, XrTime time, Vec3 origin, Vec3 direction, f32 max_distance)
+{
+    OXR_Runtime* rt         = runtime();
+    const Vec3   ray_origin = zm::transform_point(rt->room_from_stage, origin);
+    const Vec3   ray_dir    = zm::rotate(rt->room_from_stage.orientation, direction);
+    W_RaycastHit room_hit   = {};
+    b8           found      = rt->world && w_raycast(rt->world, ray_origin, ray_dir, max_distance, room_hit);
+    // Props in view stop the ray as they stop depth
+    W_Instance   instances[SIM_MAX_PROPS];
+    const u32    instances_count = prop_instances(rt, time, instances);
+    W_RaycastHit prop_hit        = {};
+    u32          prop_index      = 0;
+    if (w_raycast_instances(instances, instances_count, ray_origin, ray_dir, found ? room_hit.distance : max_distance, prop_hit, prop_index))
+    {
+        room_hit = prop_hit;
+        found    = true;
+    }
+    if (!found)
+    {
+        return { .status = XR_ENVIRONMENT_RAYCAST_HIT_STATUS_NO_HIT_META };
+    }
+    const Vec3 point = zm::transform_point(rt->stage_from_room, room_hit.point);
+    if (!point_in_view(rt->sim, sample, point))
+    {
+        return { .status = XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_POINT_OUTSIDE_OF_FOV_META };
+    }
+    return { .status = XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META, .point = point, .normal = zm::rotate(rt->stage_from_room.orientation, room_hit.normal) };
+}
+
+static void set_raycast_view (OXR_RaycastDepth& depth, u32 v, const Pose& room_pose, const Fov& fov, u32 width, u32 height)
+{
+    depth.poses[v]       = room_pose;
+    depth.inverse[v]     = zm::pose_inverse(room_pose);
+    depth.fovs[v]        = fov;
+    depth.tangents[v][0] = zm::tan(fov.angle_left);
+    depth.tangents[v][1] = zm::tan(fov.angle_right);
+    depth.tangents[v][2] = zm::tan(fov.angle_up);
+    depth.tangents[v][3] = zm::tan(fov.angle_down);
+    depth.widths[v]      = width;
+    depth.heights[v]     = height;
+}
+
+// The capture raycasts read at the newest frame's display time; a new one, or a new room, leaves
+// every texel to be traced again
+static void update_raycast_depth (const SIM_DepthModel& model)
+{
+    OXR_Runtime*      rt      = runtime();
+    OXR_RaycastDepth& depth   = rt->raycast_depth;
+    XrTime            capture = sim_predicted_display_time(rt->sim) - model.raycast_latency_ns;
+    if (model.period_ns > 0)
+    {
+        capture = capture < 0 ? 0 : capture - capture % model.period_ns;
+    }
+    if (depth.generation != 0 && depth.capture == capture && depth.world_generation == rt->world_generation)
+    {
+        return;
+    }
+    depth.capture          = capture;
+    depth.world_generation = rt->world_generation;
+    depth.generation       = depth.generation == 0xffffffffu ? 1u : depth.generation + 1u;
+    if (depth.generation == 1u)
+    {
+        for (u32 v = 0; v < OXR_RAYCAST_VIEWS; v++)
+        {
+            memory_zero(depth.stamps[v].data, depth.stamps[v].length * sizeof(u32));
+        }
+    }
+
+    SIM_Sample sample = {};
+    sim_sample(rt->sim, capture + model.pose_delay_ns, sample);
+    Pose views[OXR_VIEW_COUNT];
+    Fov  fovs[OXR_VIEW_COUNT];
+    depth_views(model, sample, views, fovs);
+    for (u32 v = 0; v < OXR_VIEW_COUNT; v++)
+    {
+        set_raycast_view(depth, v, zm::pose_mul(rt->room_from_stage, views[v]), fovs[v], model.width, model.height);
+    }
+    depth.views = OXR_VIEW_COUNT;
+    u32 width  = 0;
+    u32 height = 0;
+    if (sim_depth_lower_view_size(model, width, height) && depth.depth[2].length >= (usize)width * height)
+    {
+        // Between the depth views, turned down from them
+        const f32  half_w = model.lower_width * 0.5f * zm::DEG_TO_RAD;
+        const f32  half_h = model.lower_height * 0.5f * zm::DEG_TO_RAD;
+        const Pose lower  = { .position = (views[0].position + views[1].position) * 0.5f, .orientation = views[0].orientation * zm::quat_from_axis_angle({ 1.0f, 0.0f, 0.0f }, model.lower_pitch * zm::DEG_TO_RAD) };
+        set_raycast_view(depth, 2, zm::pose_mul(rt->room_from_stage, lower), { -half_w, half_w, half_h, -half_h }, width, height);
+        depth.views = 3;
+    }
+}
+
+static u16 raycast_texel (OXR_RaycastDepth& depth, const SIM_DepthModel& model, u32 v, u32 x, u32 y)
+{
+    const usize i = (usize)y * depth.widths[v] + x;
+    ASSERT(i < depth.depth[v].length);
+    if (depth.stamps[v][i] != depth.generation)
+    {
+        const u16 traced   = w_trace_depth_texel(runtime()->world, depth.instances, depth.instances_count, depth.poses[v], depth.fovs[v], OXR_DEPTH_NEAR, depth.widths[v], depth.heights[v], x, y);
+        depth.depth[v][i]  = sim_depth_sensor_texel(model, (u64)depth.capture, v, OXR_DEPTH_NEAR, depth.widths[v], depth.heights[v], x, y, traced);
+        depth.stamps[v][i] = depth.generation;
+    }
+    return depth.depth[v][i];
+}
+
+static f32 depth_metres (u16 value)
+{
+    return OXR_DEPTH_NEAR / (1.0f - (f32)value / 65535.0f);
+}
+
+// A point in room space against the first view that sees it
+static OXR_RaySample classify_ray_point (OXR_RaycastDepth& depth, const SIM_DepthModel& model, Vec3 point)
+{
+    for (u32 v = 0; v < depth.views; v++)
+    {
+        const Vec3 p = zm::transform_point(depth.inverse[v], point);
+        if (!(p.z < -OXR_DEPTH_NEAR))
+        {
+            continue;
+        }
+        const f32* t  = depth.tangents[v];
+        const f32  tx = p.x / -p.z;
+        const f32  ty = p.y / -p.z;
+        if (!(tx >= t[0] && tx < t[1] && ty >= t[3] && ty < t[2]))
+        {
+            continue;
+        }
+        const u32 x     = zm::min((u32)((tx - t[0]) / (t[1] - t[0]) * (f32)depth.widths[v]), depth.widths[v] - 1);
+        const u32 y     = zm::min((u32)((ty - t[3]) / (t[2] - t[3]) * (f32)depth.heights[v]), depth.heights[v] - 1);
+        const u16 value = raycast_texel(depth, model, v, x, y);
+        if (value == 0 || value == 0xffff)
+        {
+            return { .kind = OXR_RayPoint::NoData, .view = v, .x = x, .y = y, .ray_z = -p.z };
+        }
+        const f32 surface = depth_metres(value);
+        return { .kind = -p.z > surface ? OXR_RayPoint::Behind : OXR_RayPoint::Free, .view = v, .x = x, .y = y, .ray_z = -p.z, .surface_z = surface };
+    }
+    return { .kind = OXR_RayPoint::Outside };
+}
+
+// A texel's surface point in room space; false where the depth is unknown or outside the image
+static b8 raycast_surface_point (OXR_RaycastDepth& depth, const SIM_DepthModel& model, u32 v, i32 x, i32 y, Vec3& out_point, f32& out_z)
+{
+    if (x < 0 || y < 0 || (u32)x >= depth.widths[v] || (u32)y >= depth.heights[v])
+    {
+        return false;
+    }
+    const u16 value = raycast_texel(depth, model, v, (u32)x, (u32)y);
+    if (value == 0 || value == 0xffff)
+    {
+        return false;
+    }
+    const f32* t  = depth.tangents[v];
+    const f32  tx = t[0] + (t[1] - t[0]) * ((f32)x + 0.5f) / (f32)depth.widths[v];
+    const f32  ty = t[3] + (t[2] - t[3]) * ((f32)y + 0.5f) / (f32)depth.heights[v];
+    out_z         = depth_metres(value);
+    out_point     = zm::transform_point(depth.poses[v], { tx * out_z, ty * out_z, -out_z });
+    return true;
+}
+
+// The surface normal from the depth OXR_RAYCAST_NORMAL_SPAN texels to either side, in room space.
+// A plane's inverse depth is linear across the image, so a neighbour off that line by more than
+// the noise lies across an edge, and the orientation cannot be found
+#define OXR_RAYCAST_NORMAL_SPAN 6
+static b8 raycast_normal (OXR_RaycastDepth& depth, const SIM_DepthModel& model, const OXR_RaySample& at, Vec3 direction, Vec3& out_normal)
+{
+    const i32 k      = OXR_RAYCAST_NORMAL_SPAN;
+    const i32 x      = (i32)at.x;
+    const i32 y      = (i32)at.y;
+    Vec3      center = {};
+    Vec3      p[4]   = {};
+    f32       z0     = 0.0f;
+    f32       z[4]   = {};
+    if (!raycast_surface_point(depth, model, at.view, x, y, center, z0) || !raycast_surface_point(depth, model, at.view, x - k, y, p[0], z[0]) || !raycast_surface_point(depth, model, at.view, x + k, y, p[1], z[1]) ||
+        !raycast_surface_point(depth, model, at.view, x, y - k, p[2], z[2]) || !raycast_surface_point(depth, model, at.view, x, y + k, p[3], z[3]))
+    {
+        return false;
+    }
+    const f32 tolerance = 0.04f / z0 + 0.01f;
+    if (zm::abs(1.0f / z[0] + 1.0f / z[1] - 2.0f / z0) > tolerance || zm::abs(1.0f / z[2] + 1.0f / z[3] - 2.0f / z0) > tolerance)
+    {
+        return false;
+    }
+    const Vec3 normal = zm::cross(p[1] - p[0], p[3] - p[2]);
+    const f32  length = zm::length(normal);
+    if (!(length > zm::EPSILON))
+    {
+        return false;
+    }
+    out_normal = zm::dot(normal, direction) > 0.0f ? -normal / length : normal / length;
+    return true;
+}
+
+// A ray that comes this far behind the depth where it crosses it passed behind an occluding edge
+// rather than meeting the surface; grazing a surface in steps of a texel stays well within it
+static b8 crossed_behind_an_edge (const OXR_RaySample& behind)
+{
+    return behind.ray_z - behind.surface_z > zm::max(0.05f, 0.1f * behind.ray_z);
+}
+
+static OXR_RayHit raycast_depth (const SIM_DepthModel& model, Vec3 origin, Vec3 direction, f32 max_distance)
+{
+    OXR_Runtime*      rt    = runtime();
+    OXR_RaycastDepth& depth = rt->raycast_depth;
+    update_raycast_depth(model);
+    // Props as they were at the capture, as environment depth shows them; taken anew each call
+    // since a prop's model may have been replaced
+    depth.instances_count = prop_instances(rt, depth.capture, depth.instances);
+    const Vec3 o = zm::transform_point(rt->room_from_stage, origin);
+    const Vec3 d = zm::normalize(zm::rotate(rt->room_from_stage.orientation, direction));
+
+    // Steps of about a texel at the depth reached, so no surface wider than a texel is passed
+    f32 texel = zm::F32_MAX;
+    for (u32 v = 0; v < depth.views; v++)
+    {
+        texel = zm::min(texel, (depth.tangents[v][1] - depth.tangents[v][0]) / (f32)depth.widths[v]);
+    }
+    const Vec3    eyes     = (depth.poses[0].position + depth.poses[1].position) * 0.5f;
+    b8            covered  = false; // a point so far was in a view
+    b8            occluded = false; // behind the depth since the first such point
+    f32           t        = 0.0f;
+    f32           free_t   = 0.0f;
+    OXR_RaySample sample   = {};
+    for (;;)
+    {
+        sample = classify_ray_point(depth, model, o + d * t);
+        if (sample.kind == OXR_RayPoint::Outside)
+        {
+            if (covered)
+            {
+                break;
+            }
+        }
+        else if (sample.kind == OXR_RayPoint::NoData)
+        {
+            return { .status = XR_ENVIRONMENT_RAYCAST_HIT_STATUS_NO_HIT_META };
+        }
+        else if (sample.kind == OXR_RayPoint::Behind)
+        {
+            if (!covered)
+            {
+                occluded = true;
+            }
+            covered = true;
+            if (!occluded)
+            {
+                break;
+            }
+        }
+        else
+        {
+            covered  = true;
+            occluded = false;
+            free_t   = t;
+        }
+        if (t >= max_distance)
+        {
+            break;
+        }
+        // Outside the views nothing can be hit, so coarser steps only risk entering a view late
+        const f32 step = sample.kind == OXR_RayPoint::Outside ? zm::max(texel * zm::length(o + d * t - eyes), 0.01f) : zm::max(texel * sample.ray_z, 0.001f);
+        t              = zm::min(t + step, max_distance);
+    }
+    if (!covered || sample.kind != OXR_RayPoint::Behind || occluded)
+    {
+        return { .status = occluded ? XR_ENVIRONMENT_RAYCAST_HIT_STATUS_RAY_OCCLUDED_META : XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_POINT_OUTSIDE_OF_FOV_META };
+    }
+
+    // Narrow the crossing down between the last point in front and the first behind
+    f32 behind_t = t;
+    for (u32 i = 0; i < 16; i++)
+    {
+        const f32           middle = (free_t + behind_t) * 0.5f;
+        const OXR_RaySample at     = classify_ray_point(depth, model, o + d * middle);
+        if (at.kind == OXR_RayPoint::Behind)
+        {
+            behind_t = middle;
+            sample   = at;
+        }
+        else
+        {
+            free_t = middle;
+        }
+    }
+    const Vec3 point = zm::transform_point(rt->stage_from_room, o + d * behind_t);
+    if (crossed_behind_an_edge(sample))
+    {
+        return { .status = XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_POINT_OCCLUDED_META, .point = point };
+    }
+    Vec3 normal = {};
+    if (!raycast_normal(depth, model, sample, d, normal))
+    {
+        return { .status = XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_INVALID_ORIENTATION_META, .point = point };
+    }
+    return { .status = XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META, .point = point, .normal = zm::rotate(rt->stage_from_room.orientation, normal) };
 }
 
 static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrPerformEnvironmentRaycastMETA (XrEnvironmentRaycasterMETA raycaster, const XrEnvironmentRaycastHitGetInfoMETA* info, XrEnvironmentRaycastHitMETA* hit)
@@ -11918,46 +12268,30 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrPerformEnvironmentRaycastMETA (XrEnv
     hit->status = XR_ENVIRONMENT_RAYCAST_HIT_STATUS_NO_HIT_META;
     hit->pose   = pose_to_xr(zm::POSE_IDENTITY);
 
-    OXR_Runtime* rt     = runtime();
-    SIM_Sample   sample = {};
+    const OXR_Runtime* rt     = runtime();
+    SIM_Sample         sample = {};
     sim_sample(rt->sim, time, sample);
-    const OXR_Located base       = locate_world(space, sample);
-    W_RaycastHit      room_hit   = {};
-    const Pose        ray_base   = zm::pose_mul(rt->room_from_stage, base.pose);
-    const Vec3        ray_origin = zm::transform_point(ray_base, origin);
-    const Vec3        ray_dir    = zm::rotate(ray_base.orientation, direction);
+    const OXR_Located base = locate_world(space, sample);
     if (!base.valid)
     {
         return XR_SUCCESS;
     }
-    // Quest's raycast is a depth query, so props in view stop it as they stop depth
-    b8           found           = rt->world && w_raycast(rt->world, ray_origin, ray_dir, max_distance, room_hit);
-    W_Instance   instances[SIM_MAX_PROPS];
-    const u32    instances_count = prop_instances(rt, time, instances);
-    W_RaycastHit prop_hit        = {};
-    u32          prop_index      = 0;
-    if (w_raycast_instances(instances, instances_count, ray_origin, ray_dir, found ? room_hit.distance : max_distance, prop_hit, prop_index))
+    const SIM_DepthModel& model     = sim_get_config(rt->sim).environment_depth;
+    const Vec3            ray_o     = zm::transform_point(base.pose, origin);
+    const Vec3            ray_d     = zm::rotate(base.pose.orientation, direction);
+    const OXR_RayHit      ray_hit   = model.raycast == SIM_DepthRaycast::Mesh ? raycast_mesh(sample, time, ray_o, ray_d, max_distance) : raycast_depth(model, ray_o, ray_d, max_distance);
+    hit->status                     = ray_hit.status;
+    if (ray_hit.status == XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META)
     {
-        room_hit = prop_hit;
-        found    = true;
+        // Spec: +Z of the orientation is the surface normal, +Y points roughly back along the ray
+        const Quat orientation = zm::quat_look_rotation(-ray_hit.normal, -zm::normalize(ray_d));
+        hit->pose              = pose_to_xr(zm::pose_relative(base.pose, { ray_hit.point, orientation }));
     }
-    if (!found)
+    else if (ray_hit.status == XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_POINT_OCCLUDED_META || ray_hit.status == XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_INVALID_ORIENTATION_META)
     {
-        return XR_SUCCESS;
+        // Measured on a Quest 3: the point on the ray, level, turned like the tracking origin
+        hit->pose = pose_to_xr(zm::pose_relative(base.pose, { ray_hit.point, zm::QUAT_IDENTITY }));
     }
-    room_hit.point  = zm::transform_point(rt->stage_from_room, room_hit.point);
-    room_hit.normal = zm::rotate(rt->stage_from_room.orientation, room_hit.normal);
-    if (!point_in_view(rt->sim, sample, room_hit.point))
-    {
-        hit->status = XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_POINT_OUTSIDE_OF_FOV_META;
-        return XR_SUCCESS;
-    }
-
-    // Spec: +Z of the orientation is the surface normal, +Y points roughly back along the ray
-    const Vec3 world_direction = zm::normalize(zm::rotate(base.pose.orientation, direction));
-    const Quat orientation     = zm::quat_look_rotation(-room_hit.normal, -world_direction);
-    hit->status = XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META;
-    hit->pose   = pose_to_xr(zm::pose_relative(base.pose, { room_hit.point, orientation }));
     return XR_SUCCESS;
 }
 

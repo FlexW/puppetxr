@@ -670,6 +670,8 @@ Without a room nothing is drawn. `xrEnumerateEnvironmentBlendModes` reports `OPA
 
 ## Environment depth and raycast
 
+### Environment depth
+
 `XR_META_environment_depth`: one provider per session, created stopped; start and stop
 of a provider already in that state return `XR_ERROR_UNEXPECTED_STATE_PASSTHROUGH_FB`.
 One swapchain per provider: `OXR_DEPTH_IMAGES` (4, like Quest 3) D16 images of two layers at
@@ -702,16 +704,64 @@ infinite projection with y up: `nearZ` 0.1, `farZ` infinity, value `1 - near / d
 texel row 0 at the bottom of the view. Hand removal is accepted and changes nothing: there are
 no simulated hands in the depth.
 
+### Environment raycast
+
 `XR_META_environment_raycast` (needs `XR_EXT_future`, else instance creation fails with
 `XR_ERROR_EXTENSION_DEPENDENCY_NOT_ENABLED`): `xrCreateEnvironmentRaycasterAsyncMETA`
 creates the raycaster at once and returns a ready future whose payload it is; cancelling
-the future destroys it. `xrPerformEnvironmentRaycastMETA` transforms the ray into room
-space and calls `w_raycast` on the global mesh and `w_raycast_instances` on the props posed at
-the ray's time (a Quest answers from depth, so props stop rays), the nearest winning, honouring
-the distance filter. A hit
-outside both eyes' frustums is `HIT_POINT_OUTSIDE_OF_FOV` (the depth cameras see what the
-eyes see), no room or no hit is `NO_HIT`. The hit pose's +Z is the surface normal and +Y
-points back along the ray.
+the future destroys it. It also sizes the texel cache below, the only allocation.
+`xrPerformEnvironmentRaycastMETA` places the ray with the base space at `time`, honours the
+distance filter, and casts it the way `environment_depth.raycast` says (docs/config.md,
+Environment depth). The hit pose's +Z is the surface normal and +Y points back along the ray.
+
+`depth` (default), as on a Quest 3: the ray marches through a depth capture of the room.
+- The capture is the newest at least `raycast.latency_ms` before the newest frame's display
+  time (`update_raycast_depth`), on the sensor's period, from where the head was at capture +
+  pose delay. `time` does not choose it: a Quest 3 answers the same for any time. No depth
+  provider is needed, and a provider's own captures are not the ones raycasts read.
+- Views: the two depth views (`depth_views`) and, with `raycast.lower_view`, a third turned
+  `pitch` degrees down from them, centred between them. The first view that sees a point decides.
+- Texels are traced into the visual mesh and the props posed at the capture (`w_trace_depth_texel`) and given the sensor's errors
+  (`sim_depth_sensor_texel`, view 2 has no uncovered band) when a ray first reads them, then kept
+  until the capture or the room changes (`OXR_RaycastDepth`, stamped by generation). Views 0 and 1
+  of a capture are the image a provider would show for it.
+- The march (`raycast_depth`) steps about a texel at the depth reached (1 cm while in no view).
+  Before the first point in a view nothing counts; a point is free (in front of its texel's depth),
+  behind it, or without data (65535 or 0).
+- Status:
+  - `HIT`: the first free-to-behind crossing, narrowed by bisection. The point lies on the ray;
+    the normal comes from the depth 6 texels to either side (`raycast_normal`).
+  - `HIT_INVALID_ORIENTATION`: such a crossing where a neighbour's inverse depth is off the
+    plane's line by more than `0.04 / z + 0.01` (an edge) or has no data.
+  - `HIT_POINT_OCCLUDED`: a crossing more than `max(5 cm, 10 %)` of the depth behind the
+    texel: the ray passed behind an occluding edge.
+  - `RAY_OCCLUDED`: behind the depth from the first point in a view until the ray ends.
+  - `HIT_POINT_OUTSIDE_OF_FOV`: the ray leaves every view or reaches the distance filter before
+    a crossing, or is never in a view. A ray leaving a wall towards the cameras passes them so.
+  - `NO_HIT`: a point without data, so no room is `NO_HIT` everywhere.
+- The two hits without an orientation have the point on the ray and the orientation of
+  STAGE, level, as a Quest 3 returns its tracking origin's.
+
+`mesh`: `w_raycast` on the global mesh and `w_raycast_instances` on the props posed at `time`,
+the nearest winning, exact; a hit outside both eyes' frustums is `HIT_POINT_OUTSIDE_OF_FOV`, no
+room or no hit `NO_HIT`. Recordings before format 5 replay so.
+
+Measured on a Quest 3 (static and turning, ~1.8 M raycasts):
+- results change only with a new capture, every 40 ms; `time` 1 s off changes nothing
+- the head pose of the depth read fits about 80 ms (60 to 100) before the call, the call being
+  about 45 ms before the frame's display time; `latency_ms` 130 places it there on average
+- coverage: the eyes' field of view (about 45 degrees up), and below about 25 degrees down far
+  wider, to all sides at 55 degrees down: a view pitched 55 degrees down, 109 by 62 degrees,
+  matches 96 % of the rays' statuses
+- a hit moves about 1.2 mm between captures at 1 m, 4 mm at 2 m, and wanders by about 10 mm over
+  30 s; normals on flat surfaces jitter by 1.5 to 3 degrees rms
+- a ray from inside a wall is `RAY_OCCLUDED`; a ray from behind a wall towards the head and a
+  distance filter shorter than the hit are `HIT_POINT_OUTSIDE_OF_FOV`; `HIT_POINT_OCCLUDED`,
+  `HIT_INVALID_ORIENTATION` and `NO_HIT` cluster at depth edges
+- a call takes about 20 microseconds (puppetxr: about 23 in a release build in the living room)
+- not simulated: rays from an origin away from the head that point sideways out of every view are
+  `RAY_OCCLUDED` on a Quest 3 at 60 to 120 degrees from the view direction, not
+  `HIT_POINT_OUTSIDE_OF_FOV`; the slow wander
 
 ## Passthrough cameras
 
