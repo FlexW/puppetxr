@@ -21,8 +21,8 @@ typedef size_t usize;
 
 typedef bool b8;
 
-// Formatting goes through SDL_vsnprintf, which takes the C99 conversions on every platform;
-// mingw's plain printf format means the Microsoft runtime's
+// Formatting goes through the C runtime's vsnprintf, which is C99 on every platform (mingw builds
+// with __USE_MINGW_ANSI_STDIO); mingw's plain printf format means the Microsoft runtime's
 #if defined(__MINGW32__)
 #define PRINTF_LIKE(fmt_idx, first_arg) __attribute__((format(gnu_printf, fmt_idx, first_arg)))
 #elif defined(__GNUC__) || defined(__clang__)
@@ -137,6 +137,14 @@ enum class OS_Key : u8
     Grave,        // left of 1: ` on US layouts, ^ on German, ² on French
     LeftBracket,  // right of P: [ on US layouts, Ü on German
     RightBracket, // ] on US layouts, + on German
+    // Appended for the UI's text fields; positions name keys of a US layout as Grave does
+    Insert, Delete, Home, End, PageUp, PageDown,
+    Minus, Equals, Backslash, Semicolon, Apostrophe, Comma, Period, Slash, NonUsBackslash,
+    CapsLock, ScrollLock, NumLock, PrintScreen, Pause, Menu, LeftSuper, RightSuper,
+    Keypad0, Keypad1, Keypad2, Keypad3, Keypad4, Keypad5, Keypad6, Keypad7, Keypad8, Keypad9,
+    KeypadDecimal, KeypadDivide, KeypadMultiply, KeypadMinus, KeypadPlus, KeypadEnter, KeypadEquals,
+    F13, F14, F15, F16, F17, F18, F19, F20, F21, F22, F23, F24,
+    MouseX1, MouseX2,
     Count,
 };
 
@@ -169,6 +177,30 @@ struct OS_WindowNative
     u64   window;  // X11 Window, wl_surface* or HWND
     void* display; // Display*, wl_display* or the window's own HDC
     b8    wayland;
+};
+
+// Mouse cursor shapes a window shows while the cursor is over it
+enum class OS_Cursor : u8
+{
+    Arrow = 0,
+    TextInput,
+    ResizeAll,
+    ResizeNS,
+    ResizeEW,
+    ResizeNESW,
+    ResizeNWSE,
+    Hand,
+    Wait,
+    Progress,
+    NotAllowed,
+    Hidden,
+    Count,
+};
+
+// 32-bit integer for several threads; every operation is sequentially consistent
+struct OS_Atomic32
+{
+    volatile i32 value;
 };
 
 // The clock apps hand to the time conversion extensions
@@ -204,7 +236,7 @@ struct OS_Event
     OS_Key       key;    // KeyDown, KeyUp (mouse buttons arrive as keys)
     f32          dx;     // MouseMotion
     f32          dy;     // MouseMotion, MouseWheel (positive away from the user)
-    f32          x;      // KeyDown, KeyUp of a mouse button: where in window pixels
+    f32          x;      // KeyDown, KeyUp of a mouse button: where in window points
     f32          y;
     u32          width;  // WindowResize
     u32          height;
@@ -228,8 +260,52 @@ enum class OS_ClipAction : u8
     Free,
 };
 
-// Raw platform events are forwarded here before translation, for the UI layer
-typedef void (*OS_RawEventHook)(const void* native_event, b8 input, void* user); // input: a key, mouse or text event
+#define OS_EVENT_TEXT_LENGTH 32
+
+enum OS_Modifier : u8
+{
+    OS_MODIFIER_SHIFT = 1 << 0,
+    OS_MODIFIER_CTRL  = 1 << 1,
+    OS_MODIFIER_ALT   = 1 << 2,
+    OS_MODIFIER_SUPER = 1 << 3,
+};
+
+enum class OS_RawEventType : u8
+{
+    None = 0,
+    KeyDown,
+    KeyUp,
+    Text,
+    MouseMotion,
+    MouseButtonDown,
+    MouseButtonUp,
+    MouseWheel,
+    FocusGained,
+    FocusLost,
+    WindowClose,
+    WindowResize,
+};
+
+// An event as the video driver reports it, before os_poll_events translates it. Positions are in
+// window points (pixels divided by os_window_display_density), relative motion in points too
+struct OS_RawEvent
+{
+    OS_RawEventType type;
+    u32             window;    // id of the window, os_window_id
+    OS_Key          key;       // KeyDown, KeyUp, MouseButton*
+    u8              modifiers; // OS_Modifier, held during the event
+    b8              repeat;    // KeyDown of a held key
+    f32             x;         // MouseMotion, MouseButton*
+    f32             y;
+    f32             dx;        // MouseMotion: relative motion; MouseWheel: notches, positive right
+    f32             dy;        // MouseMotion: relative motion; MouseWheel: notches, positive away from the user
+    u32             width;     // WindowResize, in pixels
+    u32             height;
+    char            text[OS_EVENT_TEXT_LENGTH]; // Text: UTF-8, terminated
+};
+
+// Raw events are forwarded here before translation, for the UI layer
+typedef void (*OS_RawEventHook)(const OS_RawEvent& event, void* user);
 
 b8            os_initialize         (b8 headless);
 void          os_shutdown           ();
@@ -308,12 +384,12 @@ OS_LockFile*  os_lock_file_create   (const char* path, const void* data, usize s
 void          os_lock_file_release  (OS_LockFile* file); // deletes the file
 b8            os_lock_file_is_stale (const char* path);  // the file exists and no process holds it
 
-const char*   os_video_driver       (); // "x11", "wayland", "offscreen", ...; null when headless
+const char*   os_video_driver       (); // "x11", "wayland", "windows", "cocoa", "offscreen"; null when headless. $PUPPETXR_VIDEO_DRIVER picks one at os_initialize
 b8            os_set_video_driver   (const char* driver); // restarts video on that driver; destroy every window first. A failed switch keeps the old one
 OS_Window*    os_create_window      (const char* title, u32 width, u32 height, b8 vulkan, u32 x11_visual = 0, b8 hidden = false); // x11_visual: the X visual id the window must have, for GLX
 b8            os_window_native_handles (OS_Window* window, OS_WindowNative& out_native); // false for drivers without a native window
 void          os_destroy_window     (OS_Window* window);
-void*         os_window_native      (OS_Window* window); // SDL_Window*
+u32           os_window_id          (const OS_Window* window); // the id raw events carry, never 0
 void*         os_window_metal_layer (OS_Window* window); // the CAMetalLayer of a view made once per window; null where there is no Metal
 void          os_window_size        (OS_Window* window, u32& out_width, u32& out_height); // in pixels
 f32           os_window_display_density (OS_Window* window); // pixels per point of the window's display, 1 when unknown
@@ -326,23 +402,28 @@ b8            os_window_maximize    (OS_Window* window); // false where the vide
 b8            os_window_maximized   (OS_Window* window);
 void          os_window_show        (OS_Window* window); // a window created or made hidden, raised in front of the process's other windows
 void          os_window_hide        (OS_Window* window);
-b8            os_window_cursor      (OS_Window* window, f32& out_x, f32& out_y); // the system cursor in window pixels while it is over the window, not held relative and the window got no pushed mouse events (Windows); false elsewhere
+b8            os_window_cursor      (OS_Window* window, f32& out_x, f32& out_y); // the system cursor in window points while it is over the window, not held relative and the window got no pushed mouse events (Windows); false elsewhere
 void          os_window_keep_cursor (OS_Window* window, b8 held); // once a frame: held, the cursor stays in the window; not held, it is free while the window is in front (Windows; nothing elsewhere)
 OS_ClipAction os_cursor_clip_action (b8 held, b8 foreground, OS_ScreenRect clip, OS_ScreenRect client, OS_ScreenRect desktop);
 b8            os_window_shown       (OS_Window* window);
 u32           os_poll_events        (OS_Event* out_events, u32 capacity); // returns the number written, drops the rest
 void          os_set_raw_event_hook (OS_RawEventHook hook, void* user); // called from os_poll_events
+b8            os_raw_event_is_input (const OS_RawEvent& event); // a key, text or mouse event
+void          os_window_set_cursor  (OS_Window* window, OS_Cursor cursor);
+void          os_window_text_input  (OS_Window* window, b8 active, f32 x, f32 y, f32 height); // text input on, and where an input method shows its candidates (points); off hides them
+b8            os_clipboard_text     (OS_Window* window, char* out_text, usize size); // the clipboard's UTF-8 text, false when it holds none or more than fits
+void          os_set_clipboard_text (OS_Window* window, const char* text);
 b8            os_has_audio_device_ids (); // the platform names audio endpoints (Windows)
 b8            os_default_audio_device (b8 input, wchar_t* out_id, usize count); // the default endpoint's id, empty and false without one
-b8            os_push_mouse_event   (OS_Window* window, f32 x, f32 y, OS_Key button, b8 down); // synthetic input at window pixel (x, y) for the next os_poll_events: a move for OS_Key::None, else the button there
+b8            os_push_mouse_event   (OS_Window* window, f32 x, f32 y, OS_Key button, b8 down); // synthetic input at window point (x, y) for the next os_poll_events: a move for OS_Key::None, else the button there
 b8            os_push_key_event     (OS_Window* window, OS_Key key, b8 down, b8 repeat); // synthetic key for the next os_poll_events; false for keys without a scancode
 b8            os_push_wheel_event   (OS_Window* window, f32 dy);                       // synthetic wheel turn for the next os_poll_events, positive away from the user
 b8            os_push_focus_lost    (OS_Window* window);                               // synthetic loss of the keyboard focus for the next os_poll_events
+b8            os_push_raw_event     (OS_Window* window, const OS_RawEvent& event);     // any synthetic event for the next os_poll_events, as the window's
 
-// Runs `function` on the thread that owns the windows and waits for it. Where windows belong to
-// no thread (X11, Wayland) it runs on the calling thread. Code that calls SDL's window or input
-// functions itself, as the ImGui backend does, goes through here; os_* window functions do it
-// on their own. The function must not wait for the caller.
+// Runs `function` on the thread that owns the windows and waits for it: puppetxr's window thread
+// on Windows and Linux, the app's main thread on macOS. os_* window functions do it on their own.
+// The function must not wait for the caller.
 // On macOS the window thread is the app's main thread; a call it does not start within
 // OS_MAIN_THREAD_TIMEOUT_MS is withdrawn without running, and later calls fail at once until the
 // main thread serves again (it does whenever it runs its run loop, waits for an os mutex or polls).
@@ -370,6 +451,11 @@ typedef i32   OS_ThreadFunction     (void* user);
 OS_Thread*    os_thread_create      (const char* name, OS_ThreadFunction* function, void* user);
 i32           os_thread_join        (OS_Thread* thread); // returns the function's result
 u64           os_thread_current_id  (); // the calling thread's id, never 0
+
+i32           os_atomic_load        (const OS_Atomic32* atomic);
+void          os_atomic_store       (OS_Atomic32* atomic, i32 value);
+i32           os_atomic_add         (OS_Atomic32* atomic, i32 value); // returns the value before
+b8            os_atomic_compare_swap (OS_Atomic32* atomic, i32 expected, i32 desired);
 
 // Zone profiler (docs/profiling.md): a capture writes a Chrome trace of every zone that began and
 // ended while it ran, and logs the zones of the most total time. Stopped, a zone costs one atomic
@@ -454,6 +540,7 @@ usize         cstr_format           (char* dest, usize dest_size, const char* fm
 usize         cstr_format_v         (char* dest, usize dest_size, const char* fmt, va_list args) PRINTF_LIKE(3, 0);
 
 void          quicksort_raw         (void* data, usize count, usize element_size, i32 (*compare)(const void*, const void*));
+void          quicksort_context     (void* data, usize count, usize element_size, i32 (*compare)(const void*, const void*, const void* context), const void* context);
 
 #define LOG_DEBUG(fmt, ...)   os_log(OS_LogLevel::Debug, fmt, ##__VA_ARGS__)
 #define LOG_INFO(fmt, ...)    os_log(OS_LogLevel::Info, fmt, ##__VA_ARGS__)
@@ -506,8 +593,22 @@ void          quicksort_raw         (void* data, usize count, usize element_size
 
 #endif
 
+// The typed compare is called as itself: through a cast to another function type is undefined
+template <typename T>
+struct QuicksortCompare
+{
+    i32 (*compare)(const T*, const T*);
+};
+
+template <typename T>
+i32 quicksort_typed (const void* a, const void* b, const void* context)
+{
+    return ((const QuicksortCompare<T>*)context)->compare((const T*)a, (const T*)b);
+}
+
 template <typename T>
 void quicksort (T* data, usize count, i32 (*compare)(const T*, const T*))
 {
-    quicksort_raw(data, count, sizeof(T), (i32 (*)(const void*, const void*))compare);
+    const QuicksortCompare<T> typed = { compare };
+    quicksort_context(data, count, sizeof(T), quicksort_typed<T>, &typed);
 }

@@ -136,12 +136,12 @@ static u32 required_instance_extensions (const char** out_names, u32 capacity)
     {
         return 0;
     }
-    const char* const* sdl_names = nullptr;
-    u32                sdl_count = 0;
-    os_window_vulkan_extensions(sdl_names, sdl_count);
-    for (u32 i = 0; i < sdl_count && count < capacity; i++)
+    const char* const* window_names = nullptr;
+    u32                window_count = 0;
+    os_window_vulkan_extensions(window_names, window_count);
+    for (u32 i = 0; i < window_count && count < capacity; i++)
     {
-        out_names[count++] = sdl_names[i];
+        out_names[count++] = window_names[i];
     }
     return count;
 }

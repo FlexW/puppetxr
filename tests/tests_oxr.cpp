@@ -206,7 +206,7 @@ struct OxrTest : testing::Test
     XrSystemId                system   = XR_NULL_SYSTEM_ID;
     XrSession                 session  = XR_NULL_HANDLE;
     b8                        headless = true;    // derived fixtures may clear it in their constructor
-    b8                        real_window = false; // with headless cleared: the platform's video driver instead of SDL's offscreen one
+    b8                        real_window = false; // with headless cleared: the platform's video driver instead of the offscreen one
     const char*               extension = nullptr; // enabled next to XR_MND_headless, set in a derived constructor
     const char*               more_extensions[12] = {};
     u32                       more_extensions_count = 0;
@@ -223,7 +223,7 @@ struct OxrTest : testing::Test
             os_unset_env("PUPPETXR_HEADLESS");
             if (!real_window)
             {
-                os_set_env("SDL_VIDEODRIVER", "offscreen");
+                os_set_env("PUPPETXR_VIDEO_DRIVER", "offscreen");
             }
         }
         os_set_env("PUPPETXR_FIXED_STEP", "1");
@@ -242,7 +242,7 @@ struct OxrTest : testing::Test
         os_unset_env("PUPPETXR_RECORD");
         os_unset_env("PUPPETXR_REPLAY");
         os_unset_env("PUPPETXR_REPLAY_EXIT");
-        os_unset_env("SDL_VIDEODRIVER");
+        os_unset_env("PUPPETXR_VIDEO_DRIVER");
     }
 
     XrResult create_instance (const char* const* extensions, u32 extensions_count, XrVersion api_version = XR_API_VERSION_1_1)
@@ -14342,7 +14342,7 @@ TEST_P(OxrGLTest, projection_depth_is_tested_upright)
 
 namespace
 {
-// With a mirror window, here SDL's offscreen one
+// With a mirror window, here the offscreen one
 struct OxrGLWindowedTest : OxrGLTest
 {
     OxrGLWindowedTest ()
@@ -14902,7 +14902,7 @@ TEST_P(OxrD3DTest, projection_depth_is_tested)
 
 namespace
 {
-// With a mirror window: SDL's offscreen driver on Linux, a real window on Windows
+// With a mirror window: the offscreen video driver on Linux, a real window on Windows
 struct OxrD3DWindowedTest : OxrD3DTest
 {
     OxrD3DWindowedTest ()
@@ -14938,7 +14938,7 @@ TEST_P(OxrD3DWindowedTest, frames_composite_with_a_mirror_window)
 // old one, which the UI's framebuffer of its back buffer did, and the window stayed black
 namespace
 {
-// A window D3D can present to, which SDL's offscreen driver has none of
+// A window D3D can present to, which the offscreen video driver has none of
 struct OxrD3DRealWindowTest : OxrD3DTest
 {
     OxrD3DRealWindowTest ()
@@ -15451,7 +15451,7 @@ struct OxrMetalWindowedTest : OxrMetalTest
     }
 };
 
-// A window with a CAMetalLayer, which SDL's offscreen driver has none of
+// A window with a CAMetalLayer, which the offscreen video driver has none of
 struct OxrMetalRealWindowTest : OxrMetalTest
 {
     OxrMetalRealWindowTest ()

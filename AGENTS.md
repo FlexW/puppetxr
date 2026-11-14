@@ -84,7 +84,7 @@ per layer so a change recompiles only the layers above it.
 
 | Layer | Files | Prefix | Role |
 |---|---|---|---|
-| platform | `src/platform.h/.cpp` | `os_` | types, macros, log, assert, memory, time, files, sockets, processes, threads, SDL3 window and events (on Windows on a window thread of its own); the only file with OS conditionals |
+| platform | `src/platform.h/.cpp`, `src/platform_internal.h`, `src/platform_unix.cpp`, `src/platform_linux.cpp`, `src/platform_win32.cpp`, `src/platform_macos.mm` | `os_` | types, macros, log, assert, memory, time, files, sockets, processes, threads, windows and input of every platform's own window system (on Windows and Linux on a window thread of its own); shared code in `platform.cpp`, one file per platform; the only files with OS conditionals |
 | base | `src/base.h/.cpp` | none | `defer`, `Array`, `Handle`, `SparseArray`, `HashMap`, strings, `json_*`, hashes |
 | zmath | `src/zmath.h/.cpp` | `zm::` | vectors, quaternions, matrices, poses, deterministic transcendentals |
 | sim | `src/sim.h/.cpp` | `SIM_`/`sim_` | devices, poses, input sources, reference spaces, clock, config, control mapping |

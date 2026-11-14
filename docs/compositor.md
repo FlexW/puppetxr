@@ -200,8 +200,8 @@ and `os_retain`/`os_release` undefined, which clash with puppetxr's names.
   Internal pipelines are made per pass format.
 - Readback blits into a shared buffer; depth with stencil comes out as its depth.
 - Formats: no 24-bit depth (Apple GPUs lack it), so `D24_UNORM_S8_UINT` is not offered.
-- Mirror window: the window's `CAMetalLayer` (`os_window_metal_layer`, an `SDL_Metal_CreateView`
-  kept in the window property `puppetxr.metal_view`), `BGRA8Unorm_sRGB`, `displaySyncEnabled = NO`
+- Mirror window: the window's `CAMetalLayer` (`os_window_metal_layer`, the view's layer, made on
+  first use and kept with the window), `BGRA8Unorm_sRGB`, `displaySyncEnabled = NO`
   so it never waits for the display. `r_end_frame_present` presents the drawable with its
   command buffer. A session presents to any target `window_target_set` accepts (Vulkan surface,
   native window, Metal layer); `OxrMetalRealWindowTest.frames_composite_and_present_to_the_mirror_window`
@@ -401,20 +401,20 @@ session exit at `exit_at_frame` (`docs/config.md`). The accessors `oxr_read_fram
 
 ## Mirror window and UI
 
-`xrCreateInstance` opens the SDL window (`os_create_window`) unless headless, hidden until the
+`xrCreateInstance` opens the window (`os_create_window`) unless headless, hidden until the
 first `xrEndFrame` (`os_window_show`; engines take seconds from the instance to their first
 frame, and probe instances never draw), which shows it before presenting and makes the window
 swapchain again at the shown, maximized size, so the first frame is not stretched, maximized
 unless `window.maximized` is false (`os_window_maximize`; the GLX re-creation keeps the state), and raised in
 front of the app's own windows, as an editor's play window (Windows allows it while the process is in front, as an
 editor is when its play button is clicked). Destroying the last session hides the window again: an editor keeps its
-instance between play sessions (Unreal's VR Preview), and the next session's first frame shows it. On Windows the
-window and SDL's video live on a thread of the platform layer (`docs/architecture.md`); the
-UI's calls into SDL go there through `os_run_on_window_thread`. The
+instance between play sessions (Unreal's VR Preview), and the next session's first frame shows it. On Windows and
+Linux the window and its video driver live on a thread of the platform layer (`docs/architecture.md`); window calls
+go there through `os_run_on_window_thread`. The
 Vulkan surface is created as soon as the app's `VkInstance` is known
 (`oxr_vk_ensure_surface`, from `xrCreateVulkanInstanceKHR` or
 `xrGetVulkanGraphicsDevice(2)KHR`), and the physical device that can present to it is
-preferred. The runtime adds `VK_KHR_surface` plus SDL's platform surface extensions to
+preferred. The runtime adds `VK_KHR_surface` plus the video driver's surface extension to
 the app's instance and `VK_KHR_swapchain` to its device: appended inside the
 `XR_KHR_vulkan_enable2` create calls, listed by `xrGetVulkan*ExtensionsKHR` for
 `XR_KHR_vulkan_enable`.
@@ -443,21 +443,19 @@ every window call from the frame waited out `OS_MAIN_THREAD_TIMEOUT_MS`. So:
   loop, where an editor's tick may wait for a frame that holds the lock), then shows the window
   after its first frame (the next frame is drawn at the shown size), applies relative mouse mode
   (`window_relative_pending`), `os_window_keep_cursor`, caches the window's pixel size
-  (`window_pixel_width`, `window_pixel_height`), and builds the next UI frame (`ui_build`, which
-  SDL's ImGui backend needs on the window thread) and applies its requests.
+  (`window_pixel_width`, `window_pixel_height`), and builds the next UI frame (`ui_build`, whose
+  window calls then run without waiting) and applies its requests.
 - The frame reads only caches: a click is checked against the cached size, a resize event carries
   its pixel size, and capturing the mouse only marks relative mode pending.
 - Windows and Linux have a window thread of their own (`HAVE_WINDOW_THREAD` in `platform.cpp`),
-  macOS the app's main thread. On Linux the thread never waits inside SDL, whose wakeup can
-  end the process with X's BadWindow when the window it targets just closed: it polls and sleeps on
-  a semaphore of its own, at most 2 ms (`OS_WINDOW_POLL_MS`), which a wake ends.
+  macOS the app's main thread. The window thread sleeps until the window system has events or a
+  call, a post or a quit wakes it (`os_sys_wake_signal`: a pipe on Linux, an event on Windows).
 - A posted tick on the window thread waits for the runtime lock, whose holder may wait for a
   window call there (`xrDestroySession` shutting the panels down): the window thread waiting in
-  `os_mutex_lock` runs the waiting call (`call_ticket`: SDL's queued callback or the waiting
-  thread runs it, whichever claims it first). `xrDestroyInstance` shuts the platform down after
+  `os_mutex_lock` runs the waiting call (`call_ticket`: the window thread's loop or its mutex
+  wait runs it, whichever claims it first). `xrDestroyInstance` shuts the platform down after
   the lock, as the window thread quits only after a tick waiting for it.
-- `os_push_*_event` puts a synthetic event straight into the queue for the next poll; through
-  SDL's queue it reached the frame only once the window thread woke.
+- `os_push_*_event` puts a synthetic event straight into the queue for the next poll.
 
 The mirror window never paces the app (each rule came from a profile):
 1. It never waits for the display: Vulkan presents with MAILBOX, else IMMEDIATE, else FIFO (with
@@ -474,7 +472,8 @@ The mirror window never paces the app (each rule came from a profile):
    `window_refresh_hz` by session creation and the tick): the window server holds a presented
    drawable until its next composite, and faster presents held all three and the acquire waited.
 4. Showing a hidden maximized window takes milliseconds: on macOS the window gets the screen's
-   visible frame without SDL's 240 ms zoom animation, and `os_window_maximized` asks Cocoa.
+   visible frame without `-[NSWindow zoom:]`'s 240 ms animation, and `os_window_maximized` asks
+   Cocoa. A Wayland show waits for the compositor's first configure instead (`docs/architecture.md`).
 
 Tests: `OxrVulkanRealWindowTest.*` (60 frames in under 300 ms, presents at most at the display
 rate, busy only while on the GPU, not kept busy by the frames after a present),
@@ -509,8 +508,9 @@ presented); destroying that session clears the request, so an editor's next sess
 being edited; Enter and Escape close the welcome overlay while it shows, before Escape gives the
 mouse back.
 
-`ui.cpp` is the only file including ImGui. It uses the SDL3 platform backend for input
-and its own renderer on `render.h` (`imgui.vert`/`imgui.frag`, per-frame host-visible
+`ui.cpp` is the only file including ImGui. It feeds ImGui the platform layer's raw events
+(`ui_handle_raw_event`), sets the cursor shape, clipboard and input method position through the
+platform layer, and renders on `render.h` (`imgui.vert`/`imgui.frag`, per-frame host-visible
 vertex and index buffers that grow on demand, textures created and updated through
 ImGui's `ImTextureData` requests). The style (`apply_style`) is a neutral charcoal with
 one steel-blue accent at three brightnesses (`UI_ACCENT*`), 4 px rounding on windows and
@@ -547,7 +547,7 @@ Right, short enough for all five to show.
 
 UI tests click the panels as a person does: ImGui's test engine hooks (`IMGUI_ENABLE_TEST_ENGINE`,
 implemented in `ui.cpp`) record each labelled item's rectangle while probing (`ui_set_probe`),
-`ui_find_item` returns its centre and `os_push_mouse_event` sends SDL mouse events into the
+`ui_find_item` returns its centre and `os_push_mouse_event` sends mouse events into the
 window (`UiClicker` in `tests/tests_ui.cpp`; `puppetxrctl ui click` in a running app). ImGui's
 combos report no label, so the panels make them through `combo` and `label_item`. Each UI frame
 also takes the system cursor over the window (`os_window_cursor`, Windows), as the editor of an

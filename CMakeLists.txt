@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(puppetxr VERSION 0.1.0 LANGUAGES C CXX)
-# The Metal backend is Objective-C++ (src/render_metal.mm)
+# The Metal backend and the Cocoa windows are Objective-C++ (src/render_metal.mm, src/platform_macos.mm)
 if (APPLE)
     enable_language(OBJCXX)
 endif ()
 
 option(PUPPETXR_VALIDATION  "Internal asserts and consistency checks" ON)
-option(PUPPETXR_HEADLESS_ONLY "No SDL video, no ImGui, no mirror window" OFF)
+option(PUPPETXR_HEADLESS_ONLY "No video drivers but the offscreen one, no ImGui, no mirror window" OFF)
 option(PUPPETXR_WERROR    "Treat warnings as errors" ON)
 set(PUPPETXR_SANITIZE "" CACHE STRING "Sanitizers on our targets: address (ASan and UBSan) or thread (TSan)")
 set_property(CACHE PUPPETXR_SANITIZE PROPERTY STRINGS "" address thread)
@@ -90,9 +90,18 @@ puppetxr_add_shaders(puppetxr_shaders
 # Core object library, shared by the runtime and the tests
 #
 
+# The platform layer: shared code, then one file per platform (docs/architecture.md)
+set(PUPPETXR_PLATFORM_SOURCES src/platform.h src/platform_internal.h src/platform.cpp)
+if (WIN32)
+    list(APPEND PUPPETXR_PLATFORM_SOURCES src/platform_win32.cpp)
+elseif (APPLE)
+    list(APPEND PUPPETXR_PLATFORM_SOURCES src/platform_unix.cpp src/platform_macos.mm)
+else ()
+    list(APPEND PUPPETXR_PLATFORM_SOURCES src/platform_unix.cpp src/platform_linux.cpp)
+endif ()
+
 set(PUPPETXR_SOURCES
-    src/platform.h
-    src/platform.cpp
+    ${PUPPETXR_PLATFORM_SOURCES}
     src/base.h
     src/base.cpp
     src/zmath.h
@@ -172,13 +181,19 @@ add_custom_command(
 add_library(puppetxr_core OBJECT ${PUPPETXR_SOURCES} ${puppetxr_trace_header})
 target_compile_features(puppetxr_core PUBLIC cxx_std_20)
 target_include_directories(puppetxr_core PUBLIC src PRIVATE ${CMAKE_BINARY_DIR}/generated)
-# Winsock for the control sockets (platform.cpp)
+# Winsock for the control sockets, user32 and gdi32 for the windows (platform_win32.cpp); AppKit for
+# the windows, Carbon for the keyboard layout (platform_macos.mm). Linux loads its window system
+# libraries at runtime.
 if (WIN32)
-    set(PUPPETXR_PLATFORM_LIBS ws2_32 ole32)
+    set(PUPPETXR_PLATFORM_LIBS ws2_32 ole32 user32 gdi32)
 elseif (APPLE)
-    set(PUPPETXR_PLATFORM_LIBS "-framework Metal" "-framework QuartzCore" "-framework Foundation")
+    set(PUPPETXR_PLATFORM_LIBS "-framework Metal" "-framework QuartzCore" "-framework Foundation" "-framework AppKit" "-framework Carbon" "-framework CoreGraphics")
 endif ()
-target_link_libraries(puppetxr_core PUBLIC puppetxr_rooms SDL3::SDL3-static jsmn openxr_headers volk stb puppetxr_shaders ${PUPPETXR_PLATFORM_LIBS} ${CMAKE_DL_LIBS})
+# mingw's printf family is the Microsoft runtime's unless asked for C99, which cstr_format needs
+if (MINGW)
+    target_compile_definitions(puppetxr_core PUBLIC __USE_MINGW_ANSI_STDIO=1)
+endif ()
+target_link_libraries(puppetxr_core PUBLIC puppetxr_rooms jsmn openxr_headers volk stb puppetxr_shaders ${PUPPETXR_PLATFORM_LIBS} ${CMAKE_DL_LIBS})
 if (NOT PUPPETXR_HEADLESS_ONLY)
     target_link_libraries(puppetxr_core PUBLIC imgui implot)
 endif ()
@@ -238,7 +253,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU" AND NOT APPLE AND NOT WIN32)
         target_link_options(puppetxr PRIVATE -Wl,--no-undefined)
     endif ()
 endif ()
-# Only the loader's entry point and the control API leave the dylib, not the SDL linked into it
+# Only the loader's entry point and the control API leave the dylib
 if (APPLE)
     target_link_options(puppetxr PRIVATE -Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/cmake/puppetxr.exports)
     set_target_properties(puppetxr PROPERTIES LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/puppetxr.exports INSTALL_NAME_DIR "@rpath")
@@ -249,10 +264,13 @@ endif ()
 # base layers, so it builds them itself instead of linking the whole runtime.
 #
 
-add_executable(puppetxrctl tools/puppetxrctl.cpp src/platform.cpp src/base.cpp)
+add_executable(puppetxrctl tools/puppetxrctl.cpp ${PUPPETXR_PLATFORM_SOURCES} src/base.cpp)
 target_compile_features(puppetxrctl PRIVATE cxx_std_20)
 target_include_directories(puppetxrctl PRIVATE src)
-target_link_libraries(puppetxrctl PRIVATE SDL3::SDL3-static jsmn ${PUPPETXR_PLATFORM_LIBS} ${CMAKE_DL_LIBS})
+if (MINGW)
+    target_compile_definitions(puppetxrctl PRIVATE __USE_MINGW_ANSI_STDIO=1)
+endif ()
+target_link_libraries(puppetxrctl PRIVATE jsmn ${PUPPETXR_PLATFORM_LIBS} ${CMAKE_DL_LIBS})
 target_compile_definitions(puppetxrctl PRIVATE
     PUPPETXR_VALIDATION=$<BOOL:${PUPPETXR_VALIDATION}>
     PUPPETXR_HEADLESS_ONLY=$<BOOL:${PUPPETXR_HEADLESS_ONLY}>

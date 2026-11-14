@@ -1,7 +1,6 @@
 #include "base.h"
 
 #include <gtest/gtest.h>
-#include <SDL3/SDL.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
@@ -17,8 +16,8 @@
 #endif
 
 #if defined(__linux__)
-// SDL's x11 driver unloads libX11 at its shutdown, and the leaks of libX11's per display state
-// then have no module name for tests/lsan.supp to match; every test process keeps it loaded
+// The leaks of libX11's per display state need a loaded module for tests/lsan.supp to match, and
+// the x11 driver closes libX11 when video stops; every test process keeps it loaded
 [[maybe_unused]] static const OS_Library* const keep_libx11 = os_library_open("libX11.so.6");
 #endif
 
@@ -349,18 +348,15 @@ TEST(Base, quicksort_sorts)
 }
 
 #if defined(__APPLE__) && !PUPPETXR_HEADLESS_ONLY
-// Regression: the SDL linked into puppetxr registered its Objective-C classes under SDL's own names,
-// and the Objective-C runtime keeps one class per name for the whole process. An app with its own
-// SDL3 got "Class SDL3Application is implemented in both" and either SDL could end up with the
-// other's classes
-TEST(Platform, sdl_objective_c_classes_carry_the_puppetxr_prefix)
+// A click on the unfocused mirror window acts on the panels; it used to only focus the window. X11
+// and Windows pass the click on; Cocoa's view must accept it
+TEST(Platform, a_click_that_focuses_the_window_also_clicks)
 {
-    for (const char* name : { "SDL3Application", "SDL3AppDelegate", "SDL3Window", "SDL3View", "SDL3Cocoa_WindowListener", "SDL_CocoaVideoData" })
-    {
-        EXPECT_EQ(objc_getClass(name), nullptr) << name;
-    }
-    EXPECT_NE(objc_getClass("PUPPETXR_SDL3Application"), nullptr);
-    EXPECT_NE(objc_getClass("PUPPETXR_SDL3Window"), nullptr);
+    const Class view = objc_getClass("PUPPETXRView");
+    ASSERT_NE(view, nullptr);
+    const IMP accepts = class_getMethodImplementation(view, sel_registerName("acceptsFirstMouse:"));
+    ASSERT_NE(accepts, nullptr);
+    EXPECT_TRUE(((signed char (*)(id, SEL, id))accepts)(nil, sel_registerName("acceptsFirstMouse:"), nil));
 }
 #endif
 
@@ -546,7 +542,7 @@ TEST(Platform, cursor_clip_follows_the_held_mouse)
     const OS_ScreenRect client  = { 100, 100, 900, 700 };
     const OS_ScreenRect center  = { 499, 399, 501, 401 };
     const OS_ScreenRect unreal  = { 1400, 456, 2040, 936 };
-    EXPECT_EQ(os_cursor_clip_action(true, true, center, client, desktop), OS_ClipAction::Keep) << "SDL's relative mode";
+    EXPECT_EQ(os_cursor_clip_action(true, true, center, client, desktop), OS_ClipAction::Keep) << "the relative mode's";
     EXPECT_EQ(os_cursor_clip_action(true, true, client, client, desktop), OS_ClipAction::Keep);
     EXPECT_EQ(os_cursor_clip_action(true, true, desktop, client, desktop), OS_ClipAction::Clip) << "another window lifted the clip";
     EXPECT_EQ(os_cursor_clip_action(true, false, unreal, client, desktop), OS_ClipAction::Clip);
@@ -589,69 +585,50 @@ TEST(Platform, assert_log_mode_counts_instead_of_breaking)
     EXPECT_EQ(os_assert_count(), before + 3);
 }
 
-TEST(Platform, events_translate_from_native_events)
+TEST(Platform, events_translate_from_raw_events)
 {
-    os_set_env("SDL_VIDEODRIVER", "offscreen");
+    os_set_env("PUPPETXR_VIDEO_DRIVER", "offscreen");
     os_shutdown();
     ASSERT_TRUE(os_initialize(false));
-    if (os_is_headless())
-    {
-        GTEST_SKIP() << "no offscreen video driver";
-    }
+    defer {
+        os_shutdown();
+        os_unset_env("PUPPETXR_VIDEO_DRIVER");
+    };
+    ASSERT_FALSE(os_is_headless());
+    EXPECT_STREQ(os_video_driver(), "offscreen");
 
     OS_Window* window = os_create_window("test", 320, 200, false);
     ASSERT_NE(window, nullptr);
+    defer { os_destroy_window(window); };
     u32 width = 0;
     u32 height = 0;
     os_window_size(window, width, height);
     EXPECT_EQ(width, 320u);
     EXPECT_EQ(height, 200u);
+    EXPECT_NE(os_window_id(window), 0u);
 
     OS_Event drain[64];
     os_poll_events(drain, 64);
 
-    SDL_Event key = {};
-    key.type         = SDL_EVENT_KEY_DOWN;
-    key.key.scancode = SDL_SCANCODE_W;
-    SDL_PushEvent(&key);
-    SDL_Event repeat = key;
-    repeat.key.repeat = true;
-    SDL_PushEvent(&repeat);
-    SDL_Event button = {};
-    button.type          = SDL_EVENT_MOUSE_BUTTON_UP;
-    button.button.button = SDL_BUTTON_RIGHT;
-    SDL_PushEvent(&button);
-    SDL_Event motion = {};
-    motion.type        = SDL_EVENT_MOUSE_MOTION;
-    motion.motion.xrel = 3.0f;
-    motion.motion.yrel = -2.0f;
-    SDL_PushEvent(&motion);
-    SDL_Event grave = {};
-    grave.type         = SDL_EVENT_KEY_UP;
-    grave.key.scancode = SDL_SCANCODE_GRAVE;
-    SDL_PushEvent(&grave);
-    SDL_Event bracket = {};
-    bracket.type         = SDL_EVENT_KEY_DOWN;
-    bracket.key.scancode = SDL_SCANCODE_RIGHTBRACKET;
-    SDL_PushEvent(&bracket);
-    SDL_Event wheel = {};
-    wheel.type            = SDL_EVENT_MOUSE_WHEEL;
-    wheel.wheel.y         = 2.0f;
-    wheel.wheel.direction = SDL_MOUSEWHEEL_FLIPPED;
-    SDL_PushEvent(&wheel);
-    SDL_Event focus = {};
-    focus.type = SDL_EVENT_WINDOW_FOCUS_LOST;
-    SDL_PushEvent(&focus);
-    SDL_Event quit = {};
-    quit.type = SDL_EVENT_QUIT;
-    SDL_PushEvent(&quit);
+    os_push_raw_event(window, { .type = OS_RawEventType::KeyDown, .key = OS_Key::W });
+    os_push_raw_event(window, { .type = OS_RawEventType::KeyDown, .key = OS_Key::W, .repeat = true });
+    os_push_raw_event(window, { .type = OS_RawEventType::Text, .text = "w" });
+    os_push_raw_event(window, { .type = OS_RawEventType::MouseButtonUp, .key = OS_Key::MouseRight });
+    os_push_raw_event(window, { .type = OS_RawEventType::MouseMotion, .dx = 3.0f, .dy = -2.0f });
+    os_push_raw_event(window, { .type = OS_RawEventType::KeyUp, .key = OS_Key::Grave });
+    os_push_raw_event(window, { .type = OS_RawEventType::KeyDown, .key = OS_Key::RightBracket });
+    os_push_raw_event(window, { .type = OS_RawEventType::MouseWheel, .dy = -2.0f });
+    os_push_raw_event(window, { .type = OS_RawEventType::FocusGained });
+    os_push_raw_event(window, { .type = OS_RawEventType::FocusLost });
+    os_push_raw_event(window, { .type = OS_RawEventType::WindowClose });
+    os_push_raw_event(window, { .type = OS_RawEventType::WindowResize, .width = 640, .height = 480 });
 
-    OS_Event  events[9] = {};
-    const u32 count     = os_poll_events(events, 9);
-    ASSERT_EQ(count, 8u);
+    OS_Event  events[10] = {};
+    const u32 count      = os_poll_events(events, 10);
+    ASSERT_EQ(count, 9u);
     EXPECT_EQ(events[0].type, OS_EventType::KeyDown);
     EXPECT_EQ(events[0].key, OS_Key::W);
-    EXPECT_EQ(events[1].type, OS_EventType::KeyUp);
+    EXPECT_EQ(events[1].type, OS_EventType::KeyUp) << "repeats and text are the UI's alone";
     EXPECT_EQ(events[1].key, OS_Key::MouseRight);
     EXPECT_EQ(events[2].type, OS_EventType::MouseMotion);
     EXPECT_FLOAT_EQ(events[2].dx, 3.0f);
@@ -661,31 +638,83 @@ TEST(Platform, events_translate_from_native_events)
     EXPECT_EQ(events[4].type, OS_EventType::KeyDown);
     EXPECT_EQ(events[4].key, OS_Key::RightBracket);
     EXPECT_EQ(events[5].type, OS_EventType::MouseWheel);
-    EXPECT_FLOAT_EQ(events[5].dy, -2.0f) << "a flipped wheel turns the other way";
+    EXPECT_FLOAT_EQ(events[5].dy, -2.0f);
     EXPECT_EQ(events[6].type, OS_EventType::FocusLost);
     EXPECT_EQ(events[7].type, OS_EventType::WindowClose);
-
-    os_destroy_window(window);
-    os_shutdown();
-    os_unset_env("SDL_VIDEODRIVER");
+    EXPECT_EQ(events[8].type, OS_EventType::WindowResize);
+    EXPECT_EQ(events[8].width, 640u);
+    EXPECT_EQ(events[8].height, 480u);
 }
 
-// The mirror window stays hidden until it has a frame, instead of showing what Windows leaves
-// in an unpainted window for the seconds an engine takes to start
-// A click on the unfocused mirror window acts on the panels; it used to only focus the window
-TEST(Platform, a_click_that_focuses_the_window_also_clicks)
+namespace
 {
-    os_set_env("SDL_VIDEODRIVER", "offscreen");
+
+struct RawEvents
+{
+    OS_RawEvent events[16];
+    u32         count;
+};
+
+} // namespace
+
+static void record_raw_event (const OS_RawEvent& event, void* user)
+{
+    RawEvents& raw = *(RawEvents*)user;
+    if (raw.count < ARRAY_SIZE(raw.events))
+    {
+        raw.events[raw.count++] = event;
+    }
+}
+
+// ImGui clicks where the last move was, so a click away from it brings a move of its own
+TEST(Platform, a_click_away_from_the_last_move_gives_the_hook_a_move_first)
+{
+    os_set_env("PUPPETXR_VIDEO_DRIVER", "offscreen");
     os_shutdown();
     ASSERT_TRUE(os_initialize(false));
+    RawEvents raw = {};
     defer {
+        os_set_raw_event_hook(nullptr, nullptr);
         os_shutdown();
-        os_unset_env("SDL_VIDEODRIVER");
+        os_unset_env("PUPPETXR_VIDEO_DRIVER");
     };
-    EXPECT_TRUE(SDL_GetHintBoolean(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, false));
+    OS_Window* window = os_create_window("test", 320, 200, false);
+    ASSERT_NE(window, nullptr);
+    defer { os_destroy_window(window); };
+    os_set_raw_event_hook(record_raw_event, &raw);
+    os_push_raw_event(window, { .type = OS_RawEventType::MouseButtonDown, .key = OS_Key::MouseLeft, .x = 40.0f, .y = 30.0f });
+    os_push_raw_event(window, { .type = OS_RawEventType::MouseButtonUp, .key = OS_Key::MouseLeft, .x = 40.0f, .y = 30.0f });
+    OS_Event events[8];
+    os_poll_events(events, 8);
+    ASSERT_EQ(raw.count, 3u);
+    EXPECT_EQ(raw.events[0].type, OS_RawEventType::MouseMotion);
+    EXPECT_FLOAT_EQ(raw.events[0].x, 40.0f);
+    EXPECT_FLOAT_EQ(raw.events[0].y, 30.0f);
+    EXPECT_EQ(raw.events[0].window, os_window_id(window));
+    EXPECT_EQ(raw.events[1].type, OS_RawEventType::MouseButtonDown);
+    EXPECT_EQ(raw.events[2].type, OS_RawEventType::MouseButtonUp);
 }
 
-// A call into the window thread wakes it: SDL's own wakeup was missed, and every frame waited out
+// Keys are named for config files; the names of the keys added for the UI are new, never changed
+TEST(Platform, every_key_has_a_name_and_a_label)
+{
+    for (u32 i = 1; i < (u32)OS_Key::Count; i++)
+    {
+        const char* name = os_key_name((OS_Key)i);
+        ASSERT_NE(name, nullptr);
+        EXPECT_GT(cstr_length(name), 0u) << i;
+        OS_Key back = OS_Key::None;
+        EXPECT_TRUE(os_key_from_name(name, back)) << name;
+        EXPECT_EQ(back, (OS_Key)i) << name;
+        char label[32];
+        os_key_label((OS_Key)i, label, sizeof(label));
+        EXPECT_GT(cstr_length(label), 0u) << name;
+    }
+    EXPECT_STREQ(os_key_name(OS_Key::Grave), "grave");
+    EXPECT_STREQ(os_key_name(OS_Key::MouseMiddle), "mouse_middle");
+}
+
+// A call into the window thread wakes it: a missed wakeup once made every frame wait out
 // the window thread's 100 ms event wait, so apps ran at 10 frames a second without input
 TEST(Platform, window_thread_calls_return_at_once)
 {
@@ -716,15 +745,15 @@ namespace
 
 struct WindowCallProbe
 {
-    SDL_AtomicInt runs;
-    SDL_AtomicInt on_window_thread;
+    OS_Atomic32 runs;
+    OS_Atomic32 on_window_thread;
 };
 
 struct WindowCallThread
 {
     OS_Window*      window;
     WindowCallProbe probe;
-    SDL_AtomicInt   done;
+    OS_Atomic32   done;
     u64             took_ns;
     OS_Mutex*       hold;     // held by the thread while it calls, when set
     OS_Semaphore*   holding;  // signalled once it holds `hold`
@@ -735,8 +764,8 @@ struct WindowCallThread
 static void probe_window_thread (void* user)
 {
     WindowCallProbe& probe = *(WindowCallProbe*)user;
-    SDL_SetAtomicInt(&probe.on_window_thread, os_is_window_thread() ? 1 : 0);
-    SDL_AddAtomicInt(&probe.runs, 1);
+    os_atomic_store(&probe.on_window_thread, os_is_window_thread() ? 1 : 0);
+    os_atomic_add(&probe.runs, 1);
 }
 
 #if HAVE_MACOS
@@ -755,7 +784,7 @@ static i32 call_from_another_thread (void* user)
     {
         os_mutex_unlock(call.hold);
     }
-    SDL_SetAtomicInt(&call.done, 1);
+    os_atomic_store(&call.done, 1);
     return 0;
 }
 #endif
@@ -771,15 +800,15 @@ TEST(Platform, posted_window_thread_calls_run_at_once)
     os_post_to_window_thread(probe_window_thread, &probe);
     if (os_is_window_thread())
     {
-        EXPECT_EQ(SDL_GetAtomicInt(&probe.runs), 1) << "on the window thread a post runs at once";
+        EXPECT_EQ(os_atomic_load(&probe.runs), 1) << "on the window thread a post runs at once";
     }
     const u64 start = os_monotonic_ns();
-    while (SDL_GetAtomicInt(&probe.runs) == 0 && os_monotonic_ns() - start < 1000000000ull)
+    while (os_atomic_load(&probe.runs) == 0 && os_monotonic_ns() - start < 1000000000ull)
     {
         os_serve_posted(1000000);
     }
-    EXPECT_EQ(SDL_GetAtomicInt(&probe.runs), 1);
-    EXPECT_EQ(SDL_GetAtomicInt(&probe.on_window_thread), 1);
+    EXPECT_EQ(os_atomic_load(&probe.runs), 1);
+    EXPECT_EQ(os_atomic_load(&probe.on_window_thread), 1);
     EXPECT_LT(os_monotonic_ns() - start, 100000000ull);
 }
 
@@ -798,13 +827,13 @@ TEST(Platform, window_calls_from_other_threads_run_on_the_main_thread)
     ASSERT_TRUE(os_is_window_thread());
     WindowCallThread call = {};
     OS_Thread* thread = os_thread_create("caller", call_from_another_thread, &call);
-    while (!SDL_GetAtomicInt(&call.done))
+    while (!os_atomic_load(&call.done))
     {
         os_serve_posted(1000000);
     }
     os_thread_join(thread);
-    EXPECT_EQ(SDL_GetAtomicInt(&call.probe.runs), 1);
-    EXPECT_EQ(SDL_GetAtomicInt(&call.probe.on_window_thread), 1);
+    EXPECT_EQ(os_atomic_load(&call.probe.runs), 1);
+    EXPECT_EQ(os_atomic_load(&call.probe.on_window_thread), 1);
     EXPECT_LT(call.took_ns, 100000000ull);
 #else
     GTEST_SKIP() << "macOS only";
@@ -827,7 +856,7 @@ TEST(Platform, window_calls_the_main_thread_never_takes_are_withdrawn)
     WindowCallThread first = {};
     OS_Thread* thread = os_thread_create("caller", call_from_another_thread, &first);
     os_thread_join(thread);
-    EXPECT_EQ(SDL_GetAtomicInt(&first.probe.runs), 0);
+    EXPECT_EQ(os_atomic_load(&first.probe.runs), 0);
     EXPECT_GE(first.took_ns, (u64)OS_MAIN_THREAD_TIMEOUT_MS * 1000000ull);
     EXPECT_LT(first.took_ns, (u64)OS_MAIN_THREAD_TIMEOUT_MS * 1000000ull + 200000000ull);
     ASSERT_GT(os_log_history_count(), 0u);
@@ -836,18 +865,18 @@ TEST(Platform, window_calls_the_main_thread_never_takes_are_withdrawn)
     WindowCallThread stalled = {};
     thread = os_thread_create("caller", call_from_another_thread, &stalled);
     os_thread_join(thread);
-    EXPECT_EQ(SDL_GetAtomicInt(&stalled.probe.runs), 0);
+    EXPECT_EQ(os_atomic_load(&stalled.probe.runs), 0);
     EXPECT_LT(stalled.took_ns, 10000000ull) << "a stalled main thread fails calls at once";
 
     os_serve_posted(0);
     WindowCallThread again = {};
     thread = os_thread_create("caller", call_from_another_thread, &again);
-    while (!SDL_GetAtomicInt(&again.done))
+    while (!os_atomic_load(&again.done))
     {
         os_serve_posted(1000000);
     }
     os_thread_join(thread);
-    EXPECT_EQ(SDL_GetAtomicInt(&again.probe.runs), 1) << "calls run again once the main thread came by";
+    EXPECT_EQ(os_atomic_load(&again.probe.runs), 1) << "calls run again once the main thread came by";
 #else
     GTEST_SKIP() << "macOS only";
 #endif
@@ -874,7 +903,7 @@ TEST(Platform, a_main_thread_waiting_for_a_mutex_serves_window_calls)
     const u64 waited = os_monotonic_ns() - start;
     os_mutex_unlock(mutex);
     os_thread_join(thread);
-    EXPECT_EQ(SDL_GetAtomicInt(&call.probe.runs), 1);
+    EXPECT_EQ(os_atomic_load(&call.probe.runs), 1);
     EXPECT_LT(waited, 100000000ull);
     os_semaphore_destroy(holding);
     os_mutex_destroy(mutex);
@@ -921,8 +950,8 @@ TEST(Platform, a_window_thread_waiting_for_a_mutex_runs_the_calls_of_its_holder)
     os_semaphore_wait(wait.waiting);
     WindowCallProbe probe = {};
     os_run_on_window_thread(probe_window_thread, &probe);
-    EXPECT_EQ(SDL_GetAtomicInt(&probe.runs), 1);
-    EXPECT_EQ(SDL_GetAtomicInt(&probe.on_window_thread), 1);
+    EXPECT_EQ(os_atomic_load(&probe.runs), 1);
+    EXPECT_EQ(os_atomic_load(&probe.on_window_thread), 1);
     os_mutex_unlock(wait.mutex);
     os_semaphore_wait(wait.done);
     os_semaphore_destroy(wait.done);
@@ -980,12 +1009,7 @@ TEST(Platform, a_waiting_main_thread_takes_a_mutex_once_it_is_free)
 }
 
 #if HAVE_MACOS
-extern "C" void* SDL_GetVideoDevice    ();
-extern "C" void  Cocoa_HandleKeyEvent  (void* video, void* event);
-extern "C" void  Cocoa_HandleMouseEvent(void* video, void* event);
 extern "C" void  CGEventSetIntegerValueField (void* event, u32 field, i64 value);
-extern "C" bool  SDL_SetKeyboardFocus  (SDL_Window* window);
-extern "C" void  SDL_SetMouseFocus     (SDL_Window* window);
 // CoreFoundation's header clashes with base.h's Handle and Point
 extern "C" void* CFRunLoopGetMain      ();
 extern "C" void  CFRunLoopStop         (void* loop);
@@ -1012,7 +1036,8 @@ struct PlatformAppEventsTest : testing::Test
 {
     OS_Window* window = nullptr;
     void*      app    = nullptr;
-    Class      sdl_class = nullptr;
+    Class      app_class = nullptr;
+    void*      ns_window_of = nullptr;
 
     void SetUp () override
     {
@@ -1025,11 +1050,21 @@ struct PlatformAppEventsTest : testing::Test
         window = os_create_window("app events", 200, 150, false, 0, true);
         ASSERT_NE(window, nullptr);
         app       = objc_send<void*>(objc_getClass("NSApplication"), "sharedApplication");
-        sdl_class = object_getClass((id)app);
+        app_class = object_getClass((id)app);
         object_setClass((id)app, objc_getClass("NSApplication"));
-        // What the window being in front gives it, which a test behind the terminal never gets
-        SDL_SetKeyboardFocus((SDL_Window*)os_window_native(window));
-        SDL_SetMouseFocus((SDL_Window*)os_window_native(window));
+        // The window by its title among the app's
+        void* const windows = objc_send<void*>(app, "windows");
+        const u64   count   = objc_send<u64>(windows, "count");
+        for (u64 i = 0; i < count; i++)
+        {
+            void* const candidate = objc_send<void*>(windows, "objectAtIndex:", i);
+            void* const title     = objc_send<void*>(candidate, "title");
+            if (title && cstr_equal(objc_send<const char*>(title, "UTF8String"), "app events"))
+            {
+                ns_window_of = candidate;
+            }
+        }
+        ASSERT_NE(ns_window_of, nullptr);
         OS_Event drain[64];
         os_poll_events(drain, 64);
     }
@@ -1038,7 +1073,7 @@ struct PlatformAppEventsTest : testing::Test
     {
         if (app)
         {
-            object_setClass((id)app, sdl_class);
+            object_setClass((id)app, app_class);
         }
         os_destroy_window(window);
         os_shutdown();
@@ -1046,7 +1081,7 @@ struct PlatformAppEventsTest : testing::Test
 
     void* ns_window () const
     {
-        return SDL_GetPointerProperty(SDL_GetWindowProperties((SDL_Window*)os_window_native(window)), SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
+        return ns_window_of;
     }
 
     void* key_event (u16 key_code, b8 down) const
@@ -1074,17 +1109,11 @@ struct PlatformAppEventsTest : testing::Test
         objc_send<void>(app, "sendEvent:", event);
     }
 
-    void like_sdls_pump (void* event, b8 key) const
+    // Queued for NSApp, where the pump takes it
+    void like_the_pump (void* event) const
     {
-        if (key)
-        {
-            Cocoa_HandleKeyEvent(SDL_GetVideoDevice(), event);
-        }
-        else
-        {
-            Cocoa_HandleMouseEvent(SDL_GetVideoDevice(), event);
-        }
-        objc_send<void>(app, "sendEvent:", event);
+        objc_send<void>(app, "postEvent:atStart:", event, (signed char)0);
+        os_pump_window_events();
     }
 
     u32 count (OS_EventType type, OS_Key key = OS_Key::None) const
@@ -1112,9 +1141,9 @@ TEST_F(PlatformAppEventsTest, keys_the_app_dispatches_reach_the_window)
 
 TEST_F(PlatformAppEventsTest, keys_the_pump_dispatches_are_handled_once)
 {
-    like_sdls_pump(key_event(13, true), true);
+    like_the_pump(key_event(13, true));
     EXPECT_EQ(count(OS_EventType::KeyDown, OS_Key::W), 1u);
-    like_sdls_pump(key_event(13, false), true);
+    like_the_pump(key_event(13, false));
     EXPECT_EQ(count(OS_EventType::KeyUp, OS_Key::W), 1u);
 }
 
@@ -1183,7 +1212,7 @@ TEST_F(PlatformAppEventsTest, the_pump_leaves_events_to_the_app_running_its_even
     run_the_event_loop(probe, pump_inside_the_loop, 5 * (i64)NSEC_PER_SEC);
     EXPECT_EQ(probe.after_pump, 0u) << "the pump took the app's event";
     os_serve_posted(0);
-    // The app dispatched it after, as Unity does, and the monitor handed it to SDL
+    // The app dispatched it after, as Unity does, and the window took it
     EXPECT_EQ(count(OS_EventType::KeyDown, OS_Key::W), 1u);
 }
 
@@ -1239,13 +1268,13 @@ TEST_F(PlatformAppEventsTest, mouse_moves_the_app_dispatches_turn_while_looking)
     os_poll_events(drain, 64);
     like_the_app(move_event(7, 3));
     EXPECT_EQ(count(OS_EventType::MouseMotion), 1u);
-    like_sdls_pump(move_event(5, 2), false);
-    EXPECT_EQ(count(OS_EventType::MouseMotion), 1u) << "a move SDL's pump dispatches turns once";
+    like_the_pump(move_event(5, 2));
+    EXPECT_EQ(count(OS_EventType::MouseMotion), 1u) << "a move the pump dispatches turns once";
 }
 #endif
 
-// SDL maximizes a hidden window with -[NSWindow zoom:] as it shows it, which animates for some
-// 240 ms on the thread showing it: the first frame of an app waited for it
+// -[NSWindow zoom:] maximizes a hidden window as it shows it, with an animation of some 240 ms on
+// the thread showing it: the first frame of an app waited for it
 TEST(Platform, showing_a_maximized_window_does_not_wait_for_an_animation)
 {
     os_shutdown();
@@ -1264,7 +1293,9 @@ TEST(Platform, showing_a_maximized_window_does_not_wait_for_an_animation)
     }
     const u64 start = os_monotonic_ns();
     os_window_show(window);
-    // The animation takes some 370 ms; a show takes milliseconds, under ThreadSanitizer 70
+    // The animation takes some 370 ms; a show takes milliseconds, under ThreadSanitizer 70. On
+    // Wayland libdecor's decorations delayed the first configure, which a show waits for, by some
+    // 450 ms on GNOME; puppetxr draws its title bar itself since
     EXPECT_LT(os_monotonic_ns() - start, 150000000ull);
     u32 width  = 0;
     u32 height = 0;
@@ -1280,16 +1311,45 @@ TEST(Platform, showing_a_maximized_window_does_not_wait_for_an_animation)
     EXPECT_GT(height, 240u);
 }
 
+// The UI turns text input on under a text field and off again each frame it changes; a request the
+// window system refuses ends the Wayland connection, and the window with it
+TEST(Platform, text_input_turns_on_and_off)
+{
+    os_shutdown();
+    ASSERT_TRUE(os_initialize(false));
+    defer { os_shutdown(); };
+    if (os_is_headless())
+    {
+        GTEST_SKIP() << "no display";
+    }
+    OS_Window* window = os_create_window("text input", 160, 120, false);
+    ASSERT_NE(window, nullptr);
+    defer { os_destroy_window(window); };
+    for (u32 i = 0; i < 3; i++)
+    {
+        os_window_text_input(window, true, 20.0f, 30.0f, 14.0f);
+        os_serve_posted(20000000);
+        os_pump_window_events();
+        os_window_text_input(window, true, 40.0f, 30.0f, 14.0f);
+        os_window_text_input(window, false, 0.0f, 0.0f, 0.0f);
+        os_serve_posted(20000000);
+        os_pump_window_events();
+    }
+    os_window_set_cursor(window, OS_Cursor::TextInput);
+    os_window_maximize(window);
+    os_pump_window_events();
+    u32 width  = 0;
+    u32 height = 0;
+    os_window_size(window, width, height);
+    EXPECT_GT(width, 0u) << "the window survived";
+}
+
 // A Metal app like Unity's macOS player loads no Vulkan loader: its mirror window still opens,
-// without Vulkan, where SDL failed the window and the runtime went headless
+// where a window for Vulkan once needed the loader and the runtime went headless
 TEST(Platform, a_window_without_vulkan_still_opens)
 {
     os_shutdown();
-    os_set_env("SDL_VULKAN_LIBRARY", "/nonexistent/libvulkan.1.dylib");
-    defer {
-        os_unset_env("SDL_VULKAN_LIBRARY");
-        os_shutdown();
-    };
+    defer { os_shutdown(); };
     ASSERT_TRUE(os_initialize(false));
     if (os_is_headless())
     {
@@ -1307,17 +1367,17 @@ static void nothing_to_do (void* user)
 
 static i32 wake_the_window_thread (void* user)
 {
-    SDL_AtomicInt* stop = (SDL_AtomicInt*)user;
-    while (!SDL_GetAtomicInt(stop))
+    OS_Atomic32* stop = (OS_Atomic32*)user;
+    while (!os_atomic_load(stop))
     {
         os_post_to_window_thread(nothing_to_do, nullptr);
-        SDL_DelayNS(20000);
+        os_sleep_ns(20000);
     }
     return 0;
 }
 
-// Regression: SDL's wakeup takes the window the window thread waits on and then sends it an event
-// over a second X connection. A window closed in between ended the process with X's BadWindow
+// Regression: a wakeup that sent an event to the window the window thread waited on, over a second
+// X connection, ended the process with X's BadWindow when that window closed in between
 TEST(Platform, windows_close_while_other_threads_wake_the_window_thread)
 {
     os_shutdown();
@@ -1327,7 +1387,7 @@ TEST(Platform, windows_close_while_other_threads_wake_the_window_thread)
     {
         GTEST_SKIP() << "no display";
     }
-    SDL_AtomicInt stop = {};
+    OS_Atomic32 stop = {};
     OS_Thread*    wakers[2];
     for (OS_Thread*& waker : wakers)
     {
@@ -1340,7 +1400,7 @@ TEST(Platform, windows_close_while_other_threads_wake_the_window_thread)
         os_serve_posted(1000000);
         os_destroy_window(window);
     }
-    SDL_SetAtomicInt(&stop, 1);
+    os_atomic_store(&stop, 1);
     for (OS_Thread* waker : wakers)
     {
         os_thread_join(waker);
@@ -1465,12 +1525,12 @@ TEST(Profile, open_and_too_deep_zones_are_left_out)
 // in the simulator, as the release came after more events than the window queue and one poll hold
 TEST(Platform, a_release_after_a_flood_of_moves_is_not_lost)
 {
-    os_set_env("SDL_VIDEODRIVER", "offscreen");
+    os_set_env("PUPPETXR_VIDEO_DRIVER", "offscreen");
     os_shutdown();
     ASSERT_TRUE(os_initialize(false));
     defer {
         os_shutdown();
-        os_unset_env("SDL_VIDEODRIVER");
+        os_unset_env("PUPPETXR_VIDEO_DRIVER");
     };
     if (os_is_headless())
     {
@@ -1527,12 +1587,12 @@ TEST(Platform, a_release_after_a_flood_of_moves_is_not_lost)
 
 TEST(Platform, windows_start_hidden_until_shown)
 {
-    os_set_env("SDL_VIDEODRIVER", "offscreen");
+    os_set_env("PUPPETXR_VIDEO_DRIVER", "offscreen");
     os_shutdown();
     ASSERT_TRUE(os_initialize(false));
     defer {
         os_shutdown();
-        os_unset_env("SDL_VIDEODRIVER");
+        os_unset_env("PUPPETXR_VIDEO_DRIVER");
     };
     if (os_is_headless())
     {
@@ -1607,12 +1667,12 @@ TEST(Platform, pushed_mouse_events_outrank_the_real_cursor)
 
 TEST(Platform, windows_maximize)
 {
-    os_set_env("SDL_VIDEODRIVER", "offscreen");
+    os_set_env("PUPPETXR_VIDEO_DRIVER", "offscreen");
     os_shutdown();
     ASSERT_TRUE(os_initialize(false));
     defer {
         os_shutdown();
-        os_unset_env("SDL_VIDEODRIVER");
+        os_unset_env("PUPPETXR_VIDEO_DRIVER");
     };
     if (os_is_headless())
     {
@@ -1626,7 +1686,7 @@ TEST(Platform, windows_maximize)
     EXPECT_FALSE(os_window_maximize(nullptr));
     EXPECT_FALSE(os_window_maximized(nullptr));
 
-    // SDL's offscreen driver cannot maximize; it must say so instead of pretending
+    // The offscreen driver cannot maximize; it must say so instead of pretending
     const b8 supported = os_window_maximize(window);
     OS_Event drain[64];
     os_poll_events(drain, 64);
@@ -1637,12 +1697,12 @@ TEST(Platform, windows_maximize)
 // GL mirror windows need the native window of the driver the app's display is on
 TEST(Platform, video_driver_switches_and_windows_have_native_handles)
 {
-    os_set_env("SDL_VIDEODRIVER", "offscreen");
+    os_set_env("PUPPETXR_VIDEO_DRIVER", "offscreen");
     os_shutdown();
     ASSERT_TRUE(os_initialize(false));
     defer {
         os_shutdown();
-        os_unset_env("SDL_VIDEODRIVER");
+        os_unset_env("PUPPETXR_VIDEO_DRIVER");
     };
     if (os_is_headless())
     {

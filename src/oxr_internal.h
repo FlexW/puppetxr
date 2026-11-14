@@ -1226,7 +1226,7 @@ struct OXR_Runtime
     SIM_Sim*                   sim = {};
     OXR_InstanceHandle         live_instance;
     OS_Window*                 window = {};        // mirror window, null when headless
-    u32                        window_x11_visual = {}; // the X visual it was made with for GLX, 0 for SDL's choice
+    u32                        window_x11_visual = {}; // the X visual it was made with for GLX, 0 for the driver's default
     b8                         window_closed = {};
     b8                         window_shown = {};  // created hidden, shown once a frame is in it
     b8                         mouse_captured = {}; // a click into the view took the mouse: moves turn, the panels get no input; Escape gives it back

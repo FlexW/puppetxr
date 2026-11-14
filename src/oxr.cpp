@@ -532,11 +532,11 @@ static OXR_Instance* session_instance (const OXR_Session* session)
 
 #if !PUPPETXR_HEADLESS_ONLY
 // The panels get no input while the window holds the mouse
-static void ui_raw_event_hook (const void* native_event, b8 input, void* user)
+static void ui_raw_event_hook (const OS_RawEvent& event, void* user)
 {
-    if (!input || !runtime()->mouse_captured)
+    if (!os_raw_event_is_input(event) || !runtime()->mouse_captured)
     {
-        ui_handle_raw_event((UI_Context*)user, native_event);
+        ui_handle_raw_event((UI_Context*)user, event);
     }
 }
 #endif

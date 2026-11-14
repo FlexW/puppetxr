@@ -9,7 +9,6 @@ upstream ships them, and, where upstream has one, its CMake build patched for th
 
 | Directory | Upstream | Version | Archive SHA-256 | License |
 |---|---|---|---|---|
-| `sdl` | https://github.com/libsdl-org/SDL | `release-3.4.18` | `c4b08b950bd29d83caae0ab8d884298d27046a9d30700fb42841c50992665c90` | Zlib (`LICENSE.txt`); hidapi's in `src/hidapi/` |
 | `jsmn` | https://github.com/zserge/jsmn | `v1.1.0` | `5f0913a10657fe7ec8d5794ccf00a01000e3e1f2f1e1f143c34a0f7b47edcb38` | MIT |
 | `googletest` | https://github.com/google/googletest | `v1.18.0` | `6e3191c1455468b3fc35a417fb565c1c5071aee1b7e7f85e30cf48a98d37d8b5` | BSD-3-Clause |
 | `openxr` | https://github.com/KhronosGroup/OpenXR-SDK | `release-1.1.65` | `27aa797baf680c5f836b6138e78e59e2f72d6becfef6d4587ed9a57756d6d3b3` | Apache-2.0 (`LICENSE`, `LICENSES/`); jsoncpp and sanitizers-cmake MIT in `src/external/` |
@@ -27,17 +26,6 @@ Files that are kept are byte-identical to it except the CMake files listed under
 Removed everywhere: documentation, tests, samples, examples, CI and IDE project files, other
 build systems.
 
-- `sdl`: `CMakeLists.txt`, `cmake/` (no `cmake/test`, `cmake/android`), `include/`, `src/`,
-  `wayland-protocols/`. Gone from `src/`: the backends of platforms puppetxr does not build for
-  (Android, Emscripten, iOS, Haiku, the BSDs, consoles, RISC OS, QNX, GDK but `joystick/gdk`,
-  the GameInput joystick driver of Windows builds, Raspberry Pi, Vivante);
-  the backends of the subsystems `CMakeLists.txt` turns off, keeping their core and `dummy`
-  backend (audio, camera, sensor, dialog but for the zenity message box, power, GPU; haptic keeps
-  `darwin`, `windows` and `hidapi`, whose headers the joystick code includes);
-  the render backends but `software`; hidapi but `hidapi/hidapi.h`, `SDL_hidapi*` and its
-  licenses; `src/test`, `video/openvr`, `video/directx`; `SDL_test*.h` and the Android, iOS,
-  Xbox and GDK build configs. `CMakeLists.txt`: the install, uninstall, tests and examples
-  blocks removed. The branches for the removed platforms remain and are unreachable.
 - `jsmn`: `jsmn.h`.
 - `googletest`: `googletest/` with `include/`, `src/`, `cmake/internal_utils.cmake`; no
   googlemock. `CMakeLists.txt`: builds googletest only, no googlemock, Abseil or install options.
@@ -52,7 +40,7 @@ build systems.
 - `vulkan-headers`: the C headers of `include/vulkan/` and `include/vk_video/`; no Vulkan-Hpp,
   registry or tests. `CMakeLists.txt`: the C++ module, tests and install removed.
 - `volk`: `volk.c`, `volk.h`. `CMakeLists.txt`: install removed.
-- `imgui`: the core sources and `backends/imgui_impl_sdl3.*`; no demo.
+- `imgui`: the core sources; no backends (`src/ui.cpp` feeds it over the platform and render layers), no demo.
 - `implot`: `implot.cpp`, `implot_items.cpp` and headers; no demo.
 - `stb`: `stb_image.h`, `stb_image_write.h`.
 

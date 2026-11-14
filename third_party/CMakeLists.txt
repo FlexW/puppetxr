@@ -8,54 +8,6 @@ if (WIN32)
 endif ()
 
 #
-# SDL3, static, trimmed to window, events, input, time, memory and logging
-#
-
-set(SDL_SHARED OFF CACHE BOOL "" FORCE)
-set(SDL_STATIC ON CACHE BOOL "" FORCE)
-set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
-set(SDL_TESTS OFF CACHE BOOL "" FORCE)
-set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
-set(SDL_AUDIO OFF CACHE BOOL "" FORCE)
-set(SDL_CAMERA OFF CACHE BOOL "" FORCE)
-set(SDL_SENSOR OFF CACHE BOOL "" FORCE)
-set(SDL_GPU OFF CACHE BOOL "" FORCE)
-set(SDL_RENDER OFF CACHE BOOL "" FORCE)
-set(SDL_DIALOG OFF CACHE BOOL "" FORCE)
-set(SDL_POWER OFF CACHE BOOL "" FORCE)
-set(SDL_HAPTIC OFF CACHE BOOL "" FORCE)
-set(SDL_HIDAPI OFF CACHE BOOL "" FORCE)
-# SDL_OPENGL only for SDL_HINT_VIDEO_X11_WINDOW_VISUALID: GLX mirror windows need the app's visual
-set(SDL_OPENGL ON CACHE BOOL "" FORCE)
-set(SDL_OPENGLES OFF CACHE BOOL "" FORCE)
-if (PUPPETXR_HEADLESS_ONLY)
-    set(SDL_VIDEO OFF CACHE BOOL "" FORCE)
-    set(SDL_JOYSTICK OFF CACHE BOOL "" FORCE)
-    set(SDL_UNIX_CONSOLE_BUILD ON CACHE BOOL "" FORCE)
-endif ()
-
-# Pinned so SDL does not stamp the git revision of whatever repository it is built inside
-set(SDL_REVISION "SDL-3.4.18" CACHE STRING "" FORCE)
-
-add_subdirectory(sdl EXCLUDE_FROM_ALL SYSTEM)
-# The Objective-C runtime keeps one class per name for the whole process, whatever the export list
-# says, and the app may bring its own SDL3: SDL's classes get puppetxr's prefix
-if (APPLE)
-    foreach (class SDL3Application SDL3AppDelegate SDL3TranslatorResponder SDL3MessageBoxPresenter SDL3OpenGLContext
-                   SDL3Window SDL3View SDL3Cocoa_WindowListener SDL3_RumbleContext SDL3_RumbleMotor SDL3_cocoametalview
-                   SDL_CocoaVideoData SDL_CocoaWindowData Cocoa_PasteboardDataProvider)
-        target_compile_definitions(SDL3-static PRIVATE ${class}=PUPPETXR_${class})
-    endforeach ()
-endif ()
-# Third-party warnings are not ours to fix
-if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(SDL3-static PRIVATE -w)
-elseif (MSVC)
-    target_compile_options(SDL3-static PRIVATE /w)
-endif ()
-
-#
 # googletest
 #
 
@@ -123,7 +75,7 @@ target_compile_definitions(volk PUBLIC VK_NO_PROTOTYPES)
 set_target_properties(volk PROPERTIES C_VISIBILITY_PRESET hidden)
 
 #
-# Dear ImGui: core plus the SDL3 platform backend; rendering is our own (ui.cpp)
+# Dear ImGui: the core; input and rendering are our own, over the platform and render layers (ui.cpp)
 #
 
 if (NOT PUPPETXR_HEADLESS_ONLY)
@@ -132,10 +84,8 @@ if (NOT PUPPETXR_HEADLESS_ONLY)
         ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_draw.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_tables.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_widgets.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends/imgui_impl_sdl3.cpp
     )
-    target_include_directories(imgui SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/imgui ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends)
-    target_link_libraries(imgui PUBLIC SDL3::SDL3-static)
+    target_include_directories(imgui SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
     # The test engine hooks let ui.cpp record where items are, for tests that click them
     target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS IMGUI_DISABLE_DEMO_WINDOWS IMGUI_ENABLE_TEST_ENGINE)
     set_target_properties(imgui PROPERTIES CXX_VISIBILITY_PRESET hidden)

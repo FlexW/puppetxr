@@ -15,10 +15,6 @@ leak:libEGL.so
 leak:libGLdispatch
 leak:libdbus-1.so
 leak:libglib-2.0.so
-# libX11 keeps per display state (resource database, input method) that SDL's x11 driver asks
+# libX11 keeps per display state (resource database, input method) that the x11 driver asks
 # for; every test process keeps libX11 loaded (tests_base.cpp) so its frames have a name to match
 leak:libX11.so
-# On a Wayland desktop SDL decorates windows through libdecor, whose GTK plugin keeps pango and
-# fontconfig caches for the life of the process
-leak:libgtk-3.so
-leak:libfontconfig.so

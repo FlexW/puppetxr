@@ -12,7 +12,7 @@
 namespace
 {
 
-// The UI renders into an offscreen image here, on every backend; SDL's offscreen driver provides the window
+// The UI renders into an offscreen image here, on every backend; the offscreen video driver provides the window
 struct UiTest : testing::TestWithParam<R_Backend>
 {
     VkInstance       instance = VK_NULL_HANDLE;
@@ -28,7 +28,7 @@ struct UiTest : testing::TestWithParam<R_Backend>
     void SetUp () override
     {
         os_set_assert_mode(OS_AssertMode::Log);
-        os_set_env("SDL_VIDEODRIVER", "offscreen");
+        os_set_env("PUPPETXR_VIDEO_DRIVER", "offscreen");
         os_shutdown();
         ASSERT_TRUE(os_initialize(false));
         if (os_is_headless())
@@ -144,16 +144,16 @@ struct UiTest : testing::TestWithParam<R_Backend>
         os_shutdown();
         EXPECT_EQ(test_validation_errors, 0u);
         EXPECT_EQ(test_gl_errors, 0u);
-        os_unset_env("SDL_VIDEODRIVER");
+        os_unset_env("PUPPETXR_VIDEO_DRIVER");
     }
 };
 
-static void ui_event_hook (const void* native_event, b8, void* user)
+static void ui_event_hook (const OS_RawEvent& event, void* user)
 {
-    ui_handle_raw_event((const UI_Context*)user, native_event);
+    ui_handle_raw_event((const UI_Context*)user, event);
 }
 
-// Drives the panels as a person does: SDL mouse events into the window, one UI frame after each,
+// Drives the panels as a person does: mouse events into the window, one UI frame after each,
 // widgets found by their labels in the frame before
 struct UiClicker
 {
@@ -623,7 +623,7 @@ TEST_P(UiTest, panels_fill_windows_of_high_pixel_density)
     os_destroy_window(window);
     window = nullptr;
     os_shutdown();
-    os_unset_env("SDL_VIDEODRIVER");
+    os_unset_env("PUPPETXR_VIDEO_DRIVER");
     ASSERT_TRUE(os_initialize(false));
     if (os_is_headless())
     {

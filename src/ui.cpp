@@ -6,7 +6,6 @@
 
 #include <imgui.h>
 #include <imgui_internal.h>
-#include <imgui_impl_sdl3.h>
 #include <implot.h>
 
 //
@@ -28,6 +27,7 @@
 #define UI_TOAST_SECONDS     3.0 // how long the name of a new profile shows
 #define UI_WELCOME_KEY_WIDTH 150.0f
 #define UI_MAX_PROBE_ITEMS   1024
+#define UI_CLIPBOARD_SIZE    16384
 
 namespace
 {
@@ -45,14 +45,6 @@ struct UI_FrameBuffers
     R_BufferHandle indices;
     u64            vertex_bytes = {};
     u64            index_bytes = {};
-};
-
-// Arguments and results of the calls made on the window thread
-struct BackendInitCall
-{
-    SDL_Window* window;
-    b8          vulkan;
-    b8          result;
 };
 
 // Key names for the welcome overlay, joined
@@ -99,6 +91,8 @@ struct UI_Context
     ImGuiContext*      imgui = {};
     ImPlotContext*     implot = {};
     b8                 captured = {}; // the mirror window holds the mouse (ui_set_captured)
+    u64                last_frame_ns = {};
+    char               clipboard[UI_CLIPBOARD_SIZE] = {}; // what ImGui last read from it
     R_RenderPassHandle render_pass;
     R_PipelineHandle   pipeline;
     UI_FrameBuffers    frames[R_MAX_FRAMES_IN_FLIGHT];
@@ -1962,24 +1956,211 @@ static void record_draw_data (UI_Context* ui, R_CmdBufferHandle cmd, const ImDra
     }
 }
 
-// The SDL backend calls SDL's window and input functions, which belong to the window thread
-// (os_run_on_window_thread); so does ImGui::NewFrame through it, and EndFrame for text input
-static void backend_init (void* user)
+//
+// Platform: ImGui's input, cursor, clipboard and text input over the platform layer
+//
+
+static ImGuiKey imgui_key (OS_Key key)
 {
-    BackendInitCall& call = *(BackendInitCall*)user;
-    call.result           = call.vulkan ? ImGui_ImplSDL3_InitForVulkan(call.window) : ImGui_ImplSDL3_InitForOther(call.window);
+    if (key >= OS_Key::A && key <= OS_Key::Z)
+    {
+        return (ImGuiKey)(ImGuiKey_A + ((i32)key - (i32)OS_Key::A));
+    }
+    if (key >= OS_Key::Digit0 && key <= OS_Key::Digit9)
+    {
+        return (ImGuiKey)(ImGuiKey_0 + ((i32)key - (i32)OS_Key::Digit0));
+    }
+    if (key >= OS_Key::F1 && key <= OS_Key::F12)
+    {
+        return (ImGuiKey)(ImGuiKey_F1 + ((i32)key - (i32)OS_Key::F1));
+    }
+    if (key >= OS_Key::F13 && key <= OS_Key::F24)
+    {
+        return (ImGuiKey)(ImGuiKey_F13 + ((i32)key - (i32)OS_Key::F13));
+    }
+    if (key >= OS_Key::Keypad0 && key <= OS_Key::Keypad9)
+    {
+        return (ImGuiKey)(ImGuiKey_Keypad0 + ((i32)key - (i32)OS_Key::Keypad0));
+    }
+    switch (key)
+    {
+    case OS_Key::Space:
+        return ImGuiKey_Space;
+    case OS_Key::Escape:
+        return ImGuiKey_Escape;
+    case OS_Key::Enter:
+        return ImGuiKey_Enter;
+    case OS_Key::Tab:
+        return ImGuiKey_Tab;
+    case OS_Key::Backspace:
+        return ImGuiKey_Backspace;
+    case OS_Key::ArrowLeft:
+        return ImGuiKey_LeftArrow;
+    case OS_Key::ArrowRight:
+        return ImGuiKey_RightArrow;
+    case OS_Key::ArrowUp:
+        return ImGuiKey_UpArrow;
+    case OS_Key::ArrowDown:
+        return ImGuiKey_DownArrow;
+    case OS_Key::LeftShift:
+        return ImGuiKey_LeftShift;
+    case OS_Key::LeftCtrl:
+        return ImGuiKey_LeftCtrl;
+    case OS_Key::LeftAlt:
+        return ImGuiKey_LeftAlt;
+    case OS_Key::RightShift:
+        return ImGuiKey_RightShift;
+    case OS_Key::RightCtrl:
+        return ImGuiKey_RightCtrl;
+    case OS_Key::RightAlt:
+        return ImGuiKey_RightAlt;
+    case OS_Key::LeftSuper:
+        return ImGuiKey_LeftSuper;
+    case OS_Key::RightSuper:
+        return ImGuiKey_RightSuper;
+    case OS_Key::Grave:
+        return ImGuiKey_GraveAccent;
+    case OS_Key::LeftBracket:
+        return ImGuiKey_LeftBracket;
+    case OS_Key::RightBracket:
+        return ImGuiKey_RightBracket;
+    case OS_Key::Insert:
+        return ImGuiKey_Insert;
+    case OS_Key::Delete:
+        return ImGuiKey_Delete;
+    case OS_Key::Home:
+        return ImGuiKey_Home;
+    case OS_Key::End:
+        return ImGuiKey_End;
+    case OS_Key::PageUp:
+        return ImGuiKey_PageUp;
+    case OS_Key::PageDown:
+        return ImGuiKey_PageDown;
+    case OS_Key::Minus:
+        return ImGuiKey_Minus;
+    case OS_Key::Equals:
+        return ImGuiKey_Equal;
+    case OS_Key::Backslash:
+        return ImGuiKey_Backslash;
+    case OS_Key::Semicolon:
+        return ImGuiKey_Semicolon;
+    case OS_Key::Apostrophe:
+        return ImGuiKey_Apostrophe;
+    case OS_Key::Comma:
+        return ImGuiKey_Comma;
+    case OS_Key::Period:
+        return ImGuiKey_Period;
+    case OS_Key::Slash:
+        return ImGuiKey_Slash;
+    case OS_Key::NonUsBackslash:
+        return ImGuiKey_Oem102;
+    case OS_Key::CapsLock:
+        return ImGuiKey_CapsLock;
+    case OS_Key::ScrollLock:
+        return ImGuiKey_ScrollLock;
+    case OS_Key::NumLock:
+        return ImGuiKey_NumLock;
+    case OS_Key::PrintScreen:
+        return ImGuiKey_PrintScreen;
+    case OS_Key::Pause:
+        return ImGuiKey_Pause;
+    case OS_Key::Menu:
+        return ImGuiKey_Menu;
+    case OS_Key::KeypadDecimal:
+        return ImGuiKey_KeypadDecimal;
+    case OS_Key::KeypadDivide:
+        return ImGuiKey_KeypadDivide;
+    case OS_Key::KeypadMultiply:
+        return ImGuiKey_KeypadMultiply;
+    case OS_Key::KeypadMinus:
+        return ImGuiKey_KeypadSubtract;
+    case OS_Key::KeypadPlus:
+        return ImGuiKey_KeypadAdd;
+    case OS_Key::KeypadEnter:
+        return ImGuiKey_KeypadEnter;
+    case OS_Key::KeypadEquals:
+        return ImGuiKey_KeypadEqual;
+    default:
+        return ImGuiKey_None;
+    }
 }
 
-static void backend_shutdown (void* user) // NOLINT(misc-const-correctness): OS_WindowThreadFunction
+static i32 imgui_mouse_button (OS_Key key)
 {
-    (void)user;
-    ImGui_ImplSDL3_Shutdown();
+    switch (key)
+    {
+    case OS_Key::MouseLeft:
+        return ImGuiMouseButton_Left;
+    case OS_Key::MouseRight:
+        return ImGuiMouseButton_Right;
+    case OS_Key::MouseMiddle:
+        return ImGuiMouseButton_Middle;
+    case OS_Key::MouseX1:
+        return 3;
+    case OS_Key::MouseX2:
+        return 4;
+    default:
+        return -1;
+    }
+}
+
+static const char* get_clipboard (ImGuiContext* context)
+{
+    UI_Context* ui = (UI_Context*)ImGui::GetPlatformIO(context).Platform_ClipboardUserData;
+    return os_clipboard_text(ui->window, ui->clipboard, sizeof(ui->clipboard)) ? ui->clipboard : nullptr;
+}
+
+static void set_clipboard (ImGuiContext* context, const char* text)
+{
+    const UI_Context* ui = (const UI_Context*)ImGui::GetPlatformIO(context).Platform_ClipboardUserData;
+    os_set_clipboard_text(ui->window, text);
+}
+
+static void set_ime_data (ImGuiContext* context, ImGuiViewport* viewport, ImGuiPlatformImeData* data) // NOLINT(misc-const-correctness): ImGui's Platform_SetImeDataFn
+{
+    (void)viewport;
+    const UI_Context* ui = (const UI_Context*)ImGui::GetPlatformIO(context).Platform_ImeUserData;
+    os_window_text_input(ui->window, data->WantVisible || data->WantTextInput, data->InputPos.x, data->InputPos.y, data->InputLineHeight);
+}
+
+static void init_platform (UI_Context* ui)
+{
+    ImGuiIO& io            = ImGui::GetIO();
+    io.BackendPlatformName = "puppetxr";
+    io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors;
+    ImGuiPlatformIO& platform           = ImGui::GetPlatformIO();
+    platform.Platform_GetClipboardTextFn = get_clipboard;
+    platform.Platform_SetClipboardTextFn = set_clipboard;
+    platform.Platform_ClipboardUserData  = ui;
+    platform.Platform_SetImeDataFn       = set_ime_data;
+    platform.Platform_ImeUserData        = ui;
+    ui->last_frame_ns                    = os_monotonic_ns();
+}
+
+// Window thread, before ImGui::NewFrame
+static void update_platform (UI_Context* ui)
+{
+    ImGuiIO&  io      = ImGui::GetIO();
+    u32       width   = 0;
+    u32       height  = 0;
+    const f32 density = os_window_display_density(ui->window);
+    os_window_size(ui->window, width, height);
+    io.DisplaySize             = ImVec2((f32)width / density, (f32)height / density);
+    io.DisplayFramebufferScale = ImVec2(density, density);
+    const u64 now              = os_monotonic_ns();
+    io.DeltaTime               = now > ui->last_frame_ns ? (f32)((f64)(now - ui->last_frame_ns) * 1e-9) : 1.0f / 60.0f;
+    ui->last_frame_ns          = now;
+    if (!(io.ConfigFlags & ImGuiConfigFlags_NoMouseCursorChange))
+    {
+        const ImGuiMouseCursor cursor = io.MouseDrawCursor ? ImGuiMouseCursor_None : ImGui::GetMouseCursor();
+        os_window_set_cursor(ui->window, cursor == ImGuiMouseCursor_None ? OS_Cursor::Hidden : (OS_Cursor)cursor);
+    }
 }
 
 static void build_frame (void* user) // NOLINT(misc-const-correctness): OS_WindowThreadFunction
 {
     const BuildFrameCall& call = *(const BuildFrameCall*)user;
-    ImGui_ImplSDL3_NewFrame();
+    update_platform(call.ui);
     // The cursor itself, as the window may get no moves (os_window_cursor)
     f32 cursor_x = 0.0f;
     f32 cursor_y = 0.0f;
@@ -2106,13 +2287,7 @@ UI_Context* ui_create (const UI_CreateInfo& info)
     ImGui::GetIO().IniFilename = nullptr;
     ImGui::GetIO().Fonts->AddFontDefaultVector();
     apply_style();
-    BackendInitCall init = { .window = (SDL_Window*)os_window_native(info.window), .vulkan = r_device_backend(info.device) == R_Backend::Vulkan, .result = false };
-    os_run_on_window_thread(backend_init, &init);
-    if (!init.result)
-    {
-        LOG_ERROR("ImGui SDL3 backend failed");
-        return nullptr;
-    }
+    init_platform(ui);
 
     ui->render_pass = r_create_render_pass(ui->device, { .color_format = info.target_format, .load_op = R_LoadOp::Load, .initial_layout = R_ImageLayout::TransferDst, .final_layout = R_ImageLayout::Present });
     ui->pipeline    = r_create_pipeline(ui->device, {
@@ -2168,7 +2343,6 @@ void ui_destroy (UI_Context* ui)
     if (ui->imgui)
     {
         ImGui::SetCurrentContext(ui->imgui);
-        os_run_on_window_thread(backend_shutdown, nullptr);
         if (ui->implot)
         {
             ImPlot::DestroyContext(ui->implot);
@@ -2178,11 +2352,61 @@ void ui_destroy (UI_Context* ui)
     os_memory_release(ui);
 }
 
-void ui_handle_raw_event (const UI_Context* ui, const void* native_event)
+void ui_handle_raw_event (const UI_Context* ui, const OS_RawEvent& event)
 {
-    ASSERT(ui && native_event);
+    ASSERT(ui);
+    if (event.window != os_window_id(ui->window))
+    {
+        return;
+    }
     ImGui::SetCurrentContext(ui->imgui);
-    ImGui_ImplSDL3_ProcessEvent((const SDL_Event*)native_event);
+    ImGuiIO& io = ImGui::GetIO();
+    switch (event.type)
+    {
+    case OS_RawEventType::KeyDown:
+    case OS_RawEventType::KeyUp:
+    {
+        const b8 down = event.type == OS_RawEventType::KeyDown;
+        io.AddKeyEvent(ImGuiMod_Ctrl, (event.modifiers & OS_MODIFIER_CTRL) != 0);
+        io.AddKeyEvent(ImGuiMod_Shift, (event.modifiers & OS_MODIFIER_SHIFT) != 0);
+        io.AddKeyEvent(ImGuiMod_Alt, (event.modifiers & OS_MODIFIER_ALT) != 0);
+        io.AddKeyEvent(ImGuiMod_Super, (event.modifiers & OS_MODIFIER_SUPER) != 0);
+        const ImGuiKey key = imgui_key(event.key);
+        if (key != ImGuiKey_None)
+        {
+            io.AddKeyEvent(key, down);
+        }
+        break;
+    }
+    case OS_RawEventType::Text:
+        io.AddInputCharactersUTF8(event.text);
+        break;
+    case OS_RawEventType::MouseMotion:
+        io.AddMouseSourceEvent(ImGuiMouseSource_Mouse);
+        io.AddMousePosEvent(event.x, event.y);
+        break;
+    case OS_RawEventType::MouseButtonDown:
+    case OS_RawEventType::MouseButtonUp:
+    {
+        const i32 button = imgui_mouse_button(event.key);
+        if (button >= 0)
+        {
+            io.AddMouseSourceEvent(ImGuiMouseSource_Mouse);
+            io.AddMouseButtonEvent(button, event.type == OS_RawEventType::MouseButtonDown);
+        }
+        break;
+    }
+    case OS_RawEventType::MouseWheel:
+        io.AddMouseSourceEvent(ImGuiMouseSource_Mouse);
+        io.AddMouseWheelEvent(-event.dx, event.dy);
+        break;
+    case OS_RawEventType::FocusGained:
+    case OS_RawEventType::FocusLost:
+        io.AddFocusEvent(event.type == OS_RawEventType::FocusGained);
+        break;
+    default:
+        break;
+    }
 }
 
 // A click outside an open popup closes it

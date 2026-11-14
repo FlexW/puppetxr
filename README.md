@@ -54,7 +54,8 @@ Agents working on this repository: read `AGENTS.md`.
 ## Build
 
 Requirements: CMake 3.25+, Ninja, a C++20 compiler (GCC, clang or MSVC), `glslc` (Vulkan
-SDK or shaderc). The dependencies are in `third_party/`; the build downloads nothing.
+SDK or shaderc), on Linux the X11, XInput, XRandR, Xcursor and xkbcommon headers. The
+dependencies are in `third_party/`; the build downloads nothing.
 
 ```
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$HOME/.local

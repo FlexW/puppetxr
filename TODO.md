@@ -35,6 +35,14 @@ macOS (step 10; docs/building.md "macOS", "macOS releases"):
 - [ ] the help names `grave` by its symbol on the layout (`os_key_label`); on an ISO Mac keyboard with a US International layout that is § (± shifted) where people expect the backtick. Only shows when `controls.ui` or a binding is `grave`
 - [ ] `mac-tsan`: 939 of 941 pass with Apple clang 21; `OxrMetalRealWindowTest.frames_composite_and_present_to_the_mirror_window` deadlocks inside the sanitizer runtime (TSan's `LibIgnore` lock against dyld's loader lock: SDL's `SDL_Metal_CreateView` `dlclose`s the Vulkan loader of the window while AppKit's dock thread `dlopen`s), no puppetxr frame involved. Done when it passes, or skips under TSan with the runtime named
 
+Native platform layer (SDL3 replaced; docs/architecture.md "Platform layer"). Linux (Wayland,
+X11) passes all tests; the Win32 and Cocoa drivers are written but have not run yet:
+- [ ] `win-clang-debug`, `msvc-debug` and `mingw-debug` build `src/platform_win32.cpp` and pass all tests; by hand: the mirror window, the panels (typing, the clipboard, cursor shapes, the input method's candidates under a text field), looking with the mouse held (raw input, the cursor clipped and put back), maximize, the window thread's wake (no 100 ms waits)
+- [ ] `mac-debug` builds `src/platform_macos.mm` and passes all tests, `PlatformAppEventsTest.*` and `Platform.a_click_that_focuses_the_window_also_clicks` included; by hand as for Windows, plus the ISO swap of the keys left of 1 and Z, Retina density, Unity's editor with its own NSApp, and `mac-tsan` (`OxrMetalRealWindowTest.frames_composite_and_present_to_the_mirror_window` deadlocked in the sanitizer runtime under SDL's Metal view)
+- [ ] Wayland input methods by hand (`zwp_text_input_v3`; `Platform.text_input_turns_on_and_off` only covers an unfocused window, which never gets the enter): Japanese or Chinese through IBus on GNOME into a panel's text field, the candidates under the field
+- [ ] a mouse leaving the window keeps ImGui's last hover until the next move on all platforms (no leave event yet)
+- [ ] Wayland title bar by hand on GNOME (`docs/architecture.md`): move, resize from every edge and corner, double click, the window menu, minimize, maximize and restore, close; at 100 % and a fractional scale
+
 Windows (step 10; docs/building.md "Windows", "Windows releases"):
 - [x] `win-clang-debug` and `msvc-debug` build warning free and pass all tests (Visual Studio 2026, MSVC 14.44 and 14.51, clang 22.1.6 and 23.1.3); `win-clang-tidy` clean with the pinned clang-tidy 23.1.3
 - [x] `win-clang-asan`, `msvc-asan` (the static OpenXR loader takes the sanitized DLL runtime), `win-clang-release`, `msvc-release` and `msvc-dist` build and pass their tests
@@ -64,7 +72,7 @@ GPUs:
 
 ## 2. platform + base
 - [x] platform.h: types, macros, ASSERT/FAIL/LOG, os_* declarations
-- [x] platform.cpp on SDL3: memory, time, log, assert, files; headless init without video
+- [x] platform.cpp on SDL3: memory, time, log, assert, files; headless init without video (since replaced by the native platform layer)
 - [x] base.h/.cpp: defer, Array, Handle, SparseArray, HashMap, cstr helpers, FNV-1a, CRC32
 - [x] json_* on jsmn
 - [x] tests_base.cpp, tests_json.cpp
@@ -265,12 +273,11 @@ OpenGL and OpenGL ES (native backend over the app's share group, GL 3.3 core and
 - [x] macOS: window calls and the event pump on the main thread when engines call xrWaitFrame elsewhere: main-thread call queue with a 250 ms withdrawal, frames post the window tick (`docs/compositor.md`, One flow on every platform)
 - [x] the window tick on Windows: posted through `SDL_RunOnMainThread` with a `PostThreadMessageW` wake; `win-clang-debug` passes all tests, `OxrD3DRealWindowTest.*` and `OxrThreadWindowedTest.*` included
 - [ ] `mingw-debug` in Wine (Xvfb, no window manager): all pass but `OxrD3DRealWindowTest.first_frame_has_the_shown_windows_size` and `a_click_on_a_panel_leaves_the_mouse_to_the_panels` (Wine's X11 driver maximizes after the frame the test checks: the window grows to 1920x1054 once the swapchain was made at 1280x720, and the click at (1000, 600) comes before), and `example_e2e`, `install_relocated`, `body_dump` when run as root, where the OpenXR loader ignores `XR_RUNTIME_JSON` (an elevated context). Done when the D3D tests wait for the size Wine settles on, or skip in Wine with the reason
-- [ ] SDL checks its event queue, not its call queue, under the lock that wakes `SDL_WaitEventTimeout`, so a posted window-thread call may wait up to 100 ms on Windows: a wake event of puppetxr's own (`SDL_RegisterEvents`) pushed after every `SDL_RunOnMainThread`, dropped by `queue_event`, left in SDL's queue by other threads; test `Platform.posted_window_thread_calls_run_at_once` on Windows
 - [ ] the control server reads back every frame and waits for it (`comp_snapshot`), about 10 ms a frame in a debug build: copy into a staging buffer with a fence and read it when a reader asks
 - [ ] an MRUK sample test that drags a panel (EnvironmentPanelPlacement: aim with `point right <u> <v> left grip -60`, hold the trigger, move)
 - [ ] the first event pumps at startup take 32 and 18 ms on macOS (profile of a Unity player)
 - [x] Linux: a window thread of its own like Windows (`HAVE_WINDOW_THREAD`), so frames ended on other threads post the tick there instead of pumping SDL off its main thread; a window thread waiting for a mutex runs the window call of the thread holding it, `xrDestroyInstance` shuts the platform down after the runtime lock, and synthetic events go straight into the event queue (`Platform.a_window_thread_waiting_for_a_mutex_runs_the_calls_of_its_holder`, `OxrWindowedTest.*`, `OxrThreadWindowedTest.*`)
-- [ ] a regression test for IMM32 staying loaded after the loader unloads puppetxr on Windows (`os_initialize` pins it): `puppetxr_tests` imports IMM32 itself, so it needs a program that loads the runtime through the loader, destroys its instance and then creates a window; `puppetxr_example` under `procdump -e` crashed in 16 of 120 runs with OBS's capture hook injected before the fix and in none after
+- [ ] a regression test for IMM32 staying loaded after the loader unloads puppetxr on Windows (the windows driver loads and pins it): `puppetxr_tests` imports IMM32 itself, so it needs a program that loads the runtime through the loader, destroys its instance and then creates a window; `puppetxr_example` under `procdump -e` crashed in 16 of 120 runs with OBS's capture hook injected before the fix and in none after
 - [x] macOS build (MoltenVK): `mac-*` presets, portability enumeration and subset, the app's Vulkan loader found by install name, exported symbols list, HiDPI windows, no GL (`docs/building.md`, macOS)
 - [ ] CI matrix, cross-arch determinism check
 - [ ] macOS: `godot_character_centric_movement_vk` and `godot_origin_centric_movement_vk` show one of two `walked` frames from run to run (6595 pixels beyond the tolerance in one), even alone; the other six demos and hello_xr are stable. Godot's call order is the same in both (one thread: wait, sync, begin, end) and `MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS=1` changes nothing; suspects: Godot's physics jitter fix on the wall clock, or Godot drawing on another queue than the one bound. Done when 10 runs give one frame

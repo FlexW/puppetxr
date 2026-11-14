@@ -785,11 +785,10 @@ OpenGL and OpenGL ES (`src/oxr_gl.cpp`, render backend in `docs/compositor.md`):
 - No fences per swapchain: every switch between the app's and puppetxr's context fences in both
   directions, so release, composite and the app's next rendering are ordered.
 - Mirror window (`mirror_window_target`): GLX draws only into X11 windows of the app's visual, so
-  an Xlib binding moves SDL's video to the x11 driver (`os_set_video_driver`, also on Wayland
-  through Xwayland) and makes the window again with `visualid` (`SDL_HINT_VIDEO_X11_WINDOW_VISUALID`,
-  which needs SDL built with `SDL_OPENGL`), unless it already has both. EGL bindings present to
-  whatever window SDL has. Without a native window (SDL's offscreen driver, headless) compositing
-  goes on offscreen.
+  an Xlib binding moves video to the x11 driver (`os_set_video_driver`, also on Wayland through
+  Xwayland) and makes the window again with that visual (`os_create_window`'s `x11_visual`),
+  unless it already has both. EGL bindings present to whatever window the driver has. Without a
+  native window (the offscreen driver, headless) compositing goes on offscreen.
 
 `XR_KHR_convert_timespec_time` (spec 12.11): the simulated clock runs at the rate of
 CLOCK_MONOTONIC between frames but drifts from it (fixed step, clamped gaps), so both are related

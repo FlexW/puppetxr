@@ -570,11 +570,10 @@ main thread polls events, syncs actions, locates spaces and finally ends the ses
 entry point holds the runtime mutex (`OXR_Lock`), so these tests only find something under
 the `clang-tsan` preset. Removing one `OXR_Lock` makes them fail there.
 
-Only our targets are instrumented, so TSan does not see SDL's atomics as ordering anything: a plain
-field published through an `SDL_AtomicInt` shows as a race now and then. Make the field atomic too.
-SDL's mutexes and semaphores are seen, through the pthread calls under them.
+The platform layer's mutexes, semaphores and atomics are pthreads and compiler atomics, which TSan
+sees.
 
-`tests/tsan.supp` holds suppressions for code we do not build (dbus under SDL video, Mesa's
+`tests/tsan.supp` holds suppressions for code we do not build (Mesa's
 drivers: `libgallium` where lavapipe is merged into it, `libvulkan_lvp` where it is not, and the
 LLVM its shader compiler threads run in). Never suppress a report with a frame in puppetxr; fix it.
 
