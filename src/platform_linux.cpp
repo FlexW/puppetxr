@@ -14,6 +14,10 @@
 #include <X11/Xcursor/Xcursor.h>
 #include <xkbcommon/xkbcommon.h>
 #include <xkbcommon/xkbcommon-compose.h>
+// The title of the Wayland title bar of our own, in the desktop's font
+#define STB_TRUETYPE_IMPLEMENTATION
+#define STBTT_STATIC
+#include <stb_truetype.h>
 
 // X11 names its null resource None, which is a key and an event type here
 static constexpr XID X_NONE = None;
@@ -1394,6 +1398,10 @@ struct WaylandState
     f32                    decoration_x;      // the pointer on the title bar or edge surface, points
     f32                    decoration_y;
     u64                    title_click_ns;    // the last press on the title bar, for double clicks
+    b8                     title_font_tried;  // the desktop's font, through fontconfig, for titles
+    b8                     title_font_ok;
+    u8*                    title_font_data;
+    stbtt_fontinfo         title_font;
     u32                    compositor_version;
     WaylandOutput          outputs[WL_MAX_OUTPUTS];
     u32                    outputs_count;
@@ -1432,6 +1440,7 @@ static void wl_decoration_leave ();
 static void wl_decoration_motion (f32 x, f32 y);
 static void wl_decoration_button (u32 serial, u32 button, b8 down);
 static void wl_update_decorations (OS_Window* window);
+static b8   wl_title_font ();
 
 static const char* const lx_wl_names[] = { WL_FUNCTIONS(WL_NAME_FN) WL_INTERFACES(LX_NAME) };
 static const char* const lx_wlc_names[] = { WL_CURSOR_FUNCTIONS(WL_NAME_FN) };
@@ -1865,8 +1874,9 @@ static void wl_keyboard_leave (void*, WlProxy*, u32, WlProxy*)
 // The text a key types, through the compose table for dead keys and compose sequences
 static void wl_key_text (u32 code)
 {
-    // With text input on, the input method commits the text, plain characters included
-    if (!lx_wl.xkb_state || !lx_wl.keyboard_focus || (lx_wl.text_input_enabled && lx_wl.text_input_focus == lx_wl.keyboard_focus))
+    // With text input on, a key the input method takes never arrives here and its text comes as a
+    // commit; a key that arrives was left alone and types as usual (GNOME without an input method)
+    if (!lx_wl.xkb_state || !lx_wl.keyboard_focus)
     {
         return;
     }
@@ -2188,6 +2198,11 @@ static b8 wl_init ()
         lx_wl.data_device = lx_wl.wl.wl_proxy_marshal_flags(lx_wl.data_device_manager, 1, lx_wl.wl.wl_data_device_interface, lx_wl.wl.wl_proxy_get_version(lx_wl.data_device_manager), 0, nullptr, lx_wl.seat);
         wl_listen(lx_wl.data_device, wl_data_device_listener, nullptr);
     }
+    // Looking the font up takes fontconfig tens of milliseconds, which a show must not wait for
+    if (!lx_wl.decoration_manager)
+    {
+        wl_title_font();
+    }
     if (lx_wl.text_input_manager && lx_wl.seat)
     {
         lx_wl.text_input = lx_wl.wl.wl_proxy_marshal_flags(lx_wl.text_input_manager, 1, &wl_text_input, 1, 0, nullptr, lx_wl.seat);
@@ -2259,6 +2274,10 @@ static void wl_quit ()
     lx_wl.wl                = kept.wl;
     lx_wl.wlc               = kept.wlc;
     lx_wl.xkb               = kept.xkb;
+    lx_wl.title_font_tried  = kept.title_font_tried;
+    lx_wl.title_font_ok     = kept.title_font_ok;
+    lx_wl.title_font_data   = kept.title_font_data;
+    lx_wl.title_font        = kept.title_font;
 }
 
 //
@@ -2414,6 +2433,205 @@ static i32 wl_title_button_at (const WaylandWindow* data, f32 x, f32 y)
     return (i32)((x - buttons) / (f32)WL_BUTTON_WIDTH);
 }
 
+// fontconfig's few calls, declared here instead of including its header
+namespace
+{
+
+struct FontconfigFunctions
+{
+    void* (*FcInitLoadConfigAndFonts) ();
+    void* (*FcNameParse)              (const u8* name);
+    i32   (*FcConfigSubstitute)       (void* config, void* pattern, i32 kind);
+    void  (*FcDefaultSubstitute)      (void* pattern);
+    void* (*FcFontMatch)              (void* config, void* pattern, i32* result);
+    i32   (*FcPatternGetString)       (void* pattern, const char* object, i32 n, u8** out);
+    i32   (*FcPatternGetInteger)      (void* pattern, const char* object, i32 n, i32* out);
+    void  (*FcPatternDestroy)         (void* pattern);
+    void  (*FcConfigDestroy)          (void* config);
+};
+
+} // namespace
+
+static const char* const wl_fontconfig_names[] = {
+    "FcInitLoadConfigAndFonts", "FcNameParse", "FcConfigSubstitute", "FcDefaultSubstitute", "FcFontMatch",
+    "FcPatternGetString", "FcPatternGetInteger", "FcPatternDestroy", "FcConfigDestroy",
+};
+
+// The bold sans serif fontconfig picks, as the desktop's titles use; once per process
+static b8 wl_title_font ()
+{
+    if (lx_wl.title_font_tried)
+    {
+        return lx_wl.title_font_ok;
+    }
+    lx_wl.title_font_tried = true;
+    FontconfigFunctions fc = {};
+    if (!load_symbols("libfontconfig.so.1", wl_fontconfig_names, (void**)&fc, ARRAY_SIZE(wl_fontconfig_names), false))
+    {
+        return false;
+    }
+    void* const config  = fc.FcInitLoadConfigAndFonts();
+    void* const pattern = config ? fc.FcNameParse((const u8*)"sans-serif:bold") : nullptr;
+    char        path[OS_MAX_PATH] = {};
+    i32         index             = 0;
+    if (pattern)
+    {
+        fc.FcConfigSubstitute(config, pattern, 0); // FcMatchPattern
+        fc.FcDefaultSubstitute(pattern);
+        i32         result = 0;
+        void* const match  = fc.FcFontMatch(config, pattern, &result);
+        u8*         file   = nullptr;
+        if (match && fc.FcPatternGetString(match, "file", 0, &file) == 0 && file) // FcResultMatch
+        {
+            cstr_copy(path, sizeof(path), (const char*)file);
+            fc.FcPatternGetInteger(match, "index", 0, &index);
+        }
+        if (match)
+        {
+            fc.FcPatternDestroy(match);
+        }
+        fc.FcPatternDestroy(pattern);
+    }
+    if (config)
+    {
+        fc.FcConfigDestroy(config);
+    }
+    usize size = 0;
+    if (!path[0] || !os_read_file(path, &lx_wl.title_font_data, &size))
+    {
+        return false;
+    }
+    const i32 offset = stbtt_GetFontOffsetForIndex(lx_wl.title_font_data, index);
+    lx_wl.title_font_ok = offset >= 0 && stbtt_InitFont(&lx_wl.title_font, lx_wl.title_font_data, offset) != 0;
+    if (!lx_wl.title_font_ok)
+    {
+        os_memory_release(lx_wl.title_font_data);
+        lx_wl.title_font_data = nullptr;
+    }
+    return lx_wl.title_font_ok;
+}
+
+// One code point of UTF-8, U+FFFD for a broken sequence
+static u32 wl_utf8_next (const char*& text)
+{
+    const u8 lead = (u8)*text++;
+    if (lead < 0x80)
+    {
+        return lead;
+    }
+    const u32 count = lead >= 0xF0 ? 3 : (lead >= 0xE0 ? 2 : (lead >= 0xC0 ? 1 : 0));
+    u32       code  = count == 0 ? 0xFFFD : lead & (0x3Fu >> count);
+    for (u32 i = 0; i < count; i++)
+    {
+        if (((u8)*text & 0xC0) != 0x80)
+        {
+            return 0xFFFD;
+        }
+        code = (code << 6) | ((u8)*text++ & 0x3F);
+    }
+    return code;
+}
+
+static f32 wl_text_width (const char* text, f32 scale)
+{
+    f32 width    = 0.0f;
+    u32 previous = 0;
+    while (*text)
+    {
+        const u32 code    = wl_utf8_next(text);
+        i32       advance = 0;
+        i32       bearing = 0;
+        stbtt_GetCodepointHMetrics(&lx_wl.title_font, (i32)code, &advance, &bearing);
+        width += (f32)(advance + (previous ? stbtt_GetCodepointKernAdvance(&lx_wl.title_font, (i32)previous, (i32)code) : 0)) * scale;
+        previous = code;
+    }
+    return width;
+}
+
+// Anti-aliased text centred between left and right, ended with "..." where it does not fit
+static void wl_draw_text (const ShmBuffer& target, i32 width, i32 height, i32 left, i32 right, const char* title, f32 pixel_height, u32 color)
+{
+    const f32 scale   = stbtt_ScaleForPixelHeight(&lx_wl.title_font, pixel_height);
+    i32       ascent  = 0;
+    i32       descent = 0;
+    i32       gap     = 0;
+    stbtt_GetFontVMetrics(&lx_wl.title_font, &ascent, &descent, &gap);
+    char text[256];
+    cstr_copy(text, sizeof(text), title);
+    const f32 room = (f32)(right - left);
+    if (wl_text_width(text, scale) > room)
+    {
+        usize length = cstr_length(text);
+        while (length > 0)
+        {
+            do
+            {
+                length--;
+            } while (length > 0 && ((u8)text[length] & 0xC0) == 0x80);
+            cstr_copy(text + length, sizeof(text) - length, "...");
+            if (wl_text_width(text, scale) <= room)
+            {
+                break;
+            }
+        }
+        if (length == 0)
+        {
+            return;
+        }
+    }
+    f32       x        = (f32)left + (room - wl_text_width(text, scale)) * 0.5f;
+    const i32 baseline = (height - (i32)((f32)(ascent - descent) * scale)) / 2 + (i32)((f32)ascent * scale);
+    u32       previous = 0;
+    u8        glyph[64 * 64];
+    for (const char* at = text; *at;)
+    {
+        const u32 code = wl_utf8_next(at);
+        if (previous)
+        {
+            x += (f32)stbtt_GetCodepointKernAdvance(&lx_wl.title_font, (i32)previous, (i32)code) * scale;
+        }
+        i32 x0 = 0;
+        i32 y0 = 0;
+        i32 x1 = 0;
+        i32 y1 = 0;
+        const f32 shift = x - (f32)(i32)x;
+        stbtt_GetCodepointBitmapBoxSubpixel(&lx_wl.title_font, (i32)code, scale, scale, shift, 0.0f, &x0, &y0, &x1, &y1);
+        const i32 w = x1 - x0;
+        const i32 h = y1 - y0;
+        if (w > 0 && h > 0 && w <= 64 && h <= 64)
+        {
+            stbtt_MakeCodepointBitmapSubpixel(&lx_wl.title_font, glyph, w, h, w, scale, scale, shift, 0.0f, (i32)code);
+            for (i32 row = 0; row < h; row++)
+            {
+                const i32 py = baseline + y0 + row;
+                for (i32 column = 0; column < w; column++)
+                {
+                    const i32 px = (i32)x + x0 + column;
+                    const u32 a  = glyph[row * w + column];
+                    if (a == 0 || px < 0 || py < 0 || px >= width || py >= height)
+                    {
+                        continue;
+                    }
+                    u32&      pixel = target.pixels[(usize)py * (usize)width + (usize)px];
+                    u32       mixed = 0xFF000000u;
+                    for (u32 shift_bits = 0; shift_bits < 24; shift_bits += 8)
+                    {
+                        const u32 front = (color >> shift_bits) & 0xFF;
+                        const u32 back  = (pixel >> shift_bits) & 0xFF;
+                        mixed |= ((front * a + back * (255 - a) + 127) / 255) << shift_bits;
+                    }
+                    pixel = mixed;
+                }
+            }
+        }
+        i32 advance = 0;
+        i32 bearing = 0;
+        stbtt_GetCodepointHMetrics(&lx_wl.title_font, (i32)code, &advance, &bearing);
+        x += (f32)advance * scale;
+        previous = code;
+    }
+}
+
 static void wl_draw_title (OS_Window* window)
 {
     WaylandWindow* data   = wl_data(window);
@@ -2479,11 +2697,16 @@ static void wl_draw_title (OS_Window* window)
         }
     }
 
-    // The title in the 5x7 font, two pixels per font pixel at one pixel per point
+    // The title in the desktop's font; without fontconfig in the 5x7 font, two pixels per font
+    // pixel at one pixel per point
+    if (wl_title_font())
+    {
+        wl_draw_text(target, width, height, button, width - 3 * button, data->title, 14.0f * scale, text_color);
+    }
     const i32 dot     = (i32)(scale * 2.0f + 0.5f) > 1 ? (i32)(scale * 2.0f + 0.5f) : 1;
     const i32 advance = 6 * dot;
     const i32 room    = width - 3 * button - 2 * advance;
-    const i32 count   = (i32)cstr_length(data->title) < room / advance ? (i32)cstr_length(data->title) : (room > 0 ? room / advance : 0);
+    const i32 count   = lx_wl.title_font_ok ? 0 : ((i32)cstr_length(data->title) < room / advance ? (i32)cstr_length(data->title) : (room > 0 ? room / advance : 0));
     i32       x       = (width - 3 * button - count * advance) / 2;
     const i32 y       = (height - 7 * dot) / 2;
     for (i32 i = 0; i < count; i++, x += advance)

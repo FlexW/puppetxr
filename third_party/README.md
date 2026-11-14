@@ -42,7 +42,7 @@ build systems.
 - `volk`: `volk.c`, `volk.h`. `CMakeLists.txt`: install removed.
 - `imgui`: the core sources; no backends (`src/ui.cpp` feeds it over the platform and render layers), no demo.
 - `implot`: `implot.cpp`, `implot_items.cpp` and headers; no demo.
-- `stb`: `stb_image.h`, `stb_image_write.h`.
+- `stb`: `stb_image.h`, `stb_image_write.h`, `stb_truetype.h` (the Wayland title bar's text).
 
 ## Updating
 

@@ -270,7 +270,7 @@ target_include_directories(puppetxrctl PRIVATE src)
 if (MINGW)
     target_compile_definitions(puppetxrctl PRIVATE __USE_MINGW_ANSI_STDIO=1)
 endif ()
-target_link_libraries(puppetxrctl PRIVATE jsmn ${PUPPETXR_PLATFORM_LIBS} ${CMAKE_DL_LIBS})
+target_link_libraries(puppetxrctl PRIVATE jsmn stb ${PUPPETXR_PLATFORM_LIBS} ${CMAKE_DL_LIBS})
 target_compile_definitions(puppetxrctl PRIVATE
     PUPPETXR_VALIDATION=$<BOOL:${PUPPETXR_VALIDATION}>
     PUPPETXR_HEADLESS_ONLY=$<BOOL:${PUPPETXR_HEADLESS_ONLY}>

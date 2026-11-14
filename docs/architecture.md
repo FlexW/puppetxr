@@ -44,7 +44,7 @@ Third-party headers are confined: `vulkan.h` in `render_vulkan.cpp` and
 `oxr_vulkan.cpp`, `imgui.h` in `ui.cpp`, the X11 and xkbcommon headers in `platform_linux.cpp`,
 AppKit in `platform_macos.mm`, `windows.h` in `platform_win32.cpp`, the D3D and DXGI headers in
 `render_d3d11.cpp` and `render_d3d12.cpp` (and the test helper `tests/test_d3d.h`), `openxr.h` in `oxr*.cpp` and `puppetxr_api.cpp`, `jsmn.h` in `base.cpp`,
-`stb_image_write.h` in `comp.cpp`, `stb_image.h` in `world.cpp`. Across layer boundaries native
+`stb_image_write.h` in `comp.cpp`, `stb_image.h` in `world.cpp`, `stb_truetype.h` in `platform_linux.cpp`. Across layer boundaries native
 objects travel as `void*` or `u64`.
 
 ## Platform layer
@@ -67,12 +67,13 @@ is what they share and nothing else includes.
   then X11). None found: headless. `os_set_video_driver` switches at runtime (a GL app with an
   Xlib binding moves to `x11`, `docs/openxr.md`).
 - Linux loads libwayland-client, libxkbcommon, libX11 and libXi at runtime, libwayland-cursor,
-  libXrandr and libXcursor when they exist, so `libpuppetxr.so` links none of them
+  libfontconfig, libXrandr and libXcursor when they exist, so `libpuppetxr.so` links none of them
   (`cmake/check_glibc.cmake`); their headers are needed to build, except Wayland's, whose ABI and
   protocol tables `platform_linux.cpp` declares. They stay loaded for the process.
 - Wayland decorations: the compositor's (`xdg-decoration`) where it draws them (KDE, wlroots), else
   a title bar of puppetxr's own (GNOME): a subsurface above the window drawn on the CPU into shared
-  memory (title in a built-in 5x7 font, minimize, maximize, close; double click maximizes, right
+  memory (the title in the desktop's bold sans serif, which fontconfig names when it is installed,
+  drawn by `stb_truetype`, else in a built-in 5x7 font; minimize, maximize, close; double click maximizes, right
   click opens the window menu), and a transparent subsurface below it, a 1x1 buffer stretched by
   its viewport, whose 8 points around the window take resize drags. Moving and resizing are the
   compositor's (`xdg_toplevel` move and resize); the window geometry takes in the title bar. A shown
@@ -84,8 +85,8 @@ is what they share and nothing else includes.
   method position through `os_window_set_cursor`, `os_clipboard_text` and
   `os_window_text_input`; no ImGui backend file is built.
 - Input methods: IMM32 on Windows, `NSTextInputClient` on macOS, XIM on X11, `zwp_text_input_v3`
-  on Wayland, which routes a text field's keys through the input method and commits all its text,
-  so typed text comes from there while it is on. The candidates show where `os_window_text_input`
+  on Wayland, which routes a text field's keys through the input method: a key it takes comes back
+  as committed text, a key it leaves arrives as a key and types as usual. The candidates show where `os_window_text_input`
   says; the preedit string is not drawn.
 - Window thread (Linux, Windows): sleeps until the window system has events or
   `os_sys_wake_signal` (a pipe, an event) ends the wait; a call or post wakes it.
