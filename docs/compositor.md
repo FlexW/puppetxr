@@ -349,8 +349,16 @@ environment blend mode):
   `OXR_Session::room_uploaded` differs from `world_generation`.
 - A passthrough layer carries one `clip_from_room` matrix per eye (`place_passthrough`: eye
   pose and fov at the display time, near 0.05 m, far 1000 m) and a style. `passthrough.vert`/
-  `.frag` draw the mesh unlit with depth testing into the target's `D32_SFLOAT` depth
-  attachment, which is cleared per passthrough layer so layers never see each other.
+  `.frag` draw the mesh and the props unlit with depth testing into the target's `D32_SFLOAT`
+  depth attachment, which is cleared per passthrough layer so layers never see each other.
+  Two passes of the one `passthrough_pipeline` (`draw_passthrough_geometry`): with `depth_pass`
+  set the shader outputs transparent black, which the premultiplied blend leaves as it was, so
+  only the nearest depth is written; then the colour pass, testing `LessOrEqual`, meets only each
+  pixel's nearest surface, so a dimmed layer never shows what lies behind
+  (`OxrPassthroughTest.dimmed_passthrough_shows_only_the_nearest_surface`). One pipeline gives a
+  surface the same depth in both passes. A pixel where two surfaces tie in depth exactly (the
+  outline of a closed shape, where its front and back meet) may blend twice: one pixel in a view on
+  lavapipe, none on an AMD GPU (TODO.md).
 - Styles: opacity (alpha, honoured only with source alpha, like any layer), edge colour
   (screen-space luminance gradient), and one of mono to RGBA, mono to mono (a 256x1 LUT
   image per layer slot, `luts`, re-uploaded when its hash changes) or brightness, contrast

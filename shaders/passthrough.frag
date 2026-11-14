@@ -109,5 +109,7 @@ R_FRAGMENT_MAIN_BEGIN
     color.rgb  = mix(color.rgb, srgb_decode(push.edge_color.rgb), edge);
 
     float alpha = push.source_alpha != 0 ? clamp(color.a * push.adjust.x, 0.0, 1.0) : 1.0;
-    R_COLOR     = vec4(color.rgb * alpha, alpha);
+    // The depth pass writes nothing over the premultiplied blend, so both passes share a pipeline
+    // and find each surface at the same depth
+    R_COLOR     = vec4(color.rgb * alpha, alpha) * (push.depth_pass != 0 ? 0.0 : 1.0);
 R_FRAGMENT_MAIN_END

@@ -325,6 +325,15 @@ advertised: cts_vulkan2 103 cases, 0 failing (2026-10-20).
   the environment raycast, as a Quest tracks no chair; a canonical GLB per model (`w_pack_model`), kept in
   recordings (format 4); the built-in `chair`, `pencil` and `case` (`tools/blender/puppetxr_models.py`); config
   `models`, C API `load_model` (API version 2), `puppetxrctl model load`, the Props panel
+- [ ] Windows sample references after the dimmed passthrough fix: the Meta OpenXR samples' references showed the room's
+  surfaces through each other wherever passthrough is translucent (re-recorded from CI). Run the Unity and Unreal
+  sample tests on Windows (`tools/sample_tests.py`) and re-record any that show translucent passthrough, after looking
+  at each against its old reference
+- [ ] dimmed passthrough: a pixel where two surfaces tie in depth exactly (the outline of a closed shape) blends twice,
+  one pixel in a view on lavapipe (`OxrPassthroughTest.dimmed_passthrough_shows_only_the_nearest_surface` allows 8).
+  Start: draw a passthrough layer opaque into an offscreen image of the eye and composite that image once with the
+  style's opacity, as a headset composites its camera image (`draw_passthrough`, `src/comp.cpp`). Done when the
+  test allows none on lavapipe
 - [ ] mesh props: textures with coordinates outside [0, 1] clamp, as the passthrough sampler does not repeat; glTF's
   `KHR_texture_transform` and wrap modes are ignored. Start: a sampler with the texture's wrap mode
   (`r_cmd_bind_textures`), or baking the repeat into the atlas; a gtest with a repeated texture on a quad
