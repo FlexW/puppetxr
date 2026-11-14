@@ -57,7 +57,11 @@
     F(int,  color_map)                     \
     F(int,  source_alpha)                  \
     F(int,  lut_resolution)                \
-    F(float, lut_weight)
+    F(float, lut_weight)                   \
+    F(int,  depth_pass) /* 1: only depth, the color left as it is */ \
+    F(int,  padding0)                      \
+    F(int,  padding1)                      \
+    F(int,  padding2)
 
 #define COMP_DEPTH_PUSH_FIELDS(F, A) \
     F(mat4, clip_from_room)

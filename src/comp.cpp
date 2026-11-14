@@ -356,6 +356,12 @@ static b8 ensure_resolved (COMP_Compositor* comp, u32 layers)
     return true;
 }
 
+// The passthrough imagery is blended once per pixel, from its nearest surface: a depth pass with
+// depth_pass set writes the nearest depth and no color, then the color pass meets only the nearest
+// surface at its depth. Blending every triangle that passed the test as it was drawn showed the
+// surfaces behind through a dimmed layer. Both passes use this one pipeline, so a surface has the
+// same depth in both passes (the specification promises it only for the same pipeline state). A
+// pixel where two surfaces tie in depth, on the outline of a closed shape, may still blend twice
 static R_PipelineHandle create_passthrough_pipeline (const COMP_Compositor* comp)
 {
     return r_create_pipeline(comp->device, {
@@ -541,6 +547,52 @@ static void upload_color_luts (COMP_Compositor* comp, const COMP_PassthroughStyl
     comp->color_lut_atlases[slot] = upload_image(comp->device, COMP_COLOR_LUT_ATLAS_WIDTH, COMP_COLOR_LUT_ATLAS_HEIGHT, R_Format::R8G8B8A8_UNORM, comp->color_lut_pixels, comp->color_lut_atlases[slot]);
 }
 
+// The room and the props: the depth pass or the color pass
+static void draw_passthrough_geometry (const COMP_Compositor* comp, R_CmdBufferHandle cmd, b8 depth_pass, COMP_PassthroughPush push, const f32 clip_from_room[16], R_ImageHandle color_map)
+{
+    R_Device*              device   = comp->device;
+    const R_PipelineHandle pipeline = comp->passthrough_pipeline;
+    push.depth_pass                 = depth_pass ? 1 : 0;
+    r_cmd_bind_pipeline(device, cmd, pipeline);
+    r_cmd_push_constants(device, cmd, pipeline, &push, sizeof(push));
+    if (comp->room.indices_count)
+    {
+        const R_ImageHandle textures[2] = { comp->room.albedo, color_map };
+        r_cmd_bind_textures(device, cmd, pipeline, textures, 2, R_Filter::Linear);
+        r_cmd_bind_vertex_buffer(device, cmd, comp->room.vertices, 0);
+        r_cmd_bind_index_buffer(device, cmd, comp->room.indices, 0, false);
+        r_cmd_draw_indexed(device, cmd, comp->room.indices_count, 0, 0);
+    }
+    // Props are part of what the cameras see, in depth order with the room; their QR modules stay sharp
+    if (comp->props.indices_count)
+    {
+        const COMP_Props&   props       = comp->props;
+        const R_ImageHandle textures[2] = { props.atlas, color_map };
+        r_cmd_bind_textures(device, cmd, pipeline, textures, 2, R_Filter::Nearest);
+        r_cmd_bind_vertex_buffer(device, cmd, props.vertices[props.slot], 0);
+        r_cmd_bind_index_buffer(device, cmd, props.indices[props.slot], 0, false);
+        r_cmd_draw_indexed(device, cmd, props.indices_count, 0, 0);
+    }
+    Mat4 room_to_clip = {};
+    memory_copy(room_to_clip.m, clip_from_room, sizeof(room_to_clip.m));
+    for (u32 d = 0; d < comp->props.mesh_draws_count; d++)
+    {
+        const COMP_MeshDraw&  draw  = comp->props.mesh_draws[d];
+        const COMP_MeshModel& model = comp->props.meshes[draw.model];
+        const Mat4            clip  = room_to_clip * draw.room_from_model;
+        memory_copy(push.clip_from_room, clip.m, sizeof(push.clip_from_room));
+        r_cmd_push_constants(device, cmd, pipeline, &push, sizeof(push));
+        r_cmd_bind_vertex_buffer(device, cmd, model.vertices, 0);
+        r_cmd_bind_index_buffer(device, cmd, model.indices, 0, false);
+        for (usize part = 0; part < model.parts.length; part++)
+        {
+            const R_ImageHandle textures[2] = { model.images[model.parts[part].image], color_map };
+            r_cmd_bind_textures(device, cmd, pipeline, textures, 2, R_Filter::Linear);
+            r_cmd_draw_indexed(device, cmd, model.parts[part].indices_count, model.parts[part].indices_first, 0);
+        }
+    }
+}
+
 static void draw_passthrough (const COMP_Compositor* comp, R_CmdBufferHandle cmd, const COMP_Layer& layer, u32 slot, u32 eye, const R_Rect& area)
 {
     R_Device* device = comp->device;
@@ -591,44 +643,8 @@ static void draw_passthrough (const COMP_Compositor* comp, R_CmdBufferHandle cmd
         }
     }
 
-    r_cmd_bind_pipeline(device, cmd, comp->passthrough_pipeline);
-    r_cmd_push_constants(device, cmd, comp->passthrough_pipeline, &push, sizeof(push));
-    if (comp->room.indices_count)
-    {
-        const R_ImageHandle textures[2] = { comp->room.albedo, color_map };
-        r_cmd_bind_textures(device, cmd, comp->passthrough_pipeline, textures, 2, R_Filter::Linear);
-        r_cmd_bind_vertex_buffer(device, cmd, comp->room.vertices, 0);
-        r_cmd_bind_index_buffer(device, cmd, comp->room.indices, 0, false);
-        r_cmd_draw_indexed(device, cmd, comp->room.indices_count, 0, 0);
-    }
-    // Props are part of what the cameras see, in depth order with the room; their QR modules stay sharp
-    if (comp->props.indices_count)
-    {
-        const COMP_Props&   props       = comp->props;
-        const R_ImageHandle textures[2] = { props.atlas, color_map };
-        r_cmd_bind_textures(device, cmd, comp->passthrough_pipeline, textures, 2, R_Filter::Nearest);
-        r_cmd_bind_vertex_buffer(device, cmd, props.vertices[props.slot], 0);
-        r_cmd_bind_index_buffer(device, cmd, props.indices[props.slot], 0, false);
-        r_cmd_draw_indexed(device, cmd, props.indices_count, 0, 0);
-    }
-    Mat4 clip_from_room = {};
-    memory_copy(clip_from_room.m, layer.clip_from_room[eye], sizeof(clip_from_room.m));
-    for (u32 d = 0; d < comp->props.mesh_draws_count; d++)
-    {
-        const COMP_MeshDraw&  draw  = comp->props.mesh_draws[d];
-        const COMP_MeshModel& model = comp->props.meshes[draw.model];
-        const Mat4            clip  = clip_from_room * draw.room_from_model;
-        memory_copy(push.clip_from_room, clip.m, sizeof(push.clip_from_room));
-        r_cmd_push_constants(device, cmd, comp->passthrough_pipeline, &push, sizeof(push));
-        r_cmd_bind_vertex_buffer(device, cmd, model.vertices, 0);
-        r_cmd_bind_index_buffer(device, cmd, model.indices, 0, false);
-        for (usize p = 0; p < model.parts.length; p++)
-        {
-            const R_ImageHandle textures[2] = { model.images[model.parts[p].image], color_map };
-            r_cmd_bind_textures(device, cmd, comp->passthrough_pipeline, textures, 2, R_Filter::Linear);
-            r_cmd_draw_indexed(device, cmd, model.parts[p].indices_count, model.parts[p].indices_first, 0);
-        }
-    }
+    draw_passthrough_geometry(comp, cmd, true, push, layer.clip_from_room[eye], color_map);
+    draw_passthrough_geometry(comp, cmd, false, push, layer.clip_from_room[eye], color_map);
 }
 
 static void release_mesh_model (R_Device* device, COMP_MeshModel& model)
