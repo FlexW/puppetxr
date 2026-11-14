@@ -7,6 +7,9 @@ config start with **Breaking:**.
 
 ## Unreleased
 
+- **Breaking:** environment depth (`XR_META_environment_depth`) behaves like a Quest 3's sensor by default: a new image every 40 ms that shows 45 ms after it was taken, from views where the head was 26 ms after the capture, 64.85 mm apart whatever the IPD, with noise and the band at the outer edges no camera sees; four images; the capture time through `XrEnvironmentDepthImageTimestampMETA`. Every parameter is configurable (`environment_depth`, docs/config.md); `"environment_depth": "eyes"` or `PUPPETXR_ENVIRONMENT_DEPTH=eyes` gives the depth from the eyes at every frame as before.
+- **Breaking:** recordings are format 3: the header holds the environment depth sensor. Formats 1 and 2 still read and replay depth from the eyes, as they were recorded.
+- Environment depth is traced into the room on the CPU, so it is the same on every GPU, and rooms load faster.
 - **Breaking:** the mirror window's window system is picked with `PUPPETXR_VIDEO_DRIVER` (`wayland`, `x11`, `windows`, `cocoa` or `offscreen`); SDL's `SDL_VIDEODRIVER` no longer applies.
 - SDL3 is gone: windows and input use each platform's own window system (Win32, Wayland and X11, Cocoa). On Linux the mirror window uses Wayland where it is available, decorated by the compositor or, on GNOME, by a title bar of its own, else X11. Building on Linux needs only the X11, XInput, XRandR, Xcursor and xkbcommon headers.
 - The UI takes the clipboard, the input method and cursor shapes, and its text fields take Delete, Home, End, Page Up and Down and the keypad; those keys and the mouse's side buttons can be bound in the config too.

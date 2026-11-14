@@ -747,6 +747,30 @@ enum class SIM_OriginOffset : u8
     PerRun,   // a new offset every instance, from origin_seed and the anchor store's run count
 };
 
+// XR_META_environment_depth's sensor (docs/config.md, Environment depth); the defaults were
+// measured on a Quest 3
+#define SIM_MAX_DEPTH_SIZE       1024
+#define SIM_MAX_DEPTH_LATENCY_MS 1000
+#define SIM_MAX_DEPTH_NOISE      0.1f // metres at 1 m
+#define SIM_MAX_DEPTH_NOISE_CELL 64
+
+struct SIM_DepthModel
+{
+    u32 width;            // of each view's image
+    u32 height;
+    i64 period_ns;        // between captures; 0 captures at every frame's display time
+    i64 latency_ns;       // a capture shows to frames whose display time is at least this much later
+    i64 pose_delay_ns;    // the views are where the head was this long after the capture, at most latency_ns
+    f32 baseline;         // metres between the two views, centred on the head and turned with it; 0 the eye views
+    f32 noise;            // metres of error, one standard deviation, at 1 m; grows with the square of the distance
+    u32 noise_cell;       // pixels between the noise's random values, interpolated in between
+    u64 seed;             // of the noise, with the capture and the view
+    f32 uncovered_width;  // the area at each view's outer edge that no camera covers: its widest extent, a fraction of the width; 0 none
+    f32 uncovered_center; // the row of its widest extent, a fraction of the height from the bottom
+    f32 uncovered_height; // its extent, a fraction of the height
+    f32 uncovered_depth;  // metres it reads
+};
+
 struct SIM_Config
 {
     const char*      known_module;               // a library of the known module table found in the process, null when none
@@ -858,6 +882,8 @@ struct SIM_Config
     u64              user_id;                  // the simulated user, never 0
     u32              anchor_latency_frames;    // frames until anchor storage and sharing requests complete
     u32              anchor_localize_frames;   // frames a loaded anchor stays unlocalized
+
+    SIM_DepthModel   environment_depth;
 };
 
 // Choices made in the UI that the next start picks up, in os_state_dir()/state.json
@@ -883,6 +909,11 @@ const char*       sim_device_name            (u32 index);
 const char*       sim_apply_known_modules    (SIM_Config& config, b8 (*loaded)(const char* module)); // defaults of the loaded known modules; returns the first or null
 const char*       sim_late_discovery_module  (const SIM_Config& config, b8 (*loaded)(const char* module)); // a known module discovering before running, loaded after the config was read; null when none or the config chose
 void              sim_load_full_config       (SIM_Config& out_config); // defaults, known modules, the config file, then the environment
+b8                sim_depth_model_preset     (const char* name, SIM_DepthModel& inout_model); // "quest3" or "eyes" (the eye views at every frame, no errors), keeping the resolution; false and unchanged for another name
+// The sensor's errors on a traced image of D16 values (w_trace_depth): noise and the uncovered area
+// at the outer edge, view 0 being the left one, whose outer edge is column 0. 0 (nearer than near)
+// and 65535 (no data) stay and noise makes neither. Deterministic in the seed, capture and view
+void              sim_depth_sensor           (const SIM_DepthModel& model, u64 capture, u32 view, f32 near, u32 width, u32 height, u16* inout_image);
 b8                sim_extension_disabled     (const SIM_Config& config, const char* name);
 b8                sim_graphics_api_allowed   (const SIM_Config& config, SIM_GraphicsApi api);
 const char*       sim_graphics_api_name      (SIM_GraphicsApi api); // "unknown" when out of range

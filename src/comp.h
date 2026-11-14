@@ -162,13 +162,14 @@ void             comp_set_snapshots (COMP_Compositor* comp, b8 on); // the reade
 b8               comp_snapshot     (COMP_Compositor* comp); // copies what the readers read off the GPU, on a thread owning the app's queue
 b8               comp_frame_ready  (const COMP_Compositor* comp); // the readers have a frame: always without snapshots, else once one was taken
 
-// Environment depth: D16 images of two layers (left, right eye), rendered from the room's visual
-// mesh, left in ShaderReadOnly layout for the app to sample. Rendering is ordered before the app's
-// later submissions on the same queue; a null room renders far depth everywhere.
+// Environment depth: D16 images of two layers (left, right view), left in ShaderReadOnly layout
+// for the app to sample. An upload writes each view's width x height D16 values, rows in memory
+// order (w_trace_depth's), into image `index` exactly, and is ordered before the app's later
+// submissions on the same queue.
 COMP_DepthTarget* comp_create_depth_target  (COMP_Compositor* comp, u32 width, u32 height, u32 images_count);
 void              comp_destroy_depth_target (const COMP_Compositor* comp, COMP_DepthTarget* target);
 u64               comp_depth_image_native   (const COMP_Compositor* comp, const COMP_DepthTarget* target, u32 index); // VkImage
-void              comp_render_depth         (const COMP_Compositor* comp, const COMP_DepthTarget* target, u32 index, const f32 clip_from_room[COMP_MAX_VIEWS][16]);
+void              comp_upload_depth         (const COMP_Compositor* comp, const COMP_DepthTarget* target, u32 index, const u16* const depth[COMP_MAX_VIEWS]);
 
 // Passthrough cameras: the room and props as passthrough shows them, seen through clip_from_room
 // (column major) and read back as sRGB-encoded RGBA8 rows from the top. Reading waits for the
