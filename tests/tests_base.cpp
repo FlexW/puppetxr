@@ -1212,7 +1212,10 @@ TEST_F(PlatformAppEventsTest, the_pump_leaves_events_to_the_app_running_its_even
     run_the_event_loop(probe, pump_inside_the_loop, 5 * (i64)NSEC_PER_SEC);
     EXPECT_EQ(probe.after_pump, 0u) << "the pump took the app's event";
     os_serve_posted(0);
-    // The app dispatched it after, as Unity does, and the window took it
+    // The app dispatches it after, as Unity does, and the window takes it. stop: ends the loop
+    // after the next event, which can be a tracking area's enter or exit queued before the key,
+    // so what the loop left is dispatched here as the app's next pass would
+    os_pump_window_events();
     EXPECT_EQ(count(OS_EventType::KeyDown, OS_Key::W), 1u);
 }
 

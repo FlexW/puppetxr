@@ -45,8 +45,9 @@ X11), Windows and macOS pass all tests:
 - [ ] macOS: Unity's editor with its own NSApp; Retina density (`UiTest.panels_fill_windows_of_high_pixel_density` skips on 1080p)
 - [ ] Wayland input methods by hand (`zwp_text_input_v3`; `Platform.text_input_turns_on_and_off` only covers an unfocused window, which never gets the enter): Japanese or Chinese through IBus on GNOME into a panel's text field, the candidates under the field
 - [x] Wayland title bar on GNOME by hand: moving, double click, the buttons (since then libadwaita's dark look with a close button alone), fractional scaling, dimming when inactive; typing into a text field (the QR code entry) failed while the text input was on, as GNOME passes the keys no input method takes as keys and their text was dropped: a test needs a window with the keyboard focus, which test runs never get
-- [ ] a mouse leaving the window keeps ImGui's last hover until the next move on all platforms (no leave event yet)
-- [ ] Wayland title bar by hand on GNOME (`docs/architecture.md`): move, resize from every edge and corner, double click, the window menu, minimize, maximize and restore, close; at 100 % and a fractional scale
+- [x] a mouse leaving the window takes the hover off the panels (`OS_RawEventType::MouseLeave` from every driver, `UiTest.a_mouse_leaving_the_window_takes_the_hover_off_the_panels`); by hand on Wayland, X11, Windows and macOS: hover a button, leave the window, the button is no longer lit
+- [x] Wayland title bar by hand on GNOME: resizing from the edges and corners, the buttons
+- [ ] Wayland title bar: the right-click window menu and minimizing from it
 
 Windows (step 10; docs/building.md "Windows", "Windows releases"):
 - [x] `win-clang-debug` and `msvc-debug` build warning free and pass all tests (Visual Studio 2026, MSVC 14.44 and 14.51, clang 22.1.6 and 23.1.3); `win-clang-tidy` clean with the pinned clang-tidy 23.1.3

@@ -2400,6 +2400,9 @@ void ui_handle_raw_event (const UI_Context* ui, const OS_RawEvent& event)
         io.AddMouseSourceEvent(ImGuiMouseSource_Mouse);
         io.AddMouseWheelEvent(-event.dx, event.dy);
         break;
+    case OS_RawEventType::MouseLeave:
+        io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+        break;
     case OS_RawEventType::FocusGained:
     case OS_RawEventType::FocusLost:
         io.AddFocusEvent(event.type == OS_RawEventType::FocusGained);

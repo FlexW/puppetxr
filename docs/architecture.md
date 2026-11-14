@@ -83,6 +83,10 @@ is what they share and nothing else includes.
 - Raw events (`OS_RawEvent`): what a driver reports, in window points, queued from the video
   thread; `os_poll_events` hands the raw event to the UI's hook, then translates it to
   `OS_Event` for the sim. Repeats and text go to the UI only.
+- `MouseLeave`: the cursor left the content (X11 `LeaveNotify` of `NotifyNormal`, Wayland
+  `wl_pointer.leave`, also onto the title bar, Win32 `WM_MOUSELEAVE` through `TrackMouseEvent`,
+  Cocoa's `mouseExited:` of an `NSTrackingArea`), never while the window holds the mouse. ImGui
+  drops its hover; the next click without a move before it gets one (`hook_motion_window`).
 - The UI feeds ImGui itself from the raw events and sets the cursor shape, clipboard and input
   method position through `os_window_set_cursor`, `os_clipboard_text` and
   `os_window_text_input`; no ImGui backend file is built.

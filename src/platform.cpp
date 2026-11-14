@@ -1366,6 +1366,7 @@ static b8 is_input (OS_RawEventType type)
     case OS_RawEventType::MouseButtonDown:
     case OS_RawEventType::MouseButtonUp:
     case OS_RawEventType::MouseWheel:
+    case OS_RawEventType::MouseLeave:
         return true;
     default:
         return false;
@@ -1396,6 +1397,10 @@ u32 os_poll_queued_events (OS_Event* out_events, u32 capacity)
                 os_state.hook_motion_window = event.window;
                 os_state.hook_motion_x      = event.x;
                 os_state.hook_motion_y      = event.y;
+            }
+            else if (event.type == OS_RawEventType::MouseLeave && event.window == os_state.hook_motion_window)
+            {
+                os_state.hook_motion_window = 0; // no window has id 0, so the next click moves first
             }
             os_state.raw_hook(event, os_state.raw_hook_user);
         }

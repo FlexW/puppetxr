@@ -1892,6 +1892,10 @@ static LRESULT CALLBACK win_procedure (HWND hwnd, UINT message, WPARAM wparam, L
     case WM_MOUSELEAVE:
         data->tracking   = false;
         data->last_valid = false;
+        if (!window->relative)
+        {
+            os_queue_event(window, { .type = OS_RawEventType::MouseLeave });
+        }
         return 0;
     case WM_LBUTTONDOWN:
     case WM_LBUTTONUP:

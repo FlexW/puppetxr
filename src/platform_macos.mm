@@ -584,6 +584,16 @@ static NSCursor* cocoa_cursor (OS_Cursor shape)
     }
 }
 
+- (void)mouseExited:(NSEvent*)event
+{
+    (void)event;
+    if (os_window && !os_window->relative)
+    {
+        cocoa_data(os_window)->last_valid = false;
+        os_queue_event(os_window, { .type = OS_RawEventType::MouseLeave });
+    }
+}
+
 - (void)mouseDown:(NSEvent*)event
 {
     cocoa_button(self, event, OS_Key::MouseLeft, true);
@@ -843,6 +853,9 @@ static b8 cocoa_create_window (OS_Window* window, const OS_WindowDesc& desc)
         data->window.title                   = [NSString stringWithUTF8String:desc.title];
         data->view                           = [[PUPPETXRView alloc] initWithFrame:content];
         data->view->os_window                = window;
+        NSTrackingArea* tracking             = [[NSTrackingArea alloc] initWithRect:NSZeroRect options:NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways | NSTrackingInVisibleRect owner:data->view userInfo:nil];
+        [data->view addTrackingArea:tracking];
+        [tracking release];
         data->window.contentView             = data->view;
         [data->window makeFirstResponder:data->view];
         data->delegate            = [[PUPPETXRWindowDelegate alloc] init];

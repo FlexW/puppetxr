@@ -279,6 +279,33 @@ TEST_P(UiTest, clicks_act_where_they_happen_without_moves)
     EXPECT_EQ(sim_props(sim, props), 1u) << "the button was clicked";
 }
 
+// A mouse leaving the window takes the hover off the panels, and a click after it coming back
+// without a move still acts where it happens
+TEST_P(UiTest, a_mouse_leaving_the_window_takes_the_hover_off_the_panels)
+{
+    UiClicker clicker(*this, 1280, 900);
+    clicker.frame();
+    clicker.frame();
+    f32 x = 0.0f;
+    f32 y = 0.0f;
+    ASSERT_TRUE(ui_find_item(clicker.ui, "add keyboard", x, y));
+    os_push_mouse_event(clicker.window, x, y, OS_Key::None, false);
+    clicker.frame();
+    clicker.frame();
+    EXPECT_TRUE(ui_wants_mouse(clicker.ui)) << "hovering the panel";
+    ASSERT_TRUE(os_push_raw_event(clicker.window, { .type = OS_RawEventType::MouseLeave }));
+    clicker.frame();
+    clicker.frame();
+    EXPECT_FALSE(ui_wants_mouse(clicker.ui)) << "the hover stayed after the mouse left";
+    os_push_mouse_event(clicker.window, x, y, OS_Key::MouseLeft, true);
+    clicker.frame();
+    os_push_mouse_event(clicker.window, x, y, OS_Key::MouseLeft, false);
+    clicker.frame();
+    clicker.frame();
+    const SIM_Prop* props = nullptr;
+    EXPECT_EQ(sim_props(sim, props), 1u) << "the button was clicked";
+}
+
 // The motion of a prop is picked from a drop-down; picking one keeps the panel open and edits the prop
 TEST_P(UiTest, prop_motion_is_picked_from_its_drop_down)
 {

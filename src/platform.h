@@ -284,6 +284,7 @@ enum class OS_RawEventType : u8
     FocusLost,
     WindowClose,
     WindowResize,
+    MouseLeave, // the cursor left the window's content, not while the window holds it
 };
 
 // An event as the video driver reports it, before os_poll_events translates it. Positions are in

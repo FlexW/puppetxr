@@ -1091,6 +1091,11 @@ static void x11_handle_event (XEvent& event)
     }
     case LeaveNotify:
         data->last_valid = false;
+        // Grabs and their release send leaves while the cursor stays
+        if (event.xcrossing.mode == NotifyNormal && event.xcrossing.detail != NotifyInferior && !window->relative)
+        {
+            os_queue_event(window, { .type = OS_RawEventType::MouseLeave });
+        }
         break;
     case FocusIn:
     case FocusOut:
@@ -1722,6 +1727,10 @@ static void wl_pointer_enter (void*, WlProxy*, u32 serial, const WlProxy* surfac
 
 static void wl_pointer_leave (void*, WlProxy*, u32, WlProxy*)
 {
+    if (lx_wl.pointer_focus && !lx_wl.pointer_focus->relative)
+    {
+        os_queue_event(lx_wl.pointer_focus, { .type = OS_RawEventType::MouseLeave });
+    }
     lx_wl.pointer_focus = nullptr;
     wl_decoration_leave();
 }
