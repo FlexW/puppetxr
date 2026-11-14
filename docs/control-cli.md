@@ -91,7 +91,10 @@ puppetxrctl [--target <pid|app|host:port>] [--json] [--timeout <ms>] <command> [
 | `face blink on\|off`, `face gaze <yaw> <pitch>`, `face look <x y z>`, `face look ahead` | blinks every 4 s, the gaze in degrees from the head, the eyes on a point in stage space, or back to the gaze |
 | `props` | the props: id, kind, motion, pose, target, radius, speed, size, text, and where each is now (`get_props`) |
 | `prop add qr <text> <x y z> [qx qy qz qw]`, `prop add keyboard <x y z> [qx qy qz qw]` | a QR code (facing its +Z, 10 cm) or a keyboard in stage space (`add_prop`); prints the id |
-| `prop move <id> <x y z> [qx qy qz qw]`, `prop motion <id> still\|linear <x y z> <speed>\|circle <radius> <speed>`, `prop size <id> <m>`, `prop text <id> <text>`, `prop remove <id>` | change or remove a prop (`update_prop` with only the given fields, `remove_prop`) |
+| `prop add mesh <model> <x y z> [qx qy qz qw]` | a mesh of a built-in (`chair`, `pencil`, `case`) or loaded model in stage space (`add_prop`); prints the id |
+| `prop move <id> <x y z> [qx qy qz qw]`, `prop motion <id> still\|linear <x y z> <speed>\|circle <radius> <speed>`, `prop size <id> <m>`, `prop text <id> <text>`, `prop scale <id> <factor>`, `prop model <id> <model>`, `prop remove <id>` | change or remove a prop (`update_prop` with only the given fields, `remove_prop`) |
+| `models` | the loaded models (name, bytes) and the built-in ones (`get_models`) |
+| `model load <path> [name]` | a `.glb` or `.gltf` file as a model (`load_model`), named after the file without its `.glb` or `.gltf` extension (lowercase, anything outside `[a-z0-9_-]` as `_`: `chair.v2.glb` is `chair_v2`) unless a name is given; a relative path is made absolute here |
 | `vkb` | the app's virtual keyboard: exists, visible, shifted, pose, scale, text context (`get_virtual_keyboard`) |
 | `vkb key <name>` | where a key's top centre is in stage space, oriented as the keyboard (`get_virtual_keyboard_key`); names `a`..`z`, `0`..`9`, `,`, `.`, `backspace`, `enter`, `shift`, `space` |
 | `vkb type <text>` | types into the shown keyboard at the next frame (`type_text`); words join with one space, `\n` is enter, `\b` backspace, `\\` a backslash |
@@ -161,7 +164,8 @@ removes the drift), `set_tracking_drift_rate` (`velocity`, `yaw_rate`; each opti
 `reset_tracking_drift` (drift and rate at once), `get_hand_source`/`set_hand_source` (`device`, `source`: `controller`,
 `hand`), `get_virtual_keyboard`, `get_virtual_keyboard_key` (`key`), `type_text` (`text`),
 `get_props`, `add_prop` (a prop object, replies `prop`), `update_prop` (`prop` and the fields
-to change), `remove_prop` (`prop`), and
+to change), `remove_prop` (`prop`), `load_model` (`name`, `path`), `get_models` (replies `models`,
+each `name` and `bytes`, and `builtin`, the built-in names), and
 `wait_frames` (`frames`; replies with the frame reached), `pause`, `resume`, `step` (`frames`).
 `status` reports `paused`, `control_mode` (empty in a profile of another name) and `profile`.
 

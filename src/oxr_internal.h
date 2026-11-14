@@ -1197,6 +1197,15 @@ struct OXR_Action
     OXR_ActionState     states[(u32)OXR_TopLevel::Count + 1] = {}; // last entry is the combined state
 };
 
+// A model of the sim parsed for passthrough, depth and raycasts; the serial names it for the compositor
+struct OXR_PropModel
+{
+    char     name[SIM_MAX_MODEL_NAME];
+    u64      hash;
+    u64      serial;
+    W_Model* model;
+};
+
 struct OXR_Runtime
 {
     OS_Mutex*                 mutex = {};
@@ -1268,6 +1277,7 @@ struct OXR_Runtime
     u32                        replay_divergences = {};
     u64                        replay_first_divergence = {};
     u64                        replay_external = {}; // next external input of the replay
+    u64                        replay_model = {};    // next model of the replay
     // The performance tab's numbers (docs/compositor.md, Performance tab): wall clock, never fed
     // to the simulation
     UI_FrameTimes              frame_times = {};
@@ -1286,6 +1296,15 @@ struct OXR_Runtime
     u64                        world_generation = {}; // counts room changes; scene spaces of an older generation are stale
     char                       room_names[OXR_MAX_ROOMS][W_MAX_NAME] = {}; // listed at instance creation, for the UI
     u32                        room_names_count = {};
+    OXR_PropModel              prop_models[SIM_MAX_MODELS] = {}; // the sim's models, parsed when sim_models_generation changes
+    u32                        prop_models_count = {};
+    u64                        prop_models_generation = {};
+    u64                        prop_model_serial = {};
+    OXR_PropModel              parsed_models[SIM_MAX_MODELS] = {}; // parsed by their loaders before the sim held them, taken by refresh_prop_models
+    u32                        parsed_models_count = {};
+    W_Model*                   keyboard_shape = {}; // keyboards as depth and raycasts see them, made when first needed
+    W_Model*                   plate_shape = {};    // QR codes: a plate 1 m square, z from -1 to 0, scaled to the code
+    u64                        recorded_models_generation = {}; // the sim's models the recording has
 
     char                       disabled_extensions[SIM_MAX_DISABLED_EXTENSIONS * SIM_MAX_EXTENSION_NAME] = {}; // oxr_set_disabled_extensions, comma separated
 

@@ -1,6 +1,6 @@
 # Recording format
 
-`src/rec.h`, `src/rec.cpp`. Format version 3; versions 1 and 2 still read. File extension `.xrrec` by convention.
+`src/rec.h`, `src/rec.cpp`. Format version 4; versions 1 to 3 still read. File extension `.xrrec` by convention.
 
 A recording stores the simulator state an app observes, once per `xrWaitFrame`, not
 the keyboard and mouse events that produced it. Replays therefore do not depend on
@@ -53,6 +53,7 @@ Chunks:
 | `STOR` | once before the frames: the anchor store as recording started: u64 next serial, u64 runs, u32 count, count x Anchor |
 | `FRAM` | u64 frame index, u64 state hash after the frame, State |
 | `EXTN` | between frames: u64 sim frame index, u8 kind, u32 count, then count x Anchor (kind 1, cloud anchors a query read) or count x Advert (kind 2, colocation adverts a discovery read) |
+| `MODL` | from version 4, before the frames that may show it: u64 sim frame index (the model replaces one of its name before that frame replays; the recording's start frame for the models loaded when it started), Name model (`[a-z0-9_-]`), u32 size (1 to 64 MB), the GLB as `w_pack_model` wrote it (`docs/props.md`, Models). Written again only when a model's bytes change |
 | `END_` | u64 number of `FRAM` chunks |
 
 Anchor: 16 bytes uuid, room as u8 length (0..63) and `[a-z0-9_-]` bytes, u64 room content
@@ -78,9 +79,10 @@ u8   props present          1 in the header's initial state and when the props c
                             the last frame written, else 0: the props stay as they were
 if present:
   u8   count                0..16
-  per prop: u32 id, Name kind (keyboard, qr), Name motion (still, linear, circle), Pose pose,
+  per prop: u32 id, Name kind (keyboard, qr, mesh), Name motion (still, linear, circle), Pose pose,
             f32 target x, y, z, f32 radius, f32 speed, f32 size, i64 start time ns,
-            u8 text length (0..213), text bytes (no zero)
+            u8 text length (0..213), text bytes (no zero),
+            from version 4 and only for a mesh: Name model, f32 scale
 u8   body present           1 in the header's initial state and when the body tracking state
                             changed since the last frame written, else 0: the body stays as it was
 if present (docs/body-tracking.md):

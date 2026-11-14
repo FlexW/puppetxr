@@ -40,9 +40,7 @@ static_assert(R_MAX_FRAMES_IN_FLIGHT < COMP_MAX_DEPTH_IMAGES, "depth uploads reu
 #define COMP_PROP_ATLAS_HEIGHT  256
 #define COMP_PROP_CELL          72  // a version 10 QR code with its quiet zone, 57 + 2 * 4 modules
 #define COMP_PROP_CELLS_PER_ROW 7
-#define COMP_PROP_QUIET         4   // modules of the quiet zone around a QR code
 #define COMP_PROP_SOLID_Y       244 // the row of solid colours, 12 texels high
-#define COMP_PROP_PLATE         0.002f // a QR code is printed on a plate this thick
 
 namespace
 {
@@ -55,8 +53,26 @@ struct COMP_Room
     R_ImageHandle  albedo;
 };
 
+// A model of mesh props on the GPU: its mesh in model space and an image per part
+struct COMP_MeshModel
+{
+    u64                   serial = {};
+    R_BufferHandle        vertices;
+    R_BufferHandle        indices;
+    Array<R_ImageHandle>  images = {};
+    Array<W_ModelPart>    parts = {};
+    b8                    used = {}; // by a prop this frame
+};
+
+struct COMP_MeshDraw
+{
+    u32  model; // into COMP_Props::meshes
+    Mat4 room_from_model;
+};
+
 // Props drawn into passthrough: geometry rebuilt every frame into the slot of that frame, and an
-// atlas of QR codes (a cell per prop) above a row of solid colours, uploaded when the codes change
+// atlas of QR codes (a cell per prop) above a row of solid colours, uploaded when the codes change.
+// Mesh props draw their models, uploaded once, each with its own transform
 struct COMP_Props
 {
     SIM_RenderModel* keyboard = {}; // the template every keyboard copies
@@ -69,6 +85,10 @@ struct COMP_Props
     R_ImageHandle    atlas;
     u64              atlas_hash = {};
     u8*              atlas_pixels = {};
+    COMP_MeshModel   meshes[SIM_MAX_MODELS] = {};
+    u32              meshes_count = {};
+    COMP_MeshDraw    mesh_draws[SIM_MAX_PROPS] = {};
+    u32              mesh_draws_count = {};
 };
 
 // Where one projected geometry landed in this frame's geometry buffers
@@ -524,7 +544,7 @@ static void upload_color_luts (COMP_Compositor* comp, const COMP_PassthroughStyl
 static void draw_passthrough (const COMP_Compositor* comp, R_CmdBufferHandle cmd, const COMP_Layer& layer, u32 slot, u32 eye, const R_Rect& area)
 {
     R_Device* device = comp->device;
-    if ((!comp->room.indices_count && !comp->props.indices_count) || !layer.style || !layer.eye_visible[eye])
+    if ((!comp->room.indices_count && !comp->props.indices_count && !comp->props.mesh_draws_count) || !layer.style || !layer.eye_visible[eye])
     {
         return;
     }
@@ -590,6 +610,130 @@ static void draw_passthrough (const COMP_Compositor* comp, R_CmdBufferHandle cmd
         r_cmd_bind_vertex_buffer(device, cmd, props.vertices[props.slot], 0);
         r_cmd_bind_index_buffer(device, cmd, props.indices[props.slot], 0, false);
         r_cmd_draw_indexed(device, cmd, props.indices_count, 0, 0);
+    }
+    Mat4 clip_from_room = {};
+    memory_copy(clip_from_room.m, layer.clip_from_room[eye], sizeof(clip_from_room.m));
+    for (u32 d = 0; d < comp->props.mesh_draws_count; d++)
+    {
+        const COMP_MeshDraw&  draw  = comp->props.mesh_draws[d];
+        const COMP_MeshModel& model = comp->props.meshes[draw.model];
+        const Mat4            clip  = clip_from_room * draw.room_from_model;
+        memory_copy(push.clip_from_room, clip.m, sizeof(push.clip_from_room));
+        r_cmd_push_constants(device, cmd, comp->passthrough_pipeline, &push, sizeof(push));
+        r_cmd_bind_vertex_buffer(device, cmd, model.vertices, 0);
+        r_cmd_bind_index_buffer(device, cmd, model.indices, 0, false);
+        for (usize p = 0; p < model.parts.length; p++)
+        {
+            const R_ImageHandle textures[2] = { model.images[model.parts[p].image], color_map };
+            r_cmd_bind_textures(device, cmd, comp->passthrough_pipeline, textures, 2, R_Filter::Linear);
+            r_cmd_draw_indexed(device, cmd, model.parts[p].indices_count, model.parts[p].indices_first, 0);
+        }
+    }
+}
+
+static void release_mesh_model (R_Device* device, COMP_MeshModel& model)
+{
+    r_destroy_buffer(device, model.vertices);
+    r_destroy_buffer(device, model.indices);
+    for (const R_ImageHandle image : model.images)
+    {
+        r_destroy_image(device, image);
+    }
+    model.images.release();
+    model.parts.release();
+    model = {};
+}
+
+static b8 upload_mesh_model (R_Device* device, const W_Model* source, u64 serial, COMP_MeshModel& out)
+{
+    const W_VisualVertex* vertices       = nullptr;
+    const u32*            indices        = nullptr;
+    u32                   vertices_count = 0;
+    u32                   indices_count  = 0;
+    const W_ModelPart*    parts          = nullptr;
+    w_model_mesh(source, vertices, vertices_count, indices, indices_count);
+    const u32 parts_count = w_model_parts(source, parts);
+    out                   = { .serial = serial };
+    out.vertices          = r_create_buffer(device, { .size = (u64)vertices_count * sizeof(W_VisualVertex), .usage_flags = (u32)R_BufferUsageFlags::Vertex, .host_visible = true });
+    out.indices           = r_create_buffer(device, { .size = (u64)indices_count * sizeof(u32), .usage_flags = (u32)R_BufferUsageFlags::Index, .host_visible = true });
+    out.parts.add(parts, parts_count);
+    b8 ok = out.vertices && out.indices;
+    for (u32 i = 0; ok && i < w_model_image_count(source); i++)
+    {
+        const u8* rgba   = nullptr;
+        u32       width  = 0;
+        u32       height = 0;
+        w_model_image(source, i, rgba, width, height);
+        out.images.add(upload_image(device, width, height, R_Format::R8G8B8A8_SRGB, rgba, NULL_HANDLE));
+        ok = out.images.last() != NULL_HANDLE;
+    }
+    if (!ok)
+    {
+        LOG_ERROR("Failed to upload a model of a mesh prop for passthrough");
+        release_mesh_model(device, out);
+        return false;
+    }
+    memory_copy(r_get_buffer_mapped_data(device, out.vertices), vertices, (usize)vertices_count * sizeof(W_VisualVertex));
+    memory_copy(r_get_buffer_mapped_data(device, out.indices), indices, (usize)indices_count * sizeof(u32));
+    r_flush_buffer(device, out.vertices, 0, (u64)vertices_count * sizeof(W_VisualVertex));
+    r_flush_buffer(device, out.indices, 0, (u64)indices_count * sizeof(u32));
+    return true;
+}
+
+// The mesh props' draws, uploading models first seen and releasing those no prop shows any more
+static void set_mesh_props (COMP_Compositor* comp, const SIM_Prop* props, const COMP_PropModel* models, u32 count, i64 time, const Pose& room_from_stage)
+{
+    COMP_Props& p      = comp->props;
+    p.mesh_draws_count = 0;
+    for (u32 m = 0; m < p.meshes_count; m++)
+    {
+        p.meshes[m].used = false;
+    }
+    for (u32 i = 0; models && i < count && i < SIM_MAX_PROPS; i++)
+    {
+        if (props[i].kind != SIM_PropKind::Mesh || !models[i].model)
+        {
+            continue;
+        }
+        u32 m = 0;
+        while (m < p.meshes_count && p.meshes[m].serial != models[i].serial)
+        {
+            m++;
+        }
+        if (m == p.meshes_count)
+        {
+            if (p.meshes_count == SIM_MAX_MODELS || !upload_mesh_model(comp->device, models[i].model, models[i].serial, p.meshes[m]))
+            {
+                continue;
+            }
+            p.meshes_count++;
+        }
+        p.meshes[m].used                   = true;
+        const Pose room_from_prop          = zm::pose_mul(room_from_stage, sim_prop_pose(props[i], time));
+        const f32  s                       = props[i].scale;
+        p.mesh_draws[p.mesh_draws_count++] = { .model = m, .room_from_model = zm::mat4_from_pose(room_from_prop) * zm::mat4_scale({ s, s, s }) };
+    }
+    b8 waited = false;
+    for (u32 m = p.meshes_count; m > 0; m--)
+    {
+        if (p.meshes[m - 1].used)
+        {
+            continue;
+        }
+        if (!waited)
+        {
+            r_wait_idle(comp->device);
+            waited = true;
+        }
+        release_mesh_model(comp->device, p.meshes[m - 1]);
+        // Draws refer to models by index, so the last one moves only before draws are made
+        p.meshes[m - 1] = p.meshes[p.meshes_count - 1];
+        p.meshes[p.meshes_count - 1] = {};
+        p.meshes_count--;
+        for (u32 d = 0; d < p.mesh_draws_count; d++)
+        {
+            p.mesh_draws[d].model = p.mesh_draws[d].model == p.meshes_count ? m - 1 : p.mesh_draws[d].model;
+        }
     }
 }
 
@@ -1007,6 +1151,10 @@ void comp_destroy (COMP_Compositor* comp)
         r_destroy_buffer(comp->device, comp->props.indices[i]);
     }
     r_destroy_image(comp->device, comp->props.atlas);
+    for (u32 m = 0; m < comp->props.meshes_count; m++)
+    {
+        release_mesh_model(comp->device, comp->props.meshes[m]);
+    }
     os_memory_release(comp->props.keyboard);
     os_memory_release(comp->props.atlas_pixels);
     os_memory_release(comp->snapshot);
@@ -1078,11 +1226,12 @@ b8 comp_set_room (COMP_Compositor* comp, const W_World* world)
     return true;
 }
 
-void comp_set_props (COMP_Compositor* comp, const SIM_Prop* props, u32 count, i64 time, const Pose& room_from_stage)
+void comp_set_props (COMP_Compositor* comp, const SIM_Prop* props, const COMP_PropModel* models, u32 count, i64 time, const Pose& room_from_stage)
 {
     ASSERT(comp);
     COMP_Props& p    = comp->props;
     p.indices_count = 0;
+    set_mesh_props(comp, props, models, count, time, room_from_stage);
     if (count == 0)
     {
         return;
@@ -1113,6 +1262,10 @@ void comp_set_props (COMP_Compositor* comp, const SIM_Prop* props, u32 count, i6
     {
         const SIM_Prop& prop           = props[i];
         const Pose      room_from_prop = zm::pose_mul(room_from_stage, sim_prop_pose(prop, time));
+        if (prop.kind == SIM_PropKind::Mesh)
+        {
+            continue;
+        }
         if (prop.kind == SIM_PropKind::Keyboard)
         {
             const SIM_RenderModel& model = *p.keyboard;

@@ -171,7 +171,8 @@ GPUs:
 - [ ] keyboard tracking checked against a device that tracks keyboards: whether the remote query bit finds the local keyboard, the name and size Meta reports, whether the keyboard space is lost while the cameras do not see it
 - [x] XR_EXT_spatial_entity with XR_EXT_spatial_marker_tracking: QR props as markers, tracked while in view, paused out of it, stopped once gone
 - [ ] spatial entities: an end-to-end app test (no Meta sample uses them), plane tracking and anchors on the room, a UI and `puppetxrctl` view of what each context tracks
-- [ ] props: environment depth and the global mesh raycast see them; more kinds (mouse, other markers); XR_BD_dynamic_object_tracking on the same props
+- [x] props in environment depth and the environment raycast; mesh props of any glTF model (docs/props.md)
+- [ ] props: more kinds (mouse, other markers); XR_BD_dynamic_object_tracking on the same props
 - [ ] render models: textured or authored controller and keyboard models (Blender, like the rooms); a way to move a put down controller (puppetxrctl, C API, UI)
 - [ ] hands: a hand scale override is reported but does not scale the joints; `ready_ext` and action states of a hand outside the cone stay active
 - [ ] host gamepad drives the simulator: SDL gamepad events in platform, sticks/triggers/bumpers/face buttons to both Touch controllers, View held moves the body, deadzone in sim
@@ -315,11 +316,20 @@ advertised: cts_vulkan2 103 cases, 0 failing (2026-10-20).
   show no depth and run on the default). Re-record the references of those that show depth (`unity_depthapi_*`, the
   MRUK occlusion scenes, Unreal's Occlusion sample once it is compared) with the default sensor on Windows with the
   editors and drop the pin; the noise is seeded, so they stay stable from run to run
-- [ ] environment depth: hands, controllers and props. Quest 3's depth shows the user's hands and forearms (and hand
-  removal takes the hands out, from the wrist, within a frame or two, the forearms stay); puppetxr's has only the
-  room. Start: trace the simulated hands' and props' shapes in `w_trace_depth`'s caller (`render_depth` in
-  `src/oxr.cpp`) against the room's hit; `OXR_DepthProvider::hand_removal` then removes the hands. Done when a gtest
-  sees a hand in the depth with removal off and the wall behind it with removal on
+- [ ] environment depth: hands and controllers. Quest 3's depth shows the user's hands and forearms (and hand
+  removal takes the hands out, from the wrist, within a frame or two, the forearms stay); puppetxr's has the room
+  and the props. Start: the hands' and controllers' shapes as `W_Instance`s next to the props' (`prop_instances`,
+  `src/oxr.cpp`; `w_create_mesh_model` from the hand meshes); `OXR_DepthProvider::hand_removal` then leaves the
+  hands out. Done when a gtest sees a hand in the depth with removal off and the wall behind it with removal on
+- [x] mesh props (docs/props.md): any glTF 2.0 model as a prop apps meet only in passthrough, environment depth and
+  the environment raycast, as a Quest tracks no chair; a canonical GLB per model (`w_pack_model`), kept in
+  recordings (format 4); the built-in `chair`, `pencil` and `case` (`tools/blender/puppetxr_models.py`); config
+  `models`, C API `load_model` (API version 2), `puppetxrctl model load`, the Props panel
+- [ ] mesh props: textures with coordinates outside [0, 1] clamp, as the passthrough sampler does not repeat; glTF's
+  `KHR_texture_transform` and wrap modes are ignored. Start: a sampler with the texture's wrap mode
+  (`r_cmd_bind_textures`), or baking the repeat into the atlas; a gtest with a repeated texture on a quad
+- [ ] mesh props: paths beyond a line and a circle (waypoints, a model's glTF animation) and models that change shape;
+  `sim_prop_pose` stays a pure function of the prop and the time
 - [ ] environment depth: Quest 3's edges are rounded, near objects' outlines bulge by a few pixels and small gaps
   close, and a still scene's depth wanders slowly (the noise is low frequency in time too). Start:
   `sim_depth_sensor` (`src/sim.cpp`), a dilation of near over far by a configurable radius and noise interpolated

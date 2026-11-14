@@ -136,6 +136,8 @@ static void expect_state_equal (const SIM_FrameState& a, const SIM_FrameState& b
             EXPECT_EQ(x.size, y.size);
             EXPECT_EQ(x.start, y.start);
             EXPECT_STREQ(x.text, y.text);
+            EXPECT_EQ(x.scale, y.scale);
+            EXPECT_STREQ(x.model, y.model);
         }
     }
 }
@@ -997,6 +999,81 @@ TEST_F(RecTest, invalid_props_truncate_the_recording)
     ASSERT_NE(recording, nullptr);
     defer { rec_release(recording); };
     EXPECT_EQ(rec_frame_count(recording), 4u);
+}
+
+static SIM_Model test_model (const char* name, const u8* data, usize size)
+{
+    SIM_Model model = { .data = data, .size = size, .hash = hash(data, size) };
+    cstr_copy(model.name, sizeof(model.name), name);
+    return model;
+}
+
+// A mesh prop names its model; the model's bytes come before the first frame that shows it, and
+// again only when they change
+TEST_F(RecTest, mesh_props_and_their_models_round_trip)
+{
+    char path[OS_MAX_PATH];
+    temp_path(path, sizeof(path), "puppetxr_test_models.xrrec");
+    REC_Writer* writer = rec_writer_create(path, make_header());
+    ASSERT_NE(writer, nullptr);
+    const u8 first[]  = { 'g', 'l', 'T', 'F', 1, 2, 3 };
+    const u8 second[] = { 'g', 'l', 'T', 'F', 4, 5, 6, 7 };
+    for (u32 i = 0; i < 6; i++)
+    {
+        SIM_FrameState state = make_state(i);
+        if (i >= 2)
+        {
+            state.props[state.props_count] = { .id = 9, .kind = SIM_PropKind::Mesh, .motion = SIM_PropMotion::Linear, .pose = { { 0.0f, 0.0f, -1.0f }, zm::QUAT_IDENTITY }, .target = { 1.0f, 0.0f, -1.0f }, .speed = 0.5f, .start = 7000, .scale = 1.5f };
+            cstr_copy(state.props[state.props_count].model, sizeof(state.props[state.props_count].model), "crate");
+            state.props_count++;
+            ASSERT_TRUE(rec_writer_append_model(writer, i, test_model("crate", i >= 4 ? second : first, i >= 4 ? sizeof(second) : sizeof(first))));
+        }
+        ASSERT_TRUE(rec_writer_append(writer, i, i, state));
+    }
+    EXPECT_FALSE(rec_writer_append_model(writer, 6, test_model("Bad", first, sizeof(first))));
+    EXPECT_FALSE(rec_writer_append_model(writer, 6, test_model("empty", first, 0)));
+    ASSERT_TRUE(rec_writer_close(writer));
+
+    REC_Recording* recording = rec_load(path);
+    ASSERT_NE(recording, nullptr);
+    defer { rec_release(recording); };
+    EXPECT_TRUE(rec_is_complete(recording));
+    ASSERT_EQ(rec_model_count(recording), 2u) << "written when new and when changed";
+    REC_Model model = {};
+    ASSERT_TRUE(rec_read_model(recording, 0, model));
+    EXPECT_EQ(model.frame_index, 2u);
+    EXPECT_STREQ(model.name, "crate");
+    ASSERT_EQ(model.size, sizeof(first));
+    EXPECT_TRUE(memory_equal(model.data, first, sizeof(first)));
+    ASSERT_TRUE(rec_read_model(recording, 1, model));
+    EXPECT_EQ(model.frame_index, 4u);
+    ASSERT_EQ(model.size, sizeof(second));
+    EXPECT_TRUE(memory_equal(model.data, second, sizeof(second)));
+    EXPECT_FALSE(rec_read_model(recording, 2, model));
+    u64            frame = 0;
+    u64            state_hash = 0;
+    SIM_FrameState state = {};
+    ASSERT_TRUE(rec_read_frame(recording, 2, frame, state_hash, state));
+    ASSERT_TRUE(state.props_present);
+    ASSERT_EQ(state.props_count, 2u);
+    EXPECT_EQ(state.props[1].kind, SIM_PropKind::Mesh);
+    EXPECT_STREQ(state.props[1].model, "crate");
+    EXPECT_EQ(state.props[1].scale, 1.5f);
+
+    // Cut anywhere, a recording keeps what came before the cut
+    u8*   data = nullptr;
+    usize size = 0;
+    ASSERT_TRUE(os_read_file(path, &data, &size));
+    defer { os_memory_release(data); };
+    for (usize length = 0; length < size; length++)
+    {
+        REC_Recording* cut = rec_load_from_memory(data, length);
+        if (cut)
+        {
+            EXPECT_LE(rec_model_count(cut), 2u);
+            rec_release(cut);
+        }
+    }
 }
 
 TEST_F(RecTest, control_characters_in_typed_text_truncate_the_recording)

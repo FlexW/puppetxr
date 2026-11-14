@@ -12,6 +12,7 @@
 #define W_ORIGIN_OFFSET_MAX_DISTANCE 0.5f
 
 struct W_World;
+struct W_Model;
 
 // Semantic labels of the canonical world model. Names (w_label_name) are what room files use
 // and never change once released; each OpenXR extension maps them to its own vocabulary.
@@ -104,6 +105,30 @@ struct W_RaycastHit
     f32  distance;
     Vec3 point;
     Vec3 normal; // faces the ray origin
+};
+
+// A model posed in the room, as props are: room_from_model, then a scale along the model's axes
+struct W_Instance
+{
+    const W_Model* model;
+    Pose           pose;
+    Vec3           scale;
+};
+
+// One material of a model: a range of w_model_mesh's indices and the image of its base colour
+struct W_ModelPart
+{
+    u32 indices_first;
+    u32 indices_count;
+    u32 image; // index for w_model_image
+};
+
+// A model compiled into the library from models/ (cmake/embed_files.cmake)
+struct W_EmbeddedModel
+{
+    const char* name;
+    const u8*   data; // the GLB as exported
+    usize       size;
 };
 
 // A room as given to w_parse_room: the JSON text plus the binary and image files it names
@@ -203,9 +228,13 @@ b8                    w_raycast             (const W_World* world, Vec3 origin, 
 // XR_META_environment_depth's image of the visual mesh from a view in room space: D16 of an
 // infinite projection, round((1 - near / z) * 65535) with z the distance along the view's -Z, row
 // 0 at the bottom of the view. Hits nearer than `near` are 0, rays that hit nothing or a view that
-// is not finite 65535. Writes rows [row_first, row_first + row_count) of the width x height image
-// only, so threads can share one
-void                  w_trace_depth         (const W_World* world, const Pose& view, const Fov& fov, f32 near, u32 width, u32 height, u32 row_first, u32 row_count, u16* out_image);
+// is not finite 65535. The instances (the first 64), models posed in the room, hide what is behind
+// them; a null world is an empty room. Writes rows [row_first, row_first + row_count) of the
+// width x height image only, so threads can share one
+void                  w_trace_depth         (const W_World* world, const W_Instance* instances, u32 instances_count, const Pose& view, const Fov& fov, f32 near, u32 width, u32 height, u32 row_first, u32 row_count, u16* out_image);
+
+// Nearest hit with the instances, in room space, within (0, max_distance]; out_index is the instance's
+b8                    w_raycast_instances   (const W_Instance* instances, u32 instances_count, Vec3 origin, Vec3 direction, f32 max_distance, W_RaycastHit& out_hit, u32& out_index);
 
 const char*           w_label_name          (W_Label label);
 b8                    w_label_from_name     (const char* name, W_Label& out_label);
@@ -213,6 +242,38 @@ b8                    w_uuid_from_string    (const char* str, W_Uuid& out_uuid);
 b8                    w_uuid_equal          (const W_Uuid& a, const W_Uuid& b);
 b8                    w_uuid_is_zero        (const W_Uuid& uuid);
 void                  w_uuid_to_string      (const W_Uuid& uuid, char (&out)[W_UUID_SIZE * 2 + 1]); // lowercase hex
+
+//
+// Models: the glTF 2.0 meshes of mesh props (docs/props.md, Models)
+//
+
+#define W_MODEL_MAX_FILE_SIZE  (64u << 20) // bytes of a model file, of each file it names, and of its packed GLB
+#define W_MODEL_MAX_VERTICES   (1u << 20)
+#define W_MODEL_MAX_TRIANGLES  (1u << 19)
+#define W_MODEL_MAX_PARTS      256
+#define W_MODEL_MAX_IMAGE_SIZE 4096 // texels per side of a base colour texture
+#define W_MODEL_MAX_TEXELS     (1u << 26) // decoded, summed over the materials: 256 MB of RGBA
+#define W_MODEL_SOLID_SIZE     4    // texels per side of the image of an untextured part
+
+// A .glb or .gltf as one self-contained GLB: a node, a mesh of positions and texture coordinates,
+// a primitive per material with its base colour factor and texture. Files a .gltf names resolve
+// relative to `dir`; without one only data URIs do. The same model always packs to the same bytes,
+// so a .gltf and the .glb exported from the same scene pack alike. Refuses (LOG_ERROR) skins, morph
+// targets, sparse accessors, any required extension and anything beyond the W_MODEL_ limits
+b8                    w_pack_model          (const u8* data, usize size, const char* dir, Array<u8>& out_glb);
+b8                    w_pack_model_file     (const char* path, Array<u8>& out_glb);
+W_Model*              w_create_model        (const u8* glb, usize size); // anything w_pack_model takes without a dir; null when invalid
+W_Model*              w_create_mesh_model   (const Vec3* positions, u32 positions_count, const u32* indices, u32 indices_count); // one white part
+void                  w_destroy_model       (W_Model* model);
+void                  w_model_mesh          (const W_Model* model, const W_VisualVertex*& out_vertices, u32& out_vertices_count, const u32*& out_indices, u32& out_indices_count); // model space
+u32                   w_model_parts         (const W_Model* model, const W_ModelPart*& out_parts);
+u32                   w_model_image_count   (const W_Model* model);
+void                  w_model_image         (const W_Model* model, u32 index, const u8*& out_rgba, u32& out_width, u32& out_height); // sRGB RGBA8, rows top down, the factor applied
+void                  w_model_bounds        (const W_Model* model, Vec3& out_min, Vec3& out_max);
+b8                    w_find_embedded_model (const char* name, const u8*& out_data, usize& out_size);
+
+extern const W_EmbeddedModel w_embedded_models[]; // sorted by name, generated into the build
+extern const u32             w_embedded_models_count;
 
 //
 // QR codes: the patterns of simulated QR markers, for passthrough

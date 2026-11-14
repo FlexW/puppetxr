@@ -7,6 +7,8 @@
 #define COMP_MAX_LAYERS   16
 #define COMP_MAX_VIEWS    2
 #define COMP_MAX_GEOMETRY 64 // projected passthrough meshes per frame
+#define COMP_PROP_QUIET   4      // modules of the quiet zone around a QR code
+#define COMP_PROP_PLATE   0.002f // a QR code is printed on a plate this thick
 
 struct COMP_Compositor;
 struct COMP_DepthTarget;
@@ -143,9 +145,18 @@ void             comp_destroy      (COMP_Compositor* comp);
 // The room passthrough layers show; null shows nothing. Uploads the visual mesh and albedo atlas.
 b8               comp_set_room     (COMP_Compositor* comp, const W_World* world);
 
+// The model a mesh prop shows; the serial names it while it lives, so a model made where an old one
+// was is uploaded anew
+struct COMP_PropModel
+{
+    const W_Model* model;
+    u64            serial;
+};
+
 // The props passthrough layers show with the room (docs/props.md), posed at `time` and placed in
-// the room; they stay until the next call, which every composed frame should make
-void             comp_set_props    (COMP_Compositor* comp, const SIM_Prop* props, u32 count, i64 time, const Pose& room_from_stage);
+// the room; they stay until the next call, which every composed frame should make. models[i] is
+// the model of props[i], null for all but meshes; a mesh without one is not shown
+void             comp_set_props    (COMP_Compositor* comp, const SIM_Prop* props, const COMP_PropModel* models, u32 count, i64 time, const Pose& room_from_stage);
 
 // Clears the target to black and composites the layers in order for the selected eye(s): Left
 // and Right fill the target with that eye, Both puts eye i into horizontal slot i. Source images

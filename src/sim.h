@@ -635,13 +635,18 @@ struct SIM_VkbLayout
 
 #define SIM_MAX_TYPED 256 // bytes of text typed into a virtual keyboard per frame
 
-#define SIM_MAX_PROPS     16
-#define SIM_MAX_PROP_TEXT 214 // a QR code's text and its terminator (W_QR_MAX_BYTES + 1)
+#define SIM_MAX_PROPS      16
+#define SIM_MAX_PROP_TEXT  214 // a QR code's text and its terminator (W_QR_MAX_BYTES + 1)
+#define SIM_MAX_MODELS     16
+#define SIM_MAX_MODEL_NAME 64  // like room names: [a-z0-9_-], 1 to 63 characters
+#define SIM_PROP_MIN_SCALE 0.01f
+#define SIM_PROP_MAX_SCALE 100.0f
 
 enum class SIM_PropKind : u8
 {
     Keyboard = 0,
     QrCode,
+    Mesh,
     Count,
 };
 
@@ -653,8 +658,9 @@ enum class SIM_PropMotion : u8
     Count,
 };
 
-// Something in the room the headset can track: a keyboard (the sim_keyboard_model: +Y up, its
-// front at +Z, origin at its bounding box centre) or a QR code (centred in its XY plane, facing +Z)
+// Something in the room: a keyboard (the sim_keyboard_model: +Y up, its front at +Z, origin at its
+// bounding box centre) or a QR code (centred in its XY plane, facing +Z), which the headset tracks;
+// or a mesh, a model loaded into the sim, which it only sees (docs/props.md)
 struct SIM_Prop
 {
     u32            id;     // from 1, never reused while the sim lives; ignored by sim_add_prop
@@ -667,6 +673,24 @@ struct SIM_Prop
     f32            size;   // QR: edge length in meters
     i64            start;  // sim time its motion started; set by sim_add_prop and sim_update_prop
     char           text[SIM_MAX_PROP_TEXT]; // QR: what it encodes
+    f32            scale;                   // Mesh: along every axis of its model; 0 is 1
+    char           model[SIM_MAX_MODEL_NAME]; // Mesh: a model sim_find_model knows
+};
+
+// A model's GLB as w_pack_model writes it, loaded into the sim under a name for mesh props
+struct SIM_Model
+{
+    char      name[SIM_MAX_MODEL_NAME];
+    const u8* data;
+    usize     size;
+    u64       hash; // of the bytes
+};
+
+// A model the config names: loaded from `path` once a prop names it (docs/props.md, Models)
+struct SIM_ModelSource
+{
+    char name[SIM_MAX_MODEL_NAME];
+    char path[OS_MAX_PATH];
 };
 
 struct SIM_DeviceConfig
@@ -829,6 +853,11 @@ struct SIM_Config
     b8               keyboard_tracking;          // the user's setting; off, XR_META_dynamic_object_tracker fails to initialize
     SIM_Prop         props[SIM_MAX_PROPS]; // spawned at start; config "props", env PUPPETXR_PROPS
     u32              props_count;
+    SIM_ModelSource  models[SIM_MAX_MODELS]; // config "models"
+    u32              models_count;
+    // Loads a model a prop names before it is in the sim, checked as w_create_model checks it; null
+    // refuses every model not yet loaded. The runtime's finds the config's models and the built-in ones
+    b8               (*load_model)(const SIM_Config& config, const char* name, Array<u8>& out_glb);
     OS_Key           key_move_forward;
     OS_Key           key_move_back;
     OS_Key           key_move_left;
@@ -1053,10 +1082,15 @@ u32               sim_add_prop               (SIM_Sim* sim, const SIM_Prop& prop
 b8                sim_update_prop            (SIM_Sim* sim, u32 id, const SIM_Prop& prop); // keeps the id, restarts the motion
 b8                sim_remove_prop            (SIM_Sim* sim, u32 id);
 u32               sim_props                  (const SIM_Sim* sim, const SIM_Prop*& out_props); // in the order they were added
+b8                sim_add_model              (SIM_Sim* sim, const char* name, const u8* glb, usize size); // a copy, replacing the model of that name; false for a bad name, no bytes or SIM_MAX_MODELS others. The caller checked the bytes (w_create_model)
+u32               sim_models                 (const SIM_Sim* sim, const SIM_Model*& out_models); // in the order they were added
+const SIM_Model*  sim_find_model             (const SIM_Sim* sim, const char* name); // null when not loaded
+u64               sim_models_generation      (const SIM_Sim* sim); // changes with every sim_add_model
+b8                sim_model_name_valid       (const char* name);
 Pose              sim_prop_pose              (const SIM_Prop& prop, i64 time); // stage space
 Vec3              sim_prop_extent            (const SIM_Prop& prop); // bounding box size in its own space
 b8                sim_prop_from_json         (const JsonValue& value, SIM_Prop& inout_prop); // applies the fields of a prop object (docs/props.md); unchanged and false when the result is invalid
-const char*       sim_prop_kind_name         (SIM_PropKind kind);     // "keyboard", "qr"; stable, used by recordings and the control API
+const char*       sim_prop_kind_name         (SIM_PropKind kind);     // "keyboard", "qr", "mesh"; stable, used by recordings and the control API
 b8                sim_prop_kind_from_name    (const char* name, SIM_PropKind& out_kind);
 const char*       sim_prop_motion_name       (SIM_PropMotion motion); // "still", "linear", "circle"
 b8                sim_prop_motion_from_name  (const char* name, SIM_PropMotion& out_motion);

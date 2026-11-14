@@ -1099,6 +1099,7 @@ static PUPPETXR_Result api_type_text (const char* text)
 
 // The layout of PUPPETXR_Prop in API version 1; later versions only append
 #define API_PROP_V1_SIZE (offsetof(PUPPETXR_Prop, current) + sizeof(PUPPETXR_Pose))
+#define API_PROP_V2_SIZE (offsetof(PUPPETXR_Prop, model) + sizeof(PUPPETXR_Prop::model))
 
 static b8 prop_from_api (const PUPPETXR_Prop* prop, SIM_Prop& out)
 {
@@ -1116,6 +1117,11 @@ static b8 prop_from_api (const PUPPETXR_Prop* prop, SIM_Prop& out)
         .size   = prop->size,
     };
     memory_copy(out.text, prop->text, sizeof(out.text));
+    if (prop->struct_size >= API_PROP_V2_SIZE)
+    {
+        out.scale = prop->scale;
+        memory_copy(out.model, prop->model, sizeof(out.model));
+    }
     return true;
 }
 
@@ -1134,6 +1140,17 @@ static void prop_to_api (const SIM_Prop& prop, i64 time, PUPPETXR_Prop& out)
     pose_to_api(prop.pose, out.pose);
     pose_to_api(sim_prop_pose(prop, time), out.current);
     cstr_copy(out.text, sizeof(out.text), prop.text);
+    out.scale = prop.scale;
+    cstr_copy(out.model, sizeof(out.model), prop.model);
+}
+
+static PUPPETXR_Result api_load_model (const char* name, const char* path)
+{
+    if (!name || !path)
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    return control_result(oxr_load_model(name, path));
 }
 
 static PUPPETXR_Result api_add_prop (const PUPPETXR_Prop* prop, uint32_t* out_id)
@@ -1948,6 +1965,11 @@ static PUPPETXR_Result command_get_props (const JsonValue&, API_Reply& reply, AP
         reply_f32(reply, "speed", prop.speed);
         reply_f32(reply, "size", prop.size);
         reply_string(reply, "text", prop.text);
+        if (prop.kind == PUPPETXR_PROP_MESH)
+        {
+            reply_string(reply, "model", prop.model);
+            reply_f32(reply, "scale", prop.scale);
+        }
         reply_floats(reply, "current_position", prop.current.position, 3);
         reply_floats(reply, "current_orientation", prop.current.orientation, 4);
         reply_append(reply, "}");
@@ -1959,7 +1981,7 @@ static PUPPETXR_Result command_get_props (const JsonValue&, API_Reply& reply, AP
 // The prop object of docs/props.md; update_prop applies only the fields given to the prop as it is
 static PUPPETXR_Result command_add_prop (const JsonValue& request, API_Reply& reply, API_Client&)
 {
-    SIM_Prop prop = { .kind = SIM_PropKind::Count, .pose = zm::POSE_IDENTITY, .size = 0.1f };
+    SIM_Prop prop = { .kind = SIM_PropKind::Count, .pose = zm::POSE_IDENTITY, .size = 0.1f, .scale = 1.0f };
     if (!sim_prop_from_json(request, prop))
     {
         return PUPPETXR_ERROR_INVALID_ARGUMENT;
@@ -2011,6 +2033,46 @@ static PUPPETXR_Result command_update_prop (const JsonValue& request, API_Reply&
     PUPPETXR_Prop api_prop = {};
     prop_to_api(prop, 0, api_prop);
     return api_update_prop(id, &api_prop);
+}
+
+static PUPPETXR_Result command_load_model (const JsonValue& request, API_Reply&, API_Client&)
+{
+    char name[SIM_MAX_MODEL_NAME] = {};
+    char path[OS_MAX_PATH]        = {};
+    if (!json_find_string(request, "name", name, nullptr, sizeof(name)) || !json_find_string(request, "path", path, nullptr, sizeof(path)))
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    return api_load_model(name, path);
+}
+
+static PUPPETXR_Result command_get_models (const JsonValue&, API_Reply& reply, API_Client&)
+{
+    oxr_lock();
+    defer { oxr_unlock(); };
+    const SIM_Sim* sim = oxr_get_sim();
+    if (!sim)
+    {
+        return PUPPETXR_ERROR_NO_INSTANCE;
+    }
+    const SIM_Model* models = nullptr;
+    const u32        count  = sim_models(sim, models);
+    reply_key(reply, "models");
+    reply_append(reply, "[");
+    for (u32 i = 0; i < count; i++)
+    {
+        reply_append(reply, "%s{", i ? "," : "");
+        reply_append(reply, "\"name\":\"%s\",\"bytes\":%llu}", models[i].name, (unsigned long long)models[i].size);
+    }
+    reply_append(reply, "]");
+    reply_key(reply, "builtin");
+    reply_append(reply, "[");
+    for (u32 i = 0; i < w_embedded_models_count; i++)
+    {
+        reply_append(reply, "%s\"%s\"", i ? "," : "", w_embedded_models[i].name);
+    }
+    reply_append(reply, "]");
+    return PUPPETXR_SUCCESS;
 }
 
 static PUPPETXR_Result command_remove_prop (const JsonValue& request, API_Reply&, API_Client&)
@@ -2642,6 +2704,8 @@ const static struct
     { "type_text",       command_type_text },
     { "get_props",       command_get_props },
     { "add_prop",        command_add_prop },
+    { "load_model",      command_load_model },
+    { "get_models",      command_get_models },
     { "update_prop",     command_update_prop },
     { "remove_prop",     command_remove_prop },
     { "get_room",        command_get_room },
@@ -3022,6 +3086,8 @@ static usize api_table_size (u32 version)
     {
     case 1:
         return offsetof(PUPPETXR_Api, set_frame_fault) + sizeof(void*);
+    case 2:
+        return offsetof(PUPPETXR_Api, load_model) + sizeof(void*);
     default:
         return 0;
     }
@@ -3105,6 +3171,7 @@ PUPPETXR_Result puppetxr_get_api (uint32_t version, PUPPETXR_Api* out_api)
         .set_tracking_drift_rate  = api_set_tracking_drift_rate,
         .get_tracking_drift       = api_get_tracking_drift,
         .set_frame_fault          = api_set_frame_fault,
+        .load_model               = api_load_model,
     };
     memory_copy(out_api, &table, api_table_size(filled));
     return PUPPETXR_SUCCESS;

@@ -685,11 +685,12 @@ newest capture the next frame may show (capture + latency at most its display ti
 interval), skipping any in between, from the views where the head was at capture + pose delay
 (`depth_views`: the eyes, or with a baseline two views that far apart centred between the eyes
 and turned like them, always with the eyes' fields of view). `w_trace_depth` traces both views
-into the visual mesh on `OXR_DEPTH_WORKERS` threads plus the calling one (`OXR_DepthTracer`, rows
-in chunks of `OXR_DEPTH_ROWS`), `sim_depth_sensor` adds noise and the uncovered band, and
-`comp_upload_depth` writes the image into the swapchain image of the oldest capture. With a
-period of 0 (`eyes`) every frame has a capture, the latency before its display time. No room traces 65535, no data,
-everywhere.
+into the visual mesh and every prop posed at the capture time (`prop_instances`, docs/props.md)
+on `OXR_DEPTH_WORKERS` threads plus the calling one (`OXR_DepthTracer`, rows in chunks of
+`OXR_DEPTH_ROWS`), `sim_depth_sensor` adds noise and the uncovered band, and `comp_upload_depth`
+writes the image into the swapchain image of the oldest capture. With a period of 0 (`eyes`)
+every frame has a capture, the latency before its display time. No room and no props trace
+65535, no data, everywhere.
 
 The acquire hands out the newest capture whose capture + latency is at most the acquire's
 display time, else `XR_ENVIRONMENT_DEPTH_NOT_AVAILABLE_META` (after start, until the first),
@@ -705,7 +706,9 @@ no simulated hands in the depth.
 `XR_ERROR_EXTENSION_DEPENDENCY_NOT_ENABLED`): `xrCreateEnvironmentRaycasterAsyncMETA`
 creates the raycaster at once and returns a ready future whose payload it is; cancelling
 the future destroys it. `xrPerformEnvironmentRaycastMETA` transforms the ray into room
-space and calls `w_raycast` on the global mesh, honouring the distance filter. A hit
+space and calls `w_raycast` on the global mesh and `w_raycast_instances` on the props posed at
+the ray's time (a Quest answers from depth, so props stop rays), the nearest winning, honouring
+the distance filter. A hit
 outside both eyes' frustums is `HIT_POINT_OUTSIDE_OF_FOV` (the depth cameras see what the
 eyes see), no room or no hit is `NO_HIT`. The hit pose's +Z is the surface normal and +Y
 points back along the ray.
