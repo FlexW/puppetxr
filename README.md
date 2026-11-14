@@ -40,7 +40,8 @@ Agents working on this repository: read `AGENTS.md`.
 - Simulated rooms with passthrough, passthrough camera images, scene mesh, semantic entities,
   anchors and raycasts; tracking drift (a step or a steady rate) to test world locking
 - Environment depth from a simulated Quest 3 sensor: its rate, latency, view offset and noise,
-  measured on the headset, all configurable and deterministic
+  measured on the headset, all configurable and deterministic; environment raycasts read the same
+  sensor, with the lag, noise, coverage and statuses of a Quest 3's
 - Props: keyboards and QR codes the app can track, and meshes (a built-in chair, pencil and case,
   or any glTF model) moving through the room in passthrough, depth and raycasts
 - Fault injection: anchor requests and frame calls (`xrWaitFrame`, `xrBeginFrame`,

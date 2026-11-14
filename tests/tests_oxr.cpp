@@ -11783,10 +11783,32 @@ namespace
 
 struct OxrRaycastTest : OxrSceneTest
 {
+    const char*                                  depth_model    = nullptr; // PUPPETXR_ENVIRONMENT_DEPTH, the default when null
+    const char*                                  raycast_mode   = nullptr; // PUPPETXR_ENVIRONMENT_RAYCAST
     PFN_xrCreateEnvironmentRaycasterAsyncMETA    create_async   = nullptr;
     PFN_xrCreateEnvironmentRaycasterCompleteMETA create_complete = nullptr;
     PFN_xrDestroyEnvironmentRaycasterMETA        destroy_raycaster = nullptr;
     PFN_xrPerformEnvironmentRaycastMETA          perform        = nullptr;
+
+    void SetUp () override
+    {
+        if (depth_model)
+        {
+            os_set_env("PUPPETXR_ENVIRONMENT_DEPTH", depth_model);
+        }
+        if (raycast_mode)
+        {
+            os_set_env("PUPPETXR_ENVIRONMENT_RAYCAST", raycast_mode);
+        }
+        OxrSceneTest::SetUp();
+    }
+
+    void TearDown () override
+    {
+        OxrSceneTest::TearDown();
+        os_unset_env("PUPPETXR_ENVIRONMENT_DEPTH");
+        os_unset_env("PUPPETXR_ENVIRONMENT_RAYCAST");
+    }
 
     void start_raycast ()
     {
@@ -11816,17 +11838,53 @@ struct OxrRaycastTest : OxrSceneTest
         return completion.environmentRaycaster;
     }
 
+    // Runs a frame, then casts at its display time
     XrEnvironmentRaycastHitMETA cast (XrEnvironmentRaycasterMETA raycaster, XrSpace space, XrVector3f origin, XrVector3f direction, f32 max_distance = 0.0f)
+    {
+        return cast_at(raycaster, space, frame().predictedDisplayTime, origin, direction, max_distance);
+    }
+
+    XrEnvironmentRaycastHitMETA cast_at (XrEnvironmentRaycasterMETA raycaster, XrSpace space, XrTime time, XrVector3f origin, XrVector3f direction, f32 max_distance = 0.0f)
     {
         const XrEnvironmentRaycastFilterDistanceMETA    distance = { .type = XR_TYPE_ENVIRONMENT_RAYCAST_FILTER_DISTANCE_META, .maxDistance = max_distance };
         const XrEnvironmentRaycastFilterBaseHeaderMETA* filters[1] = { (const XrEnvironmentRaycastFilterBaseHeaderMETA*)&distance };
-        const XrEnvironmentRaycastHitGetInfoMETA        info = { .type = XR_TYPE_ENVIRONMENT_RAYCAST_HIT_GET_INFO_META, .baseSpace = space, .time = frame().predictedDisplayTime, .origin = origin, .direction = direction,
+        const XrEnvironmentRaycastHitGetInfoMETA        info = { .type = XR_TYPE_ENVIRONMENT_RAYCAST_HIT_GET_INFO_META, .baseSpace = space, .time = time, .origin = origin, .direction = direction,
                                                                  .filterCount = max_distance > 0.0f ? 1u : 0u, .filters = filters };
         XrEnvironmentRaycastHitMETA hit = { .type = XR_TYPE_ENVIRONMENT_RAYCAST_HIT_META };
         EXPECT_EQ(perform(raycaster, &info, &hit), XR_SUCCESS);
         return hit;
     }
 };
+
+// Exact hits on the global mesh in either eye's view, as before raycasts read depth
+struct OxrMeshRaycastTest : OxrRaycastTest
+{
+    OxrMeshRaycastTest () { raycast_mode = "mesh"; }
+};
+
+// Depth from the eyes at every frame without errors: the depth map's geometry alone
+struct OxrEyesRaycastTest : OxrRaycastTest
+{
+    OxrEyesRaycastTest () { depth_model = "eyes"; }
+};
+
+struct OxrQuestRaycastTest : OxrRaycastTest
+{
+    OxrQuestRaycastTest () { depth_model = "quest3"; }
+};
+
+const Quat raycast_look_down    = { -0.70710678f, 0.0f, 0.0f, 0.70710678f };
+const Quat raycast_look_down_45 = { -0.38268343f, 0.0f, 0.0f, 0.92387953f };
+
+Vec3 hit_position (const XrEnvironmentRaycastHitMETA& hit)
+{
+    return { hit.pose.position.x, hit.pose.position.y, hit.pose.position.z };
+}
+
+Vec3 hit_normal (const XrEnvironmentRaycastHitMETA& hit)
+{
+    return zm::rotate(Quat{ hit.pose.orientation.x, hit.pose.orientation.y, hit.pose.orientation.z, hit.pose.orientation.w }, { 0.0f, 0.0f, 1.0f });
+}
 
 } // namespace
 
@@ -11878,7 +11936,7 @@ TEST_F(OxrRaycastTest, raycasters_are_created_through_a_future)
     EXPECT_EQ(create_async(session, &info, nullptr), XR_ERROR_VALIDATION_FAILURE);
 }
 
-TEST_F(OxrRaycastTest, rays_hit_the_global_mesh_in_view)
+TEST_F(OxrMeshRaycastTest, rays_hit_the_global_mesh_in_view)
 {
     start_raycast();
     const XrEnvironmentRaycasterMETA raycaster = make_raycaster();
@@ -11918,7 +11976,7 @@ TEST_F(OxrRaycastTest, rays_hit_the_global_mesh_in_view)
 }
 
 // Quest's raycast answers from depth, so props stop rays as they hide what is behind them
-TEST_F(OxrRaycastTest, rays_stop_at_props)
+TEST_F(OxrMeshRaycastTest, rays_stop_at_props)
 {
     start_raycast();
     const XrEnvironmentRaycasterMETA raycaster = make_raycaster();
@@ -11945,7 +12003,33 @@ TEST_F(OxrRaycastTest, rays_stop_at_props)
     EXPECT_NEAR(hit.pose.position.y, 0.768f, 1e-3f);
 }
 
-TEST_F(OxrRaycastTest, rays_hit_the_room_where_it_lies_around_the_moved_stage)
+// Props are in the depth raycasts read, as a Quest 3's depth shows what is in the room
+TEST_F(OxrEyesRaycastTest, rays_stop_at_props_in_the_depth)
+{
+    start_raycast();
+    const XrEnvironmentRaycasterMETA raycaster = make_raycaster();
+    sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { 0.0f, 1.6f, 0.0f }, zm::QUAT_IDENTITY });
+    SIM_Prop chair = { .kind = SIM_PropKind::Mesh, .pose = { { 0.0f, 0.0f, -0.8f }, zm::QUAT_IDENTITY }, .scale = 2.0f };
+    cstr_copy(chair.model, sizeof(chair.model), "chair");
+    const u32 id = sim_add_prop(oxr_get_sim(), chair);
+    ASSERT_NE(id, 0u);
+    XrEnvironmentRaycastHitMETA hit = cast(raycaster, stage, { 0.0f, 1.6f, 0.0f }, { 0.0f, 0.0f, -1.0f });
+    ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META);
+    EXPECT_GT(hit.pose.position.z, -1.3f) << "the back rest, not the wall";
+    EXPECT_LT(hit.pose.position.z, -0.9f);
+    EXPECT_TRUE(zm::near(hit_normal(hit), Vec3{ 0, 0, 1 }, 0.05f)) << "the back rest faces the ray";
+
+    // A keyboard on the table stops a ray straight down 9 mm above the table top
+    ASSERT_TRUE(sim_remove_prop(oxr_get_sim(), id));
+    const SIM_Prop keyboard = { .kind = SIM_PropKind::Keyboard, .pose = { { 0.5f, 0.759f, 0.0f }, zm::QUAT_IDENTITY } };
+    ASSERT_NE(sim_add_prop(oxr_get_sim(), keyboard), 0u);
+    sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { 0.5f, 1.6f, 0.0f }, raycast_look_down });
+    hit = cast(raycaster, stage, { 0.5f, 1.6f, 0.0f }, { 0.0f, -1.0f, 0.0f });
+    ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META);
+    EXPECT_NEAR(hit.pose.position.y, 0.768f, 2e-3f);
+}
+
+TEST_F(OxrEyesRaycastTest, rays_hit_the_room_where_it_lies_around_the_moved_stage)
 {
     // The stage origin is 1 m along +X in the room, so the +X wall is 1 m away, not 2
     os_set_env("PUPPETXR_ORIGIN_OFFSET", "0,1,0");
@@ -11955,12 +12039,12 @@ TEST_F(OxrRaycastTest, rays_hit_the_room_where_it_lies_around_the_moved_stage)
     const XrEnvironmentRaycasterMETA  raycaster = make_raycaster();
     const XrEnvironmentRaycastHitMETA hit       = cast(raycaster, stage, { 0, 1.6f, 0 }, { 1, 0, 0 });
     ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META);
-    EXPECT_NEAR(hit.pose.position.x, 1.0f, 1e-4f);
-    EXPECT_NEAR(hit.pose.position.y, 1.6f, 1e-4f);
+    EXPECT_NEAR(hit.pose.position.x, 1.0f, 2e-3f);
+    EXPECT_NEAR(hit.pose.position.y, 1.6f, 2e-3f);
 }
 
 // Drift moves STAGE 1 m along +X in the room, as the origin offset does, while the head stays
-TEST_F(OxrRaycastTest, rays_hit_the_room_where_it_lies_around_the_drifted_stage)
+TEST_F(OxrEyesRaycastTest, rays_hit_the_room_where_it_lies_around_the_drifted_stage)
 {
     start_raycast();
     sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { 0, 1.6f, 0 }, zm::quat_from_axis_angle({ 0, 1, 0 }, -zm::PI / 2) });
@@ -11968,14 +12052,14 @@ TEST_F(OxrRaycastTest, rays_hit_the_room_where_it_lies_around_the_drifted_stage)
     const XrEnvironmentRaycasterMETA raycaster = make_raycaster();
     XrEnvironmentRaycastHitMETA      hit       = cast(raycaster, stage, { 0, 1.6f, 0 }, { 1, 0, 0 });
     ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META);
-    EXPECT_NEAR(hit.pose.position.x, 1.0f, 1e-4f);
-    EXPECT_NEAR(hit.pose.position.y, 1.6f, 1e-4f);
+    EXPECT_NEAR(hit.pose.position.x, 1.0f, 2e-3f);
+    EXPECT_NEAR(hit.pose.position.y, 1.6f, 2e-3f);
 
     // From the head the wall is as far as ever
     const XrSpace view = reference_space(XR_REFERENCE_SPACE_TYPE_VIEW);
     hit                = cast(raycaster, view, { 0, 0, 0 }, { 0, 0, -1 });
     ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META);
-    EXPECT_NEAR(hit.pose.position.z, -2.0f, 1e-4f);
+    EXPECT_NEAR(hit.pose.position.z, -2.0f, 2e-3f);
 }
 
 TEST_F(OxrRaycastTest, raycasts_validate_their_input)
@@ -12009,6 +12093,211 @@ TEST_F(OxrRaycastTest, raycasts_validate_their_input)
     session          = XR_NULL_HANDLE;
     info.filterCount = 0;
     EXPECT_EQ(perform(raycaster, &info, &hit), XR_ERROR_HANDLE_INVALID);
+}
+
+// Measured on a Quest 3 (docs/openxr.md, Environment raycast): a raycast marches through a depth map
+TEST_F(OxrEyesRaycastTest, rays_hit_the_surfaces_the_depth_map_shows)
+{
+    start_raycast();
+    const XrEnvironmentRaycasterMETA raycaster = make_raycaster();
+    sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { 0.0f, 1.6f, 0.0f }, zm::QUAT_IDENTITY });
+
+    XrEnvironmentRaycastHitMETA hit = cast(raycaster, stage, { 0.0f, 1.6f, 0.0f }, { 0.0f, 0.0f, -1.0f });
+    ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META);
+    EXPECT_NEAR(hit.pose.position.z, -1.5f, 2e-3f);
+    EXPECT_NEAR(hit.pose.position.y, 1.6f, 1e-5f) << "on the ray";
+    EXPECT_TRUE(zm::near(hit_normal(hit), Vec3{ 0, 0, 1 }, 0.02f));
+    const Quat orientation = { hit.pose.orientation.x, hit.pose.orientation.y, hit.pose.orientation.z, hit.pose.orientation.w };
+    EXPECT_GT(zm::dot(zm::rotate(orientation, { 0, 1, 0 }), Vec3{ 0, 0, 1 }), -1e-4f) << "+Y back along the ray";
+
+    // The table top, looking down at it
+    sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { 0.5f, 1.6f, 0.0f }, raycast_look_down });
+    hit = cast(raycaster, stage, { 0.5f, 1.6f, 0.0f }, { 0.0f, -2.0f, 0.0f });
+    ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META);
+    EXPECT_NEAR(hit.pose.position.y, TEST_ROOM_TABLE_Y, 2e-3f);
+    EXPECT_TRUE(zm::near(hit_normal(hit), Vec3{ 0, 1, 0 }, 0.02f));
+
+    // A distance filter ending the ray before the surface leaves the hit undetermined, as on a Quest 3
+    EXPECT_EQ(cast(raycaster, stage, { 0.5f, 1.6f, 0.0f }, { 0.0f, -1.0f, 0.0f }, 0.5f).status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_POINT_OUTSIDE_OF_FOV_META);
+
+    // Behind the head the cameras see nothing
+    sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { 0.0f, 1.6f, 0.0f }, zm::QUAT_IDENTITY });
+    EXPECT_EQ(cast(raycaster, stage, { 0.0f, 1.6f, 0.0f }, { 0.0f, 0.0f, 1.0f }).status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_POINT_OUTSIDE_OF_FOV_META);
+
+    // A ray starting behind the head that comes into view hits what it meets there
+    hit = cast(raycaster, stage, { 0.0f, 1.6f, 0.5f }, { 0.0f, 0.0f, -1.0f });
+    ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META);
+    EXPECT_NEAR(hit.pose.position.z, -1.5f, 2e-3f);
+
+    // Rays and hits are in the base space
+    const XrSpace lifted = reference_space(XR_REFERENCE_SPACE_TYPE_STAGE, { { 0, 0, 0, 1 }, { 0, 1, 0 } });
+    hit = cast(raycaster, lifted, { 0.0f, 0.6f, 0.0f }, { 0.0f, 0.0f, -1.0f });
+    ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META);
+    EXPECT_NEAR(hit.pose.position.y, 0.6f, 1e-5f);
+    EXPECT_NEAR(hit.pose.position.z, -1.5f, 2e-3f);
+
+    // Without a room the depth map has no data
+    ASSERT_EQ(oxr_set_room(nullptr), OXR_RoomResult::Ok);
+    EXPECT_EQ(cast(raycaster, stage, { 0.0f, 1.6f, 0.0f }, { 0.0f, 0.0f, -1.0f }).status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_NO_HIT_META);
+}
+
+// Measured on a Quest 3: a ray starting inside a wall is occluded all along; one leaving the wall
+// towards the cameras passes them without a hit
+TEST_F(OxrEyesRaycastTest, a_ray_starting_behind_a_surface_is_occluded)
+{
+    start_raycast();
+    const XrEnvironmentRaycasterMETA raycaster = make_raycaster();
+    sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { 0.0f, 1.6f, 0.0f }, zm::QUAT_IDENTITY });
+    EXPECT_EQ(cast(raycaster, stage, { 0.0f, 1.6f, -2.0f }, { 0.0f, 0.0f, -1.0f }).status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_RAY_OCCLUDED_META);
+    EXPECT_EQ(cast(raycaster, stage, { 0.0f, 1.6f, -2.0f }, { 0.0f, 0.0f, 1.0f }).status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_POINT_OUTSIDE_OF_FOV_META);
+    const XrEnvironmentRaycastHitMETA hit = cast(raycaster, stage, { 0.0f, 1.6f, -1.25f }, { 0.0f, 0.0f, -1.0f });
+    ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META) << "25 cm in front of the wall";
+    EXPECT_NEAR(hit.pose.position.z, -1.5f, 2e-3f);
+}
+
+// The depth map shows the table top, not the floor under it: a ray passing under the table meets
+// it behind the edge, where the cameras cannot see. Hit poses without an orientation are level
+TEST_F(OxrEyesRaycastTest, a_ray_passing_behind_an_edge_hits_a_hidden_point)
+{
+    start_raycast();
+    const XrEnvironmentRaycasterMETA raycaster = make_raycaster();
+    sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { 0.5f, 1.6f, 1.2f }, raycast_look_down_45 });
+    const XrEnvironmentRaycastHitMETA hit = cast(raycaster, stage, { 0.5f, 0.5f, 0.9f }, { 0.0f, 0.0f, -1.0f });
+    ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_POINT_OCCLUDED_META);
+    EXPECT_NEAR(hit.pose.position.y, 0.5f, 1e-5f) << "on the ray";
+    EXPECT_NEAR(hit.pose.position.x, 0.5f, 1e-5f);
+    EXPECT_GT(hit.pose.position.z, 0.05f);
+    EXPECT_LT(hit.pose.position.z, 0.3f) << "where the table top hides the ray";
+    EXPECT_NEAR(zm::abs(hit.pose.orientation.w), 1.0f, 1e-5f) << "the base space's orientation";
+}
+
+// The normal comes from the depth around the hit; across an edge it cannot be found
+TEST_F(OxrEyesRaycastTest, a_hit_at_an_edge_has_no_orientation)
+{
+    start_raycast();
+    const XrEnvironmentRaycasterMETA raycaster = make_raycaster();
+    sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { 0.5f, 1.6f, 0.0f }, raycast_look_down });
+    const Vec3 head = { 0.5f, 1.6f, 0.0f };
+
+    XrEnvironmentRaycastHitMETA hit = cast(raycaster, stage, { head.x, head.y, head.z }, { 0.0f, TEST_ROOM_TABLE_Y - head.y, -0.39f - head.z });
+    ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_INVALID_ORIENTATION_META) << "1 cm from the table's edge";
+    EXPECT_NEAR(hit_position(hit).y, TEST_ROOM_TABLE_Y, 3e-3f);
+    EXPECT_NEAR(zm::abs(hit.pose.orientation.w), 1.0f, 1e-5f);
+
+    hit = cast(raycaster, stage, { head.x, head.y, head.z }, { 0.0f, TEST_ROOM_TABLE_Y - head.y, -0.2f - head.z });
+    ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META) << "20 cm from it";
+    EXPECT_TRUE(zm::near(hit_normal(hit), Vec3{ 0, 1, 0 }, 0.02f));
+}
+
+// Measured on a Quest 3: 25 captures a second, each with its own noise; the time asked for does not matter
+TEST_F(OxrQuestRaycastTest, hits_change_with_each_capture_and_err_like_the_depth)
+{
+    start_raycast();
+    const XrEnvironmentRaycasterMETA raycaster = make_raycaster();
+    sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { 0.0f, 1.6f, 0.0f }, zm::QUAT_IDENTITY });
+    for (u32 i = 0; i < 30; i++)
+    {
+        frame();
+    }
+    const u32 frames    = 180; // 2 s at 90 Hz
+    f64       sum       = 0.0;
+    f64       sum_sq    = 0.0;
+    f64       angle_sq  = 0.0;
+    u32       changes   = 0;
+    f32       last      = 0.0f;
+    for (u32 i = 0; i < frames; i++)
+    {
+        const XrTime                      time = frame().predictedDisplayTime;
+        const XrEnvironmentRaycastHitMETA hit  = cast_at(raycaster, stage, time, { 0.1f, 1.5f, 0.0f }, { 0.0f, 0.0f, -1.0f });
+        ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META) << "frame " << i;
+        const XrEnvironmentRaycastHitMETA earlier = cast_at(raycaster, stage, time - 50000000, { 0.1f, 1.5f, 0.0f }, { 0.0f, 0.0f, -1.0f });
+        ASSERT_EQ(earlier.pose.position.z, hit.pose.position.z) << "the time is not used";
+        const f32 z = hit.pose.position.z;
+        changes += i > 0 && z != last ? 1u : 0u;
+        last     = z;
+        sum     += (f64)z;
+        sum_sq  += (f64)z * (f64)z;
+        const f32 cos_angle = zm::clamp(zm::dot(hit_normal(hit), Vec3{ 0, 0, 1 }), -1.0f, 1.0f);
+        angle_sq += (f64)zm::acos(cos_angle) * (f64)zm::acos(cos_angle);
+    }
+    EXPECT_GE(changes, 48u) << "about 50 captures in 2 s";
+    EXPECT_LE(changes, 50u);
+    const f64 mean = sum / frames;
+    const f64 var  = sum_sq / frames - mean * mean;
+    const f64 std  = sqrt(var > 0.0 ? var : 0.0);
+    EXPECT_NEAR(mean, -1.5, 0.01);
+    EXPECT_GT(std, 0.001) << "the sensor's noise at 1.5 m";
+    EXPECT_LT(std, 0.01);
+    const f64 angle = sqrt(angle_sq / frames) * (f64)zm::RAD_TO_DEG;
+    EXPECT_GT(angle, 0.3) << "normals jitter by a few degrees, as a Quest 3's do";
+    EXPECT_LT(angle, 6.0);
+}
+
+// Measured on a Quest 3: raycasts read the depth of where the head was about 80 ms before the app's
+// frame began, so right after turning the eyes see a wall the raycast does not yet
+TEST_F(OxrQuestRaycastTest, raycasts_see_the_room_as_it_was_before_the_head_turned)
+{
+    start_raycast();
+    const XrEnvironmentRaycasterMETA raycaster = make_raycaster();
+    SIM_Sim*                         sim       = oxr_get_sim();
+    const XrSpace                    view      = reference_space(XR_REFERENCE_SPACE_TYPE_VIEW);
+    sim_set_device_pose(sim, SIM_Device::Head, { { 0.0f, 1.6f, 0.0f }, zm::QUAT_IDENTITY });
+    for (u32 i = 0; i < 40; i++)
+    {
+        frame();
+    }
+    ASSERT_EQ(cast(raycaster, view, { 0, 0, 0 }, { 0, 0, -1 }).status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META);
+
+    // Facing the +X wall now
+    sim_set_device_pose(sim, SIM_Device::Head, { { 0.0f, 1.6f, 0.0f }, zm::quat_from_axis_angle({ 0, 1, 0 }, -zm::PI / 2) });
+    u32 frames = 0;
+    for (; frames < 40; frames++)
+    {
+        const XrTime time = frame().predictedDisplayTime;
+        if (cast_at(raycaster, view, time, { 0, 0, 0 }, { 0, 0, -1 }).status == XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META)
+        {
+            break;
+        }
+        EXPECT_EQ(cast_at(raycaster, stage, time, { 0.0f, 1.6f, 0.0f }, { 0, 0, -1 }).status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META) << "the wall behind is still in the old capture, frame " << frames;
+    }
+    // A capture's pose is 26 ms after it and it is read from 130 ms after it: 104 to 144 ms at 90 Hz
+    EXPECT_GE(frames, 9u);
+    EXPECT_LE(frames, 14u);
+    const XrEnvironmentRaycastHitMETA hit = cast(raycaster, stage, { 0.0f, 1.6f, 0.0f }, { 1, 0, 0 });
+    ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META);
+    EXPECT_NEAR(hit.pose.position.x, TEST_ROOM_HALF_X, 0.03f);
+}
+
+// Measured on a Quest 3: raycasts reach far below the eyes' field of view and to the sides there
+TEST_F(OxrQuestRaycastTest, raycasts_see_the_floor_below_the_eyes_field_of_view)
+{
+    start_raycast();
+    const XrEnvironmentRaycasterMETA raycaster = make_raycaster();
+    const XrSpace                    view      = reference_space(XR_REFERENCE_SPACE_TYPE_VIEW);
+    sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { -1.0f, 1.6f, 0.0f }, zm::QUAT_IDENTITY });
+    for (u32 i = 0; i < 40; i++)
+    {
+        frame();
+    }
+    const f32 pitch = -70.0f * zm::DEG_TO_RAD;
+    for (f32 yaw : { 0.0f, 60.0f, -60.0f })
+    {
+        const f32                         y   = yaw * zm::DEG_TO_RAD;
+        const XrVector3f                  d   = { -zm::sin(y) * zm::cos(pitch), zm::sin(pitch), -zm::cos(y) * zm::cos(pitch) };
+        const XrEnvironmentRaycastHitMETA hit = cast(raycaster, stage, { -1.0f, 1.6f, 0.0f }, d);
+        ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META) << "yaw " << yaw;
+        EXPECT_NEAR(hit.pose.position.y, 0.0f, 0.03f) << "the floor, yaw " << yaw;
+    }
+    EXPECT_EQ(cast(raycaster, view, { 0, 0, 0 }, { 0.0f, 0.3f, 1.0f }).status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_POINT_OUTSIDE_OF_FOV_META) << "behind, above";
+}
+
+TEST_F(OxrEyesRaycastTest, the_eyes_model_sees_only_what_the_eyes_see)
+{
+    start_raycast();
+    const XrEnvironmentRaycasterMETA raycaster = make_raycaster();
+    sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { -1.0f, 1.6f, 0.0f }, zm::QUAT_IDENTITY });
+    const f32 pitch = -70.0f * zm::DEG_TO_RAD;
+    EXPECT_EQ(cast(raycaster, stage, { -1.0f, 1.6f, 0.0f }, { 0.0f, zm::sin(pitch), -zm::cos(pitch) }).status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_POINT_OUTSIDE_OF_FOV_META);
 }
 
 TEST_F(OxrTest, headless_sessions_have_no_depth_swapchain)

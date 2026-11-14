@@ -232,6 +232,7 @@ b8                    w_raycast             (const W_World* world, Vec3 origin, 
 // them; a null world is an empty room. Writes rows [row_first, row_first + row_count) of the
 // width x height image only, so threads can share one
 void                  w_trace_depth         (const W_World* world, const W_Instance* instances, u32 instances_count, const Pose& view, const Fov& fov, f32 near, u32 width, u32 height, u32 row_first, u32 row_count, u16* out_image);
+u16                   w_trace_depth_texel   (const W_World* world, const W_Instance* instances, u32 instances_count, const Pose& view, const Fov& fov, f32 near, u32 width, u32 height, u32 x, u32 y); // the texel w_trace_depth writes at column x, row y
 
 // Nearest hit with the instances, in room space, within (0, max_distance]; out_index is the instance's
 b8                    w_raycast_instances   (const W_Instance* instances, u32 instances_count, Vec3 origin, Vec3 direction, f32 max_distance, W_RaycastHit& out_hit, u32& out_index);

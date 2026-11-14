@@ -3388,6 +3388,27 @@ b8 w_raycast (const W_World* world, Vec3 origin, Vec3 direction, f32 max_distanc
     return true;
 }
 
+static b8 depth_view_valid (const Pose& view, f32 tl, f32 tr, f32 tu, f32 td, f32 near)
+{
+    return zm::is_finite(view.position.x) && zm::is_finite(view.position.y) && zm::is_finite(view.position.z) && zm::is_finite(zm::length(view.orientation)) && zm::is_finite(tl) && zm::is_finite(tr) && zm::is_finite(tu) &&
+           zm::is_finite(td) && near > 0.0f;
+}
+
+static u16 trace_depth_texel (const W_World* world, const W_TraceInstance* prepared, u32 prepared_count, const Pose& view, f32 tl, f32 tr, f32 ty, f32 near, u32 width, u32 x)
+{
+    // Along (tx, ty, -1) in the view's frame the ray parameter is the distance along -Z
+    const f32  tx        = tl + (tr - tl) * ((f32)x + 0.5f) / (f32)width;
+    const Vec3 direction = zm::rotate(view.orientation, { tx, ty, -1.0f });
+    f32        z         = zm::F32_MAX;
+    const b8   room      = world && nearest_hit(world->visual_bvh, view.position, direction, z) != W_NONE;
+    const b8   instance  = trace_instances(prepared, prepared_count, direction, z);
+    if (!room && !instance)
+    {
+        return 0xffff;
+    }
+    return z < near ? (u16)0 : (u16)zm::min(zm::round((1.0f - near / z) * 65535.0f), 65535.0f);
+}
+
 void w_trace_depth (const W_World* world, const W_Instance* instances, u32 instances_count, const Pose& view, const Fov& fov, f32 near, u32 width, u32 height, u32 row_first, u32 row_count, u16* out_image)
 {
     ASSERT(out_image && near > 0.0f);
@@ -3396,8 +3417,7 @@ void w_trace_depth (const W_World* world, const W_Instance* instances, u32 insta
     const f32 tr      = zm::tan(fov.angle_right);
     const f32 tu      = zm::tan(fov.angle_up);
     const f32 td      = zm::tan(fov.angle_down);
-    const b8  valid   = zm::is_finite(view.position.x) && zm::is_finite(view.position.y) && zm::is_finite(view.position.z) && zm::is_finite(zm::length(view.orientation)) && zm::is_finite(tl) && zm::is_finite(tr) &&
-                     zm::is_finite(tu) && zm::is_finite(td) && near > 0.0f;
+    const b8  valid   = depth_view_valid(view, tl, tr, tu, td, near);
     W_TraceInstance prepared[W_TRACE_INSTANCES];
     const u32       prepared_count = valid ? prepare_instances(instances, instances_count, view.position, prepared) : 0;
     for (u32 y = row_first; y < row_end; y++)
@@ -3406,25 +3426,25 @@ void w_trace_depth (const W_World* world, const W_Instance* instances, u32 insta
         const f32 ty  = td + (tu - td) * ((f32)y + 0.5f) / (f32)height;
         for (u32 x = 0; x < width; x++)
         {
-            if (!valid)
-            {
-                row[x] = 0xffff;
-                continue;
-            }
-            // Along (tx, ty, -1) in the view's frame the ray parameter is the distance along -Z
-            const f32  tx        = tl + (tr - tl) * ((f32)x + 0.5f) / (f32)width;
-            const Vec3 direction = zm::rotate(view.orientation, { tx, ty, -1.0f });
-            f32        z         = zm::F32_MAX;
-            const b8   room      = world && nearest_hit(world->visual_bvh, view.position, direction, z) != W_NONE;
-            const b8   instance  = trace_instances(prepared, prepared_count, direction, z);
-            if (!room && !instance)
-            {
-                row[x] = 0xffff;
-                continue;
-            }
-            row[x] = z < near ? (u16)0 : (u16)zm::min(zm::round((1.0f - near / z) * 65535.0f), 65535.0f);
+            row[x] = valid ? trace_depth_texel(world, prepared, prepared_count, view, tl, tr, ty, near, width, x) : (u16)0xffff;
         }
     }
+}
+
+u16 w_trace_depth_texel (const W_World* world, const W_Instance* instances, u32 instances_count, const Pose& view, const Fov& fov, f32 near, u32 width, u32 height, u32 x, u32 y)
+{
+    ASSERT(near > 0.0f && x < width && y < height);
+    const f32 tl = zm::tan(fov.angle_left);
+    const f32 tr = zm::tan(fov.angle_right);
+    const f32 tu = zm::tan(fov.angle_up);
+    const f32 td = zm::tan(fov.angle_down);
+    if (!depth_view_valid(view, tl, tr, tu, td, near))
+    {
+        return 0xffff;
+    }
+    W_TraceInstance prepared[W_TRACE_INSTANCES];
+    const u32       prepared_count = prepare_instances(instances, instances_count, view.position, prepared);
+    return trace_depth_texel(world, prepared, prepared_count, view, tl, tr, td + (tu - td) * ((f32)y + 0.5f) / (f32)height, near, width, x);
 }
 
 b8 w_raycast_instances (const W_Instance* instances, u32 instances_count, Vec3 origin, Vec3 direction, f32 max_distance, W_RaycastHit& out_hit, u32& out_index)

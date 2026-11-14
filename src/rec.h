@@ -5,7 +5,7 @@
 
 // The version this build writes. Readers for older versions are kept forever once puppetxr
 // reaches 1.0; before that, a layout change may drop them.
-#define REC_FORMAT_VERSION 4
+#define REC_FORMAT_VERSION 5
 #define REC_ANCHOR_OPS     4 // OXR_AnchorOp::Count, which this layer cannot see
 #define REC_FRAME_OPS      4 // OXR_FrameOp::Count
 
@@ -45,7 +45,7 @@ struct REC_Header
     f32            hand_tracking_fov_degrees;
     REC_Fault      frame_faults[REC_FRAME_OPS]; // pending when the recording started
     i64            skeleton_change_period_ns;   // from format 2; 0 before
-    SIM_DepthModel environment_depth;           // from format 3; the "eyes" model at 320 x 320 before
+    SIM_DepthModel environment_depth;           // from format 3; the "eyes" model at 320 x 320 before; raycasts from format 5, against the mesh before
 };
 
 // Something the simulator read from outside the process during the recording, such as another

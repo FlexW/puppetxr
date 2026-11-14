@@ -2486,6 +2486,21 @@ static i64 depth_ms_to_ns (f32 ms)
     return (i64)((f64)zm::clamp(ms, 0.0f, (f32)SIM_MAX_DEPTH_LATENCY_MS) * 1000000.0 + 0.5);
 }
 
+static b8 depth_raycast_from_name (const char* name, SIM_DepthRaycast& out_raycast)
+{
+    if (cstr_equal(name, "depth"))
+    {
+        out_raycast = SIM_DepthRaycast::Depth;
+        return true;
+    }
+    if (cstr_equal(name, "mesh"))
+    {
+        out_raycast = SIM_DepthRaycast::Mesh;
+        return true;
+    }
+    return false;
+}
+
 static void read_depth_model (const JsonValue& value, SIM_DepthModel& model)
 {
     char name[16] = {};
@@ -2558,6 +2573,36 @@ static void read_depth_model (const JsonValue& value, SIM_DepthModel& model)
     model.uncovered_center = zm::is_finite(u_center) ? zm::clamp(u_center, 0.0f, 1.0f) : 0.5f;
     model.uncovered_height = zm::is_finite(u_height) ? zm::clamp(u_height, 0.0f, 1.0f) : 0.0f;
     model.uncovered_depth  = zm::is_finite(u_depth) && u_depth > 0.0f ? u_depth : model.uncovered_depth;
+
+    const JsonValue raycast = json_find(value, "raycast");
+    char            mode[8] = {};
+    if (json_is_string(raycast))
+    {
+        json_as_string(raycast, mode, nullptr, sizeof(mode));
+    }
+    else
+    {
+        json_find_string(raycast, "mode", mode, nullptr, sizeof(mode));
+    }
+    if (mode[0] && !depth_raycast_from_name(mode, model.raycast))
+    {
+        LOG_WARNING("Config: environment_depth.raycast is depth or mesh, not '%s'", mode);
+    }
+    f32 raycast_latency = (f32)((f64)model.raycast_latency_ns / 1e6);
+    if (json_find_float(raycast, "latency_ms", raycast_latency, raycast_latency))
+    {
+        model.raycast_latency_ns = depth_ms_to_ns(raycast_latency);
+    }
+    const JsonValue lower        = json_find(raycast, "lower_view");
+    f32             lower_pitch  = model.lower_pitch;
+    f32             lower_width  = model.lower_width;
+    f32             lower_height = model.lower_height;
+    json_find_float(lower, "pitch", lower_pitch, lower_pitch);
+    json_find_float(lower, "width", lower_width, lower_width);
+    json_find_float(lower, "height", lower_height, lower_height);
+    model.lower_pitch  = zm::is_finite(lower_pitch) ? zm::clamp(lower_pitch, -90.0f, 90.0f) : 0.0f;
+    model.lower_width  = zm::is_finite(lower_width) ? zm::clamp(lower_width, 0.0f, SIM_MAX_DEPTH_LOWER_FOV) : 0.0f;
+    model.lower_height = zm::is_finite(lower_height) ? zm::clamp(lower_height, 0.0f, SIM_MAX_DEPTH_LOWER_FOV) : 0.0f;
 }
 
 void sim_default_config (SIM_Config& config)
@@ -3290,6 +3335,10 @@ void sim_apply_env (SIM_Config& config)
     {
         LOG_WARNING("PUPPETXR_ENVIRONMENT_DEPTH is quest3 or eyes, not '%s'", value);
     }
+    if (const char* value = os_env("PUPPETXR_ENVIRONMENT_RAYCAST"); value && value[0] && !depth_raycast_from_name(value, config.environment_depth.raycast))
+    {
+        LOG_WARNING("PUPPETXR_ENVIRONMENT_RAYCAST is depth or mesh, not '%s'", value);
+    }
     if (const char* value = os_env("PUPPETXR_PROPS"))
     {
         JsonParser* parser = json_parse_from_string(value);
@@ -3357,26 +3406,36 @@ b8 sim_depth_model_preset (const char* name, SIM_DepthModel& inout_model)
     if (cstr_equal(name, "quest3"))
     {
         // Measured on a Quest 3 (docs/config.md, Environment depth)
-        model.period_ns        = 40000000;
-        model.latency_ns       = 45000000;
-        model.pose_delay_ns    = 26000000;
-        model.baseline         = 0.06485f;
-        model.noise            = 0.002f;
-        model.noise_cell       = 8;
-        model.uncovered_width  = 0.05f;
-        model.uncovered_center = 0.69f;
-        model.uncovered_height = 0.42f;
-        model.uncovered_depth  = 29.0f;
+        model.period_ns          = 40000000;
+        model.latency_ns         = 45000000;
+        model.pose_delay_ns      = 26000000;
+        model.baseline           = 0.06485f;
+        model.noise              = 0.002f;
+        model.noise_cell         = 8;
+        model.uncovered_width    = 0.05f;
+        model.uncovered_center   = 0.69f;
+        model.uncovered_height   = 0.42f;
+        model.uncovered_depth    = 29.0f;
+        model.raycast            = SIM_DepthRaycast::Depth;
+        model.raycast_latency_ns = 130000000;
+        model.lower_pitch        = -55.0f;
+        model.lower_width        = 109.0f;
+        model.lower_height       = 62.0f;
     }
     else if (cstr_equal(name, "eyes"))
     {
-        model.period_ns       = 0;
-        model.latency_ns      = 0;
-        model.pose_delay_ns   = 0;
-        model.baseline        = 0.0f;
-        model.noise           = 0.0f;
-        model.uncovered_width = 0.0f;
-        model.uncovered_depth = model.uncovered_depth > 0.0f ? model.uncovered_depth : 29.0f;
+        model.period_ns          = 0;
+        model.latency_ns         = 0;
+        model.pose_delay_ns      = 0;
+        model.baseline           = 0.0f;
+        model.noise              = 0.0f;
+        model.uncovered_width    = 0.0f;
+        model.uncovered_depth    = model.uncovered_depth > 0.0f ? model.uncovered_depth : 29.0f;
+        model.raycast            = SIM_DepthRaycast::Depth;
+        model.raycast_latency_ns = 0;
+        model.lower_pitch        = 0.0f;
+        model.lower_width        = 0.0f;
+        model.lower_height       = 0.0f;
     }
     else
     {
@@ -3410,6 +3469,39 @@ static f32 depth_noise_at (u64 key, i32 gx, i32 gy)
     return depth_gaussian(depth_hash(key ^ ((u64)(u32)gx << 32 | (u32)gy)));
 }
 
+static u64 depth_noise_key (const SIM_DepthModel& model, u64 capture, u32 view)
+{
+    return depth_hash(depth_hash(model.seed) ^ depth_hash(capture * 2 + view));
+}
+
+// n0 and n1 the noise interpolated along the grid rows below and above the pixel
+static u16 noisy_depth (const SIM_DepthModel& model, f32 near, u16 value, f32 n0, f32 n1, f32 ty)
+{
+    const f32 z  = near / (1.0f - (f32)value / 65535.0f);
+    const f32 zn = z + model.noise * z * z * zm::lerp(n0, n1, ty);
+    return zn <= near ? (u16)1 : (u16)zm::clamp(zm::round((1.0f - near / zn) * 65535.0f), 1.0f, 65534.0f);
+}
+
+static u16 uncovered_value (const SIM_DepthModel& model, f32 near)
+{
+    return (u16)zm::round((1.0f - near / model.uncovered_depth) * 65535.0f);
+}
+
+static b8 has_uncovered_band (const SIM_DepthModel& model, u32 view, u32 width, u32 height, f32 near)
+{
+    return view < 2 && model.uncovered_width * (f32)width > 0.0f && model.uncovered_height * (f32)height * 0.5f > 0.0f && model.uncovered_depth > near;
+}
+
+// i the column counted from the view's outer edge
+static b8 in_uncovered_band (const SIM_DepthModel& model, u32 width, u32 height, u32 i, u32 y)
+{
+    const f32 band_width = model.uncovered_width * (f32)width;
+    const f32 band_half  = model.uncovered_height * (f32)height * 0.5f;
+    const f32 dy         = ((f32)y + 0.5f - model.uncovered_center * (f32)height) / band_half;
+    const f32 dx         = ((f32)i + 0.5f) / band_width;
+    return dy * dy <= 1.0f && (f32)i < zm::min(zm::ceil(band_width), (f32)width) && dx * dx + dy * dy <= 1.0f;
+}
+
 void sim_depth_sensor (const SIM_DepthModel& model, u64 capture, u32 view, f32 near, u32 width, u32 height, u16* inout_image)
 {
     ASSERT(inout_image && near > 0.0f);
@@ -3417,7 +3509,7 @@ void sim_depth_sensor (const SIM_DepthModel& model, u64 capture, u32 view, f32 n
     {
         // The random values of the grid rows above and below the pixel row, one per cell corner
         const u32 cell    = zm::max(model.noise_cell, 1u);
-        const u64 key     = depth_hash(depth_hash(model.seed) ^ depth_hash(capture * 2 + view));
+        const u64 key     = depth_noise_key(model, capture, view);
         const u32 columns = zm::min(width / cell + 2, (u32)SIM_MAX_DEPTH_SIZE + 2);
         f32       below[SIM_MAX_DEPTH_SIZE + 2] = {};
         f32       above[SIM_MAX_DEPTH_SIZE + 2] = {};
@@ -3444,39 +3536,62 @@ void sim_depth_sensor (const SIM_DepthModel& model, u64 capture, u32 view, f32 n
                 }
                 const u32 gx = x / cell;
                 const f32 tx = (f32)(x % cell) / (f32)cell;
-                const f32 n0 = zm::lerp(below[gx], below[gx + 1], tx);
-                const f32 n1 = zm::lerp(above[gx], above[gx + 1], tx);
-                const f32 z  = near / (1.0f - (f32)value / 65535.0f);
-                const f32 zn = z + model.noise * z * z * zm::lerp(n0, n1, ty);
-                value        = zn <= near ? (u16)1 : (u16)zm::clamp(zm::round((1.0f - near / zn) * 65535.0f), 1.0f, 65534.0f);
+                value        = noisy_depth(model, near, value, zm::lerp(below[gx], below[gx + 1], tx), zm::lerp(above[gx], above[gx + 1], tx), ty);
             }
         }
     }
 
-    const f32 band_width = model.uncovered_width * (f32)width;
-    const f32 band_half  = model.uncovered_height * (f32)height * 0.5f;
-    if (band_width > 0.0f && band_half > 0.0f && model.uncovered_depth > near)
+    if (has_uncovered_band(model, view, width, height, near))
     {
-        const u16 far    = (u16)zm::round((1.0f - near / model.uncovered_depth) * 65535.0f);
-        const f32 center = model.uncovered_center * (f32)height;
-        const u32 reach  = (u32)zm::min(zm::ceil(band_width), (f32)width);
+        const u16 far   = uncovered_value(model, near);
+        const u32 reach = (u32)zm::min(zm::ceil(model.uncovered_width * (f32)width), (f32)width);
         for (u32 y = 0; y < height; y++)
         {
-            const f32 dy = ((f32)y + 0.5f - center) / band_half;
-            if (dy * dy > 1.0f)
-            {
-                continue;
-            }
             for (u32 i = 0; i < reach; i++)
             {
-                const f32 dx = ((f32)i + 0.5f) / band_width;
-                if (dx * dx + dy * dy <= 1.0f)
+                if (in_uncovered_band(model, width, height, i, y))
                 {
                     inout_image[(usize)y * width + (view == 0 ? i : width - 1 - i)] = far;
                 }
             }
         }
     }
+}
+
+b8 sim_depth_lower_view_size (const SIM_DepthModel& model, u32& out_width, u32& out_height)
+{
+    out_width  = 0;
+    out_height = 0;
+    if (!(model.lower_width > 0.0f && model.lower_height > 0.0f))
+    {
+        return false;
+    }
+    const f32 aspect = zm::tan(model.lower_height * 0.5f * zm::DEG_TO_RAD) / zm::tan(model.lower_width * 0.5f * zm::DEG_TO_RAD);
+    out_width        = model.width;
+    out_height       = (u32)zm::clamp(zm::round((f32)model.width * aspect), 1.0f, (f32)SIM_MAX_DEPTH_SIZE);
+    return true;
+}
+
+u16 sim_depth_sensor_texel (const SIM_DepthModel& model, u64 capture, u32 view, f32 near, u32 width, u32 height, u32 x, u32 y, u16 traced)
+{
+    ASSERT(near > 0.0f && x < width && y < height);
+    if (has_uncovered_band(model, view, width, height, near) && in_uncovered_band(model, width, height, view == 0 ? x : width - 1 - x, y))
+    {
+        return uncovered_value(model, near);
+    }
+    if (model.noise <= 0.0f || traced == 0 || traced == 0xffff)
+    {
+        return traced;
+    }
+    const u32 cell = zm::max(model.noise_cell, 1u);
+    const u64 key  = depth_noise_key(model, capture, view);
+    const i32 gx   = (i32)(x / cell);
+    const i32 gy   = (i32)(y / cell);
+    const f32 tx   = (f32)(x % cell) / (f32)cell;
+    const f32 ty   = (f32)(y % cell) / (f32)cell;
+    const f32 n0   = zm::lerp(depth_noise_at(key, gx, gy), depth_noise_at(key, gx + 1, gy), tx);
+    const f32 n1   = zm::lerp(depth_noise_at(key, gx, gy + 1), depth_noise_at(key, gx + 1, gy + 1), tx);
+    return noisy_depth(model, near, traced, n0, n1, ty);
 }
 
 b8 sim_apply_device (SIM_Config& config, const char* name)

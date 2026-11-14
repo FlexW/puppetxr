@@ -1122,7 +1122,8 @@ TEST_F(RecTest, header_records_the_skeleton_change_period)
 }
 
 // The bytes format 3 appended to the header: the environment depth model
-#define REC_TEST_DEPTH_BYTES 68
+#define REC_TEST_DEPTH_BYTES   68
+#define REC_TEST_RAYCAST_BYTES 24
 
 // A recording written now, turned into one of an older format by cutting `tail` bytes off the
 // end of its header; the frames stay
@@ -1157,7 +1158,7 @@ TEST_F(RecTest, a_version_1_recording_reads_without_a_skeleton_change_period)
     temp_path(path, sizeof(path), "puppetxr_test_version_1.xrrec");
     u8*   data = nullptr;
     usize size = 0;
-    ASSERT_TRUE(older_recording(path, 1, REC_TEST_DEPTH_BYTES + 8, data, size));
+    ASSERT_TRUE(older_recording(path, 1, REC_TEST_RAYCAST_BYTES + REC_TEST_DEPTH_BYTES + 8, data, size));
     defer { os_memory_release(data); };
 
     REC_Recording* recording = rec_load_from_memory(data, size);
@@ -1176,6 +1177,8 @@ TEST_F(RecTest, header_records_the_environment_depth_sensor)
     config.environment_depth.width = 200;
     config.environment_depth.seed  = 77;
     config.environment_depth.noise = 0.005f;
+    config.environment_depth.raycast_latency_ns = 70000000;
+    config.environment_depth.lower_pitch        = -48.0f;
     REC_Header header = {};
     rec_header_from_config(config, make_header().initial, header);
     char path[OS_MAX_PATH];
@@ -1203,6 +1206,11 @@ TEST_F(RecTest, header_records_the_environment_depth_sensor)
     EXPECT_EQ(a.uncovered_center, b.uncovered_center);
     EXPECT_EQ(a.uncovered_height, b.uncovered_height);
     EXPECT_EQ(a.uncovered_depth, b.uncovered_depth);
+    EXPECT_EQ(a.raycast, b.raycast);
+    EXPECT_EQ(a.raycast_latency_ns, b.raycast_latency_ns);
+    EXPECT_EQ(a.lower_pitch, b.lower_pitch);
+    EXPECT_EQ(a.lower_width, b.lower_width);
+    EXPECT_EQ(a.lower_height, b.lower_height);
 }
 
 // A recording of format 2 was made with depth from the eye views at every frame, and replays so
@@ -1212,7 +1220,7 @@ TEST_F(RecTest, a_version_2_recording_replays_depth_from_the_eyes)
     temp_path(path, sizeof(path), "puppetxr_test_version_2.xrrec");
     u8*   data = nullptr;
     usize size = 0;
-    ASSERT_TRUE(older_recording(path, 2, REC_TEST_DEPTH_BYTES, data, size));
+    ASSERT_TRUE(older_recording(path, 2, REC_TEST_RAYCAST_BYTES + REC_TEST_DEPTH_BYTES, data, size));
     defer { os_memory_release(data); };
 
     REC_Recording* recording = rec_load_from_memory(data, size);
@@ -1226,6 +1234,28 @@ TEST_F(RecTest, a_version_2_recording_replays_depth_from_the_eyes)
     EXPECT_EQ(depth.baseline, 0.0f);
     EXPECT_EQ(depth.noise, 0.0f);
     EXPECT_EQ(depth.uncovered_width, 0.0f);
+    EXPECT_EQ(depth.raycast, SIM_DepthRaycast::Mesh);
+    EXPECT_EQ(rec_frame_count(recording), 2u);
+}
+
+// Before format 5 environment raycasts hit the global mesh exactly, and replay so
+TEST_F(RecTest, a_version_4_recording_replays_raycasts_against_the_mesh)
+{
+    char path[OS_MAX_PATH];
+    temp_path(path, sizeof(path), "puppetxr_test_version_4.xrrec");
+    u8*   data = nullptr;
+    usize size = 0;
+    ASSERT_TRUE(older_recording(path, 4, REC_TEST_RAYCAST_BYTES, data, size));
+    defer { os_memory_release(data); };
+
+    REC_Recording* recording = rec_load_from_memory(data, size);
+    ASSERT_NE(recording, nullptr);
+    defer { rec_release(recording); };
+    EXPECT_EQ(rec_header(recording).format_version, 4u);
+    const SIM_DepthModel& depth = rec_header(recording).environment_depth;
+    EXPECT_EQ(depth.raycast, SIM_DepthRaycast::Mesh);
+    EXPECT_EQ(depth.raycast_latency_ns, 0);
+    EXPECT_EQ(depth.lower_width, 0.0f);
     EXPECT_EQ(rec_frame_count(recording), 2u);
 }
 
