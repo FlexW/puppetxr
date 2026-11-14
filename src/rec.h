@@ -5,7 +5,7 @@
 
 // The version this build writes. Readers for older versions are kept forever once puppetxr
 // reaches 1.0; before that, a layout change may drop them.
-#define REC_FORMAT_VERSION 3
+#define REC_FORMAT_VERSION 4
 #define REC_ANCHOR_OPS     4 // OXR_AnchorOp::Count, which this layer cannot see
 #define REC_FRAME_OPS      4 // OXR_FrameOp::Count
 
@@ -56,6 +56,15 @@ enum class REC_ExternalKind : u8
     Adverts      = 2,
 };
 
+// A model loaded into the sim, its GLB kept so a replay needs no file (docs/recording-format.md)
+struct REC_Model
+{
+    u64       frame_index; // loaded before the sim frame of this index replays
+    char      name[SIM_MAX_MODEL_NAME];
+    const u8* data;        // into the recording, valid while it is loaded
+    usize     size;
+};
+
 struct REC_External
 {
     REC_ExternalKind      kind;
@@ -70,6 +79,7 @@ void           rec_apply_header       (const REC_Header& header, SIM_Config& con
 REC_Writer*    rec_writer_create      (const char* path, const REC_Header& header, const W_Store* store = nullptr); // the anchor store as the recording starts
 b8             rec_writer_append      (REC_Writer* writer, u64 frame_index, u64 state_hash, const SIM_FrameState& state); // flushed, so a crash keeps every frame
 b8             rec_writer_append_external (REC_Writer* writer, const REC_External& external);
+b8             rec_writer_append_model (REC_Writer* writer, u64 frame_index, const SIM_Model& model); // nothing when the model of that name was written with these bytes
 u64            rec_writer_frame_count (const REC_Writer* writer);
 b8             rec_writer_close       (REC_Writer* writer); // writes the end marker; false if any write failed
 
@@ -88,3 +98,5 @@ const W_Store& rec_store              (const REC_Recording* recording);
 u64            rec_external_count     (const REC_Recording* recording);
 b8             rec_read_external      (const REC_Recording* recording, u64 index, REC_External& out_external); // replaces the arrays' contents
 void           rec_external_release   (REC_External& external);
+u64            rec_model_count        (const REC_Recording* recording);
+b8             rec_read_model         (const REC_Recording* recording, u64 index, REC_Model& out_model); // in the order they were written

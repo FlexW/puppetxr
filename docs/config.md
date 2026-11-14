@@ -294,8 +294,20 @@ slot (Shift or Ctrl + I/J/K/L, or the `stick` profile) swipes the thumb along th
 up forward, down backward, left, right) and the primary slot (H) taps it; each press is one
 pulse that the app sees for one frame, holding does not repeat.
 
-`props` is an array of prop objects (`docs/props.md`): keyboards and QR codes spawned when the
-simulator starts, still or moving; `PUPPETXR_PROPS` replaces it.
+`props` is an array of prop objects (`docs/props.md`): keyboards, QR codes and meshes spawned
+when the simulator starts, still or moving; `PUPPETXR_PROPS` replaces it. A mesh names a model:
+built in (`chair`, `pencil`, `case`) or one of `models`.
+
+`models` is an array of `{ "name": "<[a-z0-9_-], up to 63>", "path": "<.glb or .gltf>" }`, at most
+16, read when a prop first names the model (`docs/props.md`, Models). A relative path is relative
+to the app's working directory; an entry without a valid name or a path is skipped with a warning.
+
+```json
+{ "models": [ { "name": "sofa", "path": "/home/me/models/sofa.glb" } ],
+  "props": [ { "kind": "mesh", "model": "sofa", "position": [1, 0, -2], "yaw_degrees": 180 },
+             { "kind": "mesh", "model": "chair", "position": [0, 0, -1],
+               "motion": "linear", "target": [1, 0, -1], "speed": 0.3 } ] }
+```
 
 `hands.tracking_fov_degrees` (default 120) is the full angle of the cone around the head's
 forward axis in which hand tracking sees a tracked hand; outside it the hand is lost unless the

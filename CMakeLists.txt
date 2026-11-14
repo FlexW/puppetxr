@@ -164,7 +164,16 @@ add_custom_command(
     DEPENDS ${puppetxr_room_files} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_rooms.cmake
     COMMENT "Embedding rooms"
     VERBATIM)
-add_library(puppetxr_rooms STATIC ${puppetxr_rooms_source})
+# The built-in models of models/ (docs/props.md, Models) go into the same library
+file(GLOB puppetxr_model_files ${CMAKE_CURRENT_SOURCE_DIR}/models/*/*.glb)
+set(puppetxr_models_source ${CMAKE_BINARY_DIR}/models/models_embedded.cpp)
+add_custom_command(
+    OUTPUT ${puppetxr_models_source}
+    COMMAND ${CMAKE_COMMAND} -DMODELS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/models -DOUTPUT=${puppetxr_models_source} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_models.cmake
+    DEPENDS ${puppetxr_model_files} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_models.cmake
+    COMMENT "Embedding models"
+    VERBATIM)
+add_library(puppetxr_rooms STATIC ${puppetxr_rooms_source} ${puppetxr_models_source})
 target_compile_features(puppetxr_rooms PRIVATE cxx_std_20)
 target_include_directories(puppetxr_rooms PRIVATE src)
 set_target_properties(puppetxr_rooms PROPERTIES POSITION_INDEPENDENT_CODE ON)

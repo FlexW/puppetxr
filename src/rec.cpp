@@ -8,8 +8,8 @@
 #define REC_MAGIC_SIZE        8
 #define REC_WRITE_BUFFER      ((usize)64 * 1024)
 #define REC_MAX_HEADER_SIZE   (64 * 1024)
-#define REC_MAX_CHUNK_SIZE    (16 * 1024 * 1024)
-#define REC_SCRATCH_SIZE      12288 // a frame with every prop, a full typed text and the body fits
+#define REC_MAX_CHUNK_SIZE    (W_MODEL_MAX_FILE_SIZE + 1024) // a model chunk is the largest
+#define REC_SCRATCH_SIZE      16384 // a frame with every prop, a full typed text and the body fits
 #define REC_MAX_DT            10000000000ll
 #define REC_MAX_START_TIME    (1ll << 62)
 #define REC_MAX_NAME          63
@@ -24,6 +24,7 @@ static const u8 REC_TAG_FRAME[4] = { 'F', 'R', 'A', 'M' };
 static const u8 REC_TAG_END[4]   = { 'E', 'N', 'D', '_' };
 static const u8 REC_TAG_STORE[4] = { 'S', 'T', 'O', 'R' };
 static const u8 REC_TAG_EXTERNAL[4] = { 'E', 'X', 'T', 'N' };
+static const u8 REC_TAG_MODEL[4]    = { 'M', 'O', 'D', 'L' };
 
 struct REC_Writer
 {
@@ -37,6 +38,8 @@ struct REC_Writer
     SIM_BodyState body;            // as last written, the same way
     SIM_FaceState face;
     Pose          tracking_drift;
+    SIM_Model     models[SIM_MAX_MODELS]; // name and hash of each model as last written, no data
+    u32           models_count;
 };
 
 namespace
@@ -64,6 +67,7 @@ struct REC_Recording
     REC_Layout layout;
     Array<u64> frame_offsets; // offset of each FRAM payload in data
     Array<u64> external_offsets; // offset of each EXTN payload in data
+    Array<u64> model_offsets;    // offset of each MODL payload in data
     W_Store    store;
     b8         complete;
 };
@@ -310,6 +314,11 @@ static void put_prop (REC_Out& out, const SIM_Prop& prop)
     const usize length = cstr_length(prop.text);
     put_u8(out, (u8)length);
     put_bytes(out, prop.text, length);
+    if (prop.kind == SIM_PropKind::Mesh)
+    {
+        put_name(out, prop.model);
+        put_f32(out, prop.scale);
+    }
 }
 
 // State: per device of the layout an active flag, the hand source, the pose of the put down
@@ -424,7 +433,7 @@ static Vec3 get_vec3 (REC_In& in)
 }
 
 // Kind and motion by name; values as sim_add_prop would take them, a text of any non-zero bytes
-static b8 get_prop (REC_In& in, SIM_Prop& out)
+static b8 get_prop (REC_In& in, u32 version, SIM_Prop& out)
 {
     char kind[REC_MAX_NAME + 1]   = {};
     char motion[REC_MAX_NAME + 1] = {};
@@ -454,7 +463,18 @@ static b8 get_prop (REC_In& in, SIM_Prop& out)
         }
     }
     memory_copy(out.text, text, length);
-    const f32 values[] = { out.target.x, out.target.y, out.target.z, out.radius, out.speed, out.size };
+    if (out.kind == SIM_PropKind::Mesh)
+    {
+        // Version 4 brought mesh props
+        char model[REC_MAX_NAME + 1] = {};
+        if (version < 4 || !get_name(in, model) || !sim_model_name_valid(model))
+        {
+            return false;
+        }
+        cstr_copy(out.model, sizeof(out.model), model);
+        out.scale = get_f32(in);
+    }
+    const f32 values[] = { out.target.x, out.target.y, out.target.z, out.radius, out.speed, out.size, out.scale };
     for (const f32 value : values)
     {
         if (!zm::is_finite(value))
@@ -559,7 +579,7 @@ static b8 get_face (REC_In& in, SIM_FaceState& out)
     return !in.failed && unit(out.confidences[0]) && unit(out.confidences[1]) && blink <= 1 && look_at <= 1 && gaze && target;
 }
 
-static b8 get_state (REC_In& in, const REC_Layout& layout, SIM_FrameState& out)
+static b8 get_state (REC_In& in, u32 version, const REC_Layout& layout, SIM_FrameState& out)
 {
     out    = {};
     out.dt = (i64)get_u64(in);
@@ -650,7 +670,7 @@ static b8 get_state (REC_In& in, const REC_Layout& layout, SIM_FrameState& out)
     }
     for (u32 i = 0; i < out.props_count; i++)
     {
-        if (!get_prop(in, out.props[i]))
+        if (!get_prop(in, version, out.props[i]))
         {
             return false;
         }
@@ -898,7 +918,7 @@ static b8 get_header (u32 version, REC_In& in, REC_Header& out, REC_Layout& layo
             out.initial.previous_poses[layout.devices[d]] = previous;
         }
     }
-    if (!get_state(in, layout, out.initial.state))
+    if (!get_state(in, version, layout, out.initial.state))
     {
         return false;
     }
@@ -978,6 +998,7 @@ static b8 read_header (u32 version, REC_In& in, REC_Header& out, REC_Layout& lay
     case 1:
     case 2:
     case 3:
+    case 4:
         return get_header(version, in, out, layout);
     default:
         return false;
@@ -991,7 +1012,8 @@ static b8 read_state (u32 version, REC_In& in, const REC_Layout& layout, SIM_Fra
     case 1:
     case 2:
     case 3:
-        return get_state(in, layout, out);
+    case 4:
+        return get_state(in, version, layout, out);
     default:
         return false;
     }
@@ -1107,6 +1129,22 @@ static b8 get_external (REC_In& in, REC_External& out)
     return false;
 }
 
+static b8 get_model (REC_In& in, const u8* base, REC_Model& out)
+{
+    char name[REC_MAX_NAME + 1] = {};
+    out             = {};
+    out.frame_index = get_u64(in);
+    if (!get_name(in, name) || !sim_model_name_valid(name))
+    {
+        return false;
+    }
+    cstr_copy(out.name, sizeof(out.name), name);
+    out.size        = get_u32(in);
+    const u8* bytes = out.size > 0 && out.size <= W_MODEL_MAX_FILE_SIZE ? get_bytes(in, out.size) : nullptr;
+    out.data        = bytes;
+    return bytes && base && !in.failed;
+}
+
 static REC_Recording* load_owned (u8* data, usize size)
 {
     REC_Recording* recording = (REC_Recording*)os_memory_alloc(sizeof(REC_Recording));
@@ -1194,6 +1232,15 @@ static REC_Recording* load_owned (u8* data, usize size)
                 break;
             }
             recording->external_offsets.add(payload_offset);
+        }
+        else if (memory_equal(tag, REC_TAG_MODEL, 4) && version >= 4)
+        {
+            REC_Model model = {};
+            if (!get_model(chunk, data, model) || chunk.pos != payload_size)
+            {
+                break;
+            }
+            recording->model_offsets.add(payload_offset);
         }
         else if (memory_equal(tag, REC_TAG_END, 4))
         {
@@ -1377,6 +1424,47 @@ b8 rec_writer_append_external (REC_Writer* writer, const REC_External& external)
     return !writer->failed;
 }
 
+b8 rec_writer_append_model (REC_Writer* writer, u64 frame_index, const SIM_Model& model)
+{
+    ASSERT(writer);
+    u32 index = 0;
+    while (index < writer->models_count && !cstr_equal(writer->models[index].name, model.name))
+    {
+        index++;
+    }
+    if (index < writer->models_count && writer->models[index].hash == model.hash && writer->models[index].size == model.size)
+    {
+        return !writer->failed;
+    }
+    if (!sim_model_name_valid(model.name) || !model.data || model.size == 0 || model.size > W_MODEL_MAX_FILE_SIZE || (index == writer->models_count && index == SIM_MAX_MODELS))
+    {
+        return false;
+    }
+    if (index == writer->models_count)
+    {
+        writer->models_count++;
+    }
+    writer->models[index] = { .size = model.size, .hash = model.hash };
+    cstr_copy(writer->models[index].name, sizeof(writer->models[index].name), model.name);
+
+    const usize size  = 8 + 1 + cstr_length(model.name) + 4 + model.size;
+    Array<u8>   bytes = {};
+    defer { bytes.release(); };
+    bytes.resize(size);
+    REC_Out out = { .data = bytes.data, .capacity = size };
+    put_u64(out, frame_index);
+    put_name(out, model.name);
+    put_u32(out, (u32)model.size);
+    put_bytes(out, model.data, model.size);
+    ASSERT(!out.overflow && out.size == size);
+    writer_chunk(writer, REC_TAG_MODEL, out);
+    if (writer_flush(writer) && !os_file_flush(writer->file))
+    {
+        writer->failed = true;
+    }
+    return !writer->failed;
+}
+
 b8 rec_writer_append (REC_Writer* writer, u64 frame_index, u64 state_hash, const SIM_FrameState& state)
 {
     ASSERT(writer);
@@ -1477,6 +1565,7 @@ void rec_release (REC_Recording* recording)
     os_memory_release(recording->data);
     recording->frame_offsets.release();
     recording->external_offsets.release();
+    recording->model_offsets.release();
     w_store_release(recording->store);
     os_memory_release(recording);
 }
@@ -1553,4 +1642,22 @@ void rec_external_release (REC_External& external)
 {
     external.anchors.release();
     external.adverts.release();
+}
+
+u64 rec_model_count (const REC_Recording* recording)
+{
+    ASSERT(recording);
+    return recording->model_offsets.length;
+}
+
+b8 rec_read_model (const REC_Recording* recording, u64 index, REC_Model& out_model)
+{
+    ASSERT(recording);
+    if (index >= recording->model_offsets.length)
+    {
+        return false;
+    }
+    const usize offset = recording->model_offsets[index];
+    REC_In      in     = { .data = recording->data + offset, .size = recording->size - offset };
+    return get_model(in, recording->data, out_model);
 }

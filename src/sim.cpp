@@ -137,6 +137,10 @@ struct SIM_Sim
     SIM_Prop       props[SIM_MAX_PROPS];
     u32            props_count;
     u32            next_prop_id;
+    SIM_Model      models[SIM_MAX_MODELS];
+    u8*            model_bytes[SIM_MAX_MODELS]; // what models[i].data points at
+    u32            models_count;
+    u64            models_generation;
     SIM_BodyState  body;
     u32            body_generation; // raised by every shape change, XrBodyJointLocationsFB::skeletonChangedCount
     i64            skeleton_change_period; // ns, 0 never
@@ -764,7 +768,7 @@ static void add_vkb_quad (SIM_RenderModel& model, Vec2 center, Vec2 half, f32 z,
 // Props
 //
 
-static const char* const sim_prop_kind_names[(u32)SIM_PropKind::Count]     = { "keyboard", "qr" };
+static const char* const sim_prop_kind_names[(u32)SIM_PropKind::Count]     = { "keyboard", "qr", "mesh" };
 static const char* const sim_prop_motion_names[(u32)SIM_PropMotion::Count] = { "still", "linear", "circle" };
 
 #define SIM_PROP_MAX_SPEED  100.0f
@@ -787,15 +791,30 @@ static b8 prop_text_terminated (const SIM_Prop& prop)
     return false;
 }
 
-// A copy of `prop` fit to store: normalized orientation, no text on keyboards; false when invalid
+static b8 prop_model_terminated (const SIM_Prop& prop)
+{
+    for (u32 i = 0; i < SIM_MAX_MODEL_NAME; i++)
+    {
+        if (prop.model[i] == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A copy of `prop` fit to store: normalized orientation, only the fields of its kind; false when
+// invalid. Whether a mesh's model is loaded is the sim's to check
 static b8 normalize_prop (const SIM_Prop& prop, SIM_Prop& out)
 {
+    const f32 scale = prop.scale == 0.0f ? 1.0f : prop.scale;
+    const b8  mesh_valid = prop.kind != SIM_PropKind::Mesh || (zm::is_finite(scale) && scale >= SIM_PROP_MIN_SCALE && scale <= SIM_PROP_MAX_SCALE && prop_model_terminated(prop) && sim_model_name_valid(prop.model));
     const b8 kind_valid   = (u32)prop.kind < (u32)SIM_PropKind::Count && (u32)prop.motion < (u32)SIM_PropMotion::Count;
     const b8 pose_valid   = zm::is_finite(prop.pose) && zm::length(prop.pose.orientation) > 1e-4f && zm::is_finite(prop.target.x) && zm::is_finite(prop.target.y) && zm::is_finite(prop.target.z);
     const b8 speed_valid  = zm::is_finite(prop.speed) && prop.speed >= 0.0f && prop.speed <= SIM_PROP_MAX_SPEED;
     const b8 radius_valid = zm::is_finite(prop.radius) && prop.radius >= 0.0f && prop.radius <= SIM_PROP_MAX_RADIUS && (prop.motion != SIM_PropMotion::Circle || prop.radius > 0.0f);
     const b8 size_valid   = prop.kind != SIM_PropKind::QrCode || (zm::is_finite(prop.size) && prop.size >= SIM_PROP_MIN_SIZE && prop.size <= SIM_PROP_MAX_SIZE);
-    if (!kind_valid || !pose_valid || !speed_valid || !radius_valid || !size_valid || !prop_text_terminated(prop))
+    if (!kind_valid || !pose_valid || !speed_valid || !radius_valid || !size_valid || !mesh_valid || !prop_text_terminated(prop))
     {
         return false;
     }
@@ -814,6 +833,11 @@ static b8 normalize_prop (const SIM_Prop& prop, SIM_Prop& out)
     {
         cstr_copy(out.text, sizeof(out.text), prop.text);
     }
+    if (prop.kind == SIM_PropKind::Mesh)
+    {
+        out.scale = scale;
+        cstr_copy(out.model, sizeof(out.model), prop.model);
+    }
     return true;
 }
 
@@ -823,13 +847,31 @@ static u64 hash_props (const SIM_Prop* props, u32 count)
     for (u32 i = 0; i < count; i++)
     {
         const SIM_Prop& p = props[i];
-        const f32 values[] = { p.pose.position.x, p.pose.position.y, p.pose.position.z, p.pose.orientation.x, p.pose.orientation.y, p.pose.orientation.z, p.pose.orientation.w, p.target.x, p.target.y, p.target.z, p.radius, p.speed, p.size };
+        const f32 values[] = { p.pose.position.x, p.pose.position.y, p.pose.position.z, p.pose.orientation.x, p.pose.orientation.y, p.pose.orientation.z, p.pose.orientation.w, p.target.x, p.target.y, p.target.z, p.radius, p.speed, p.size, p.scale };
         h = (h ^ hash((const u8*)values, sizeof(values))) * 0x100000001B3ull;
         h = (h ^ (((u64)p.id << 16) | ((u64)p.kind << 8) | (u64)p.motion)) * 0x100000001B3ull;
         h = (h ^ (u64)p.start) * 0x100000001B3ull;
         h = (h ^ hash((const u8*)p.text, cstr_length(p.text))) * 0x100000001B3ull;
+        h = (h ^ hash((const u8*)p.model, cstr_length(p.model))) * 0x100000001B3ull;
     }
     return h;
+}
+
+// A mesh's model is loaded, through the config's loader when it is not yet
+static b8 prop_model_loaded (SIM_Sim* sim, const SIM_Prop& prop)
+{
+    if (prop.kind != SIM_PropKind::Mesh || sim_find_model(sim, prop.model))
+    {
+        return true;
+    }
+    Array<u8> glb = {};
+    defer { glb.release(); };
+    if (!sim->config.load_model || !sim->config.load_model(sim->config, prop.model, glb) || !sim_add_model(sim, prop.model, glb.data, glb.length))
+    {
+        LOG_ERROR("Model %s is not loaded (docs/props.md, Models)", prop.model);
+        return false;
+    }
+    return true;
 }
 
 //
@@ -1773,6 +1815,31 @@ static void read_quat (const JsonValue& array, Quat& out)
     }
 }
 
+// Models props may name, loaded from their files once one does; invalid entries are skipped
+static void read_models (const JsonValue& array, SIM_Config& config)
+{
+    config.models_count = 0;
+    u32 index           = 0;
+    for (const JsonValue entry : array)
+    {
+        SIM_ModelSource source = {};
+        if (config.models_count == SIM_MAX_MODELS)
+        {
+            LOG_WARNING("Config: up to %u models, the rest are skipped", SIM_MAX_MODELS);
+            break;
+        }
+        if (json_find_string(entry, "name", source.name, nullptr, sizeof(source.name)) && sim_model_name_valid(source.name) && json_find_string(entry, "path", source.path, nullptr, sizeof(source.path)) && source.path[0])
+        {
+            config.models[config.models_count++] = source;
+        }
+        else
+        {
+            LOG_WARNING("Config: model %u needs a name ([a-z0-9_-]) and a path, skipped (docs/props.md)", index);
+        }
+        index++;
+    }
+}
+
 // Props the config or PUPPETXR_PROPS spawn; invalid entries are skipped with a warning
 static void read_props (const JsonValue& array, SIM_Config& config)
 {
@@ -1780,7 +1847,7 @@ static void read_props (const JsonValue& array, SIM_Config& config)
     u32 index          = 0;
     for (const JsonValue entry : array)
     {
-        SIM_Prop prop = { .kind = SIM_PropKind::Count, .pose = zm::POSE_IDENTITY, .size = 0.1f };
+        SIM_Prop prop = { .kind = SIM_PropKind::Count, .pose = zm::POSE_IDENTITY, .size = 0.1f, .scale = 1.0f };
         if (config.props_count == SIM_MAX_PROPS)
         {
             LOG_WARNING("Config: up to %u props, the rest are skipped", SIM_MAX_PROPS);
@@ -2980,6 +3047,11 @@ b8 sim_parse_config (SIM_Config& config, const char* json)
     {
         read_props(props, config);
     }
+    const JsonValue models = json_find(root, "models");
+    if (json_is_array(models))
+    {
+        read_models(models, config);
+    }
 
     const JsonValue anchors = json_find(root, "anchors");
     if (json_is_object(anchors))
@@ -3048,6 +3120,12 @@ b8 sim_prop_from_json (const JsonValue& value, SIM_Prop& inout_prop)
     json_find_float(value, "radius", prop.radius, prop.radius);
     json_find_float(value, "speed", prop.speed, prop.speed);
     json_find_float(value, "size", prop.size, prop.size);
+    json_find_float(value, "scale", prop.scale, prop.scale);
+    const JsonValue model = json_find(value, "model");
+    if (json_is_valid(model) && !json_as_string(model, prop.model, nullptr, sizeof(prop.model)))
+    {
+        return false;
+    }
     return normalize_prop(prop, inout_prop);
 }
 
@@ -3656,6 +3734,14 @@ SIM_Sim* sim_create (const SIM_Config& config)
 
 void sim_destroy (SIM_Sim* sim)
 {
+    if (!sim)
+    {
+        return;
+    }
+    for (u32 i = 0; i < sim->models_count; i++)
+    {
+        os_memory_release(sim->model_bytes[i]);
+    }
     os_memory_release(sim);
 }
 
@@ -3942,7 +4028,7 @@ static void apply_state (SIM_Sim* sim, const SIM_FrameState& state)
         for (u32 i = 0; i < state.props_count && i < SIM_MAX_PROPS; i++)
         {
             SIM_Prop prop = {};
-            if (state.props[i].id != 0 && normalize_prop(state.props[i], prop))
+            if (state.props[i].id != 0 && normalize_prop(state.props[i], prop) && prop_model_loaded(sim, prop))
             {
                 sim->props[sim->props_count++] = prop;
                 sim->next_prop_id              = zm::max(sim->next_prop_id, prop.id + 1);
@@ -4745,7 +4831,7 @@ u32 sim_add_prop (SIM_Sim* sim, const SIM_Prop& prop)
 {
     ASSERT(sim);
     SIM_Prop stored = {};
-    if (sim->props_count == SIM_MAX_PROPS || !normalize_prop(prop, stored))
+    if (sim->props_count == SIM_MAX_PROPS || !normalize_prop(prop, stored) || !prop_model_loaded(sim, stored))
     {
         return 0;
     }
@@ -4763,7 +4849,7 @@ b8 sim_update_prop (SIM_Sim* sim, u32 id, const SIM_Prop& prop)
     {
         if (sim->props[i].id == id)
         {
-            if (!normalize_prop(prop, stored))
+            if (!normalize_prop(prop, stored) || !prop_model_loaded(sim, stored))
             {
                 return false;
             }
@@ -4799,6 +4885,83 @@ u32 sim_props (const SIM_Sim* sim, const SIM_Prop*& out_props)
     ASSERT(sim);
     out_props = sim->props;
     return sim->props_count;
+}
+
+b8 sim_add_model (SIM_Sim* sim, const char* name, const u8* glb, usize size)
+{
+    ASSERT(sim);
+    if (!sim_model_name_valid(name) || !glb || size == 0)
+    {
+        return false;
+    }
+    u32 index = 0;
+    while (index < sim->models_count && !cstr_equal(sim->models[index].name, name))
+    {
+        index++;
+    }
+    if (index == sim->models_count)
+    {
+        if (sim->models_count == SIM_MAX_MODELS)
+        {
+            LOG_ERROR("Up to %u models, %s is refused", SIM_MAX_MODELS, name);
+            return false;
+        }
+        sim->models_count++;
+        cstr_copy(sim->models[index].name, sizeof(sim->models[index].name), name);
+    }
+    SIM_Model& model = sim->models[index];
+    u8*        data  = (u8*)os_memory_alloc(size);
+    memory_copy(data, glb, size);
+    os_memory_release(sim->model_bytes[index]);
+    sim->model_bytes[index] = data;
+    model.data              = data;
+    model.size              = size;
+    model.hash              = hash(glb, size);
+    sim->models_generation++;
+    return true;
+}
+
+u32 sim_models (const SIM_Sim* sim, const SIM_Model*& out_models)
+{
+    ASSERT(sim);
+    out_models = sim->models;
+    return sim->models_count;
+}
+
+const SIM_Model* sim_find_model (const SIM_Sim* sim, const char* name)
+{
+    ASSERT(sim);
+    for (u32 i = 0; name && i < sim->models_count; i++)
+    {
+        if (cstr_equal(sim->models[i].name, name))
+        {
+            return &sim->models[i];
+        }
+    }
+    return nullptr;
+}
+
+u64 sim_models_generation (const SIM_Sim* sim)
+{
+    ASSERT(sim);
+    return sim->models_generation;
+}
+
+b8 sim_model_name_valid (const char* name)
+{
+    if (!name || !name[0])
+    {
+        return false;
+    }
+    usize length = 0;
+    for (const char* c = name; *c; c++, length++)
+    {
+        if (!((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_' || *c == '-') || length + 1 >= SIM_MAX_MODEL_NAME)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Distances along the path in f64: an f32 would lose the phase within minutes

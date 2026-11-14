@@ -109,9 +109,13 @@ static const char* ctl_usage =
     "  vkb type <text>                      type into the shown keyboard at the next frame; \\n is enter, \\b backspace\n"
     "  props                                the props: id, kind, motion, pose, where it is now\n"
     "  prop add qr <text> <x y z> [qx qy qz qw]     a QR code facing its +Z; prop add keyboard <x y z> [q]\n"
+    "  prop add mesh <model> <x y z> [q]    a model, built in (chair, pencil, case) or loaded\n"
     "  prop move <id> <x y z> [qx qy qz qw]\n"
     "  prop motion <id> still | linear <x y z> <speed> | circle <radius> <speed>\n"
     "  prop size <id> <meters> | prop text <id> <text> | prop remove <id>\n"
+    "  prop scale <id> <factor> | prop model <id> <model>\n"
+    "  models                               the loaded and the built-in models\n"
+    "  model load <path> [name]             a .glb or .gltf as a model, named after the file by default\n"
     "  room [name|none]\n"
     "  anchors                              stored anchors of the app and simulated user, local then cloud\n"
     "  anchors wipe [cloud]                 empty the local store, with cloud also the user's cloud anchors\n"
@@ -472,6 +476,34 @@ static b8 parse_switch (const char* text, b8& out_on)
     return out_on || cstr_equal(text, "off") || cstr_equal(text, "0") || cstr_equal(text, "false");
 }
 
+// A model name from a file name: its base name without a .glb or .gltf extension, lowercase,
+// anything outside [a-z0-9_-] as _, so chair.v1.glb and chair.v2.glb stay two models
+static void model_name_of (const char* path, char* out, usize size)
+{
+    const char* base = path;
+    for (const char* c = path; *c; c++)
+    {
+        base = *c == '/' || *c == '\\' ? c + 1 : base;
+    }
+    const char* end = base + cstr_length(base);
+    const usize length = (usize)(end - base);
+    if (length > 4 && (cstr_equal(end - 4, ".glb") || cstr_equal(end - 4, ".GLB")))
+    {
+        end -= 4;
+    }
+    else if (length > 5 && (cstr_equal(end - 5, ".gltf") || cstr_equal(end - 5, ".GLTF")))
+    {
+        end -= 5;
+    }
+    usize n = 0;
+    for (const char* c = base; c < end && n + 1 < size; c++)
+    {
+        const char lower = *c >= 'A' && *c <= 'Z' ? (char)(*c - 'A' + 'a') : *c;
+        out[n++]         = (lower >= 'a' && lower <= 'z') || (lower >= '0' && lower <= '9') || lower == '-' ? lower : '_';
+    }
+    out[n] = 0;
+}
+
 // Position and an optional orientation: x y z [qx qy qz qw]
 static b8 append_prop_pose (u32 count, const char* const* words, char* out, usize size)
 {
@@ -511,6 +543,12 @@ static b8 build_prop_request (u32 count, const char* const* words, char* out, us
         append_string(out, size, "text", words[2]);
         return append_prop_pose(count - 3, words + 3, out, size);
     }
+    if (cstr_equal(verb, "add") && count >= 3 && cstr_equal(words[1], "mesh"))
+    {
+        append(out, size, ",\"cmd\":\"add_prop\",\"kind\":\"mesh\"");
+        append_string(out, size, "model", words[2]);
+        return append_prop_pose(count - 3, words + 3, out, size);
+    }
     if (cstr_equal(verb, "add") && count >= 2 && cstr_equal(words[1], "keyboard"))
     {
         append(out, size, ",\"cmd\":\"add_prop\",\"kind\":\"keyboard\"");
@@ -542,6 +580,16 @@ static b8 build_prop_request (u32 count, const char* const* words, char* out, us
     if (cstr_equal(verb, "text") && count == 3)
     {
         append_string(out, size, "text", words[2]);
+        return true;
+    }
+    if (cstr_equal(verb, "scale") && count == 3 && parse_float(words[2], a))
+    {
+        append(out, size, ",\"scale\":%.9g", (f64)a);
+        return true;
+    }
+    if (cstr_equal(verb, "model") && count == 3)
+    {
+        append_string(out, size, "model", words[2]);
         return true;
     }
     if (cstr_equal(verb, "motion") && count == 3 && cstr_equal(words[2], "still"))
@@ -854,6 +902,25 @@ static b8 build_request (u32 count, const char* const* words, i32 id, char* out,
     {
         append(out, size, ",\"cmd\":\"type_text\"");
         append_typed(out, size, count - 2, words + 2);
+    }
+    else if (cstr_equal(command, "models") && count == 1)
+    {
+        append(out, size, ",\"cmd\":\"get_models\"");
+    }
+    else if (cstr_equal(command, "model") && (count == 3 || count == 4) && cstr_equal(words[1], "load"))
+    {
+        char name[64] = {};
+        if (count == 4)
+        {
+            cstr_copy(name, sizeof(name), words[3]);
+        }
+        else
+        {
+            model_name_of(words[2], name, sizeof(name));
+        }
+        append(out, size, ",\"cmd\":\"load_model\"");
+        append_string(out, size, "name", name);
+        append_path(out, size, "path", words[2]);
     }
     else if (cstr_equal(command, "props") && count == 1)
     {

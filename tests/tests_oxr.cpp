@@ -4630,6 +4630,58 @@ TEST_F(OxrRecordTest, mid_session_recording_replays_through_the_api)
     EXPECT_EQ(oxr_record_status().divergences, 0u);
 }
 
+// A recording keeps the models it shows: a replay needs no file, and its state hashes match
+TEST_F(OxrRecordTest, mesh_props_replay_without_their_model_files)
+{
+    prepare();
+    char      dir[OS_MAX_PATH];
+    char      model_path[OS_MAX_PATH];
+    const u8* data = nullptr;
+    usize     size = 0;
+    ASSERT_TRUE(os_create_temp_directory("puppetxr_model", dir, sizeof(dir)));
+    defer { os_delete_tree(dir); };
+    cstr_format(model_path, sizeof(model_path), "%s/crate.glb", dir);
+    ASSERT_TRUE(w_find_embedded_model("case", data, size));
+    ASSERT_TRUE(os_write_file(model_path, data, size));
+
+    char path[OS_MAX_PATH];
+    test_path(path, sizeof(path), "puppetxr_test_mesh.xrrec");
+    ASSERT_EQ(oxr_load_model("crate", model_path), OXR_ControlResult::Ok);
+    SIM_Prop crate = { .kind = SIM_PropKind::Mesh, .motion = SIM_PropMotion::Circle, .pose = { { 0.0f, 0.0f, -1.0f }, zm::QUAT_IDENTITY }, .radius = 0.5f, .speed = 0.3f };
+    cstr_copy(crate.model, sizeof(crate.model), "crate");
+    ASSERT_NE(sim_add_prop(oxr_get_sim(), crate), 0u);
+    ASSERT_TRUE(oxr_record_start(path));
+    Observed recorded[12];
+    for (u32 f = 0; f < 12; f++)
+    {
+        if (f == 6)
+        {
+            // Loaded while recording: the chair comes in with the frame that first shows it
+            SIM_Prop chair = crate;
+            cstr_copy(chair.model, sizeof(chair.model), "chair");
+            ASSERT_NE(sim_add_prop(oxr_get_sim(), chair), 0u);
+        }
+        script(f);
+        recorded[f] = observe(frame());
+    }
+    ASSERT_TRUE(oxr_record_stop());
+    os_delete_tree(dir);
+
+    restart();
+    prepare();
+    ASSERT_EQ(sim_find_model(oxr_get_sim(), "crate"), nullptr);
+    ASSERT_TRUE(oxr_replay_start(path));
+    EXPECT_NE(sim_find_model(oxr_get_sim(), "crate"), nullptr) << "loaded from the recording";
+    Observed replayed[12];
+    run(replayed, 12, false);
+    expect_same(recorded, replayed, 12);
+    EXPECT_EQ(oxr_record_status().divergences, 0u);
+    const SIM_Prop* props = nullptr;
+    ASSERT_EQ(sim_props(oxr_get_sim(), props), 2u);
+    EXPECT_STREQ(props[1].model, "chair");
+    EXPECT_EQ(oxr_load_model("other", model_path), OXR_ControlResult::Invalid) << "the file is gone";
+}
+
 TEST_F(OxrRecordTest, divergence_is_reported)
 {
     char path[OS_MAX_PATH];
@@ -9640,6 +9692,80 @@ TEST_F(OxrPassthroughTest, props_show_in_passthrough)
     EXPECT_GT(body, 5u);
 }
 
+// A mesh prop shows its model's colours, follows its pose and shows a model replaced under its name
+TEST_F(OxrPassthroughTest, mesh_props_show_their_models_in_passthrough)
+{
+    start();
+    if (IsSkipped())
+    {
+        return;
+    }
+    look(false);
+    const XrCompositionLayerPassthroughFB layer_struct = passthrough_layer();
+    const XrCompositionLayerBaseHeader*   layers[]     = { (const XrCompositionLayerBaseHeader*)&layer_struct };
+    Array<u8>                             pixels       = {};
+    defer { pixels.release(); };
+    u32 width  = 0;
+    u32 height = 0;
+    submit_and_read(layers, 1, pixels, width, height);
+    const u8 wall[3] = { eye_pixel(pixels, width, height, 0, 0.0f, 0.0f)[0], eye_pixel(pixels, width, height, 0, 0.0f, 0.0f)[1], eye_pixel(pixels, width, height, 0, 0.0f, 0.0f)[2] };
+
+    // The built-in chair at twice its size: its back rest, sRGB of linear (0.10, 0.22, 0.30), at eye height
+    SIM_Prop chair = { .kind = SIM_PropKind::Mesh, .pose = { { 0.0f, 0.0f, -1.0f }, zm::QUAT_IDENTITY }, .scale = 2.0f };
+    cstr_copy(chair.model, sizeof(chair.model), "chair");
+    const u32 id = sim_add_prop(oxr_get_sim(), chair);
+    ASSERT_NE(id, 0u);
+    submit_and_read(layers, 1, pixels, width, height);
+    EXPECT_RGB(eye_pixel(pixels, width, height, 0, 0.0f, 0.0f), 89, 130, 149);
+    // PUPPETXR_TEST_DUMP_DIR=<dir> keeps the frame, to look at
+    if (os_env("PUPPETXR_TEST_DUMP_DIR"))
+    {
+        char shot[OS_MAX_PATH];
+        cstr_format(shot, sizeof(shot), "%s/passthrough_chair.png", os_env("PUPPETXR_TEST_DUMP_DIR"));
+        EXPECT_TRUE(oxr_save_screenshot(shot));
+    }
+
+    // Moved aside, the wall shows again
+    chair.pose.position.x = 1.5f;
+    ASSERT_TRUE(sim_update_prop(oxr_get_sim(), id, chair));
+    submit_and_read(layers, 1, pixels, width, height);
+    EXPECT_RGB(eye_pixel(pixels, width, height, 0, 0.0f, 0.0f), wall[0], wall[1], wall[2]);
+
+    // A model loaded under the chair's name replaces it: the case's dark shell, 3 m wide
+    char      dir[OS_MAX_PATH];
+    char      path[OS_MAX_PATH];
+    const u8* data = nullptr;
+    usize     size = 0;
+    ASSERT_TRUE(os_create_temp_directory("puppetxr_model", dir, sizeof(dir)));
+    defer { os_delete_tree(dir); };
+    cstr_format(path, sizeof(path), "%s/case.glb", dir);
+    ASSERT_TRUE(w_find_embedded_model("case", data, size));
+    ASSERT_TRUE(os_write_file(path, data, size));
+    ASSERT_EQ(oxr_load_model("chair", path), OXR_ControlResult::Ok);
+    // Regression: the frame parsed again what load_model had parsed outside the lock
+    const OXR_Runtime* rt     = oxr_get_runtime();
+    const W_Model*     parsed = nullptr;
+    for (u32 i = 0; i < rt->parsed_models_count; i++)
+    {
+        parsed = cstr_equal(rt->parsed_models[i].name, "chair") ? rt->parsed_models[i].model : parsed;
+    }
+    ASSERT_NE(parsed, nullptr) << "load_model hands its parse to the frames";
+    chair.pose  = { { 0.0f, 1.3f, -2.2f }, zm::QUAT_IDENTITY };
+    chair.scale = 14.0f;
+    ASSERT_TRUE(sim_update_prop(oxr_get_sim(), id, chair));
+    submit_and_read(layers, 1, pixels, width, height);
+    EXPECT_RGB(eye_pixel(pixels, width, height, 0, 0.0f, 0.0f), 97, 97, 100);
+    const W_Model* shown = nullptr;
+    for (u32 i = 0; i < rt->prop_models_count; i++)
+    {
+        shown = cstr_equal(rt->prop_models[i].name, "chair") ? rt->prop_models[i].model : shown;
+    }
+    EXPECT_EQ(shown, parsed) << "the frame shows the model load_model parsed";
+    EXPECT_EQ(rt->parsed_models_count, 0u);
+    EXPECT_EQ(oxr_load_model("Chair", path), OXR_ControlResult::Invalid);
+    EXPECT_EQ(oxr_load_model("chair", "/nonexistent/puppetxr.glb"), OXR_ControlResult::Invalid);
+}
+
 TEST_F(OxrPassthroughTest, system_reports_color_passthrough)
 {
     XrSystemPassthroughProperties2FB properties2 = { .type = XR_TYPE_SYSTEM_PASSTHROUGH_PROPERTIES2_FB };
@@ -10508,6 +10634,21 @@ struct OxrDepthTest : OxrVulkanTest
         return dx.xrAcquireEnvironmentDepthImageMETA(provider, &acquire, &out_image);
     }
 
+    // Frames until an image of a capture after `after` is acquired; the frame stays begun
+    b8 acquire_after (XrSpace space, XrEnvironmentDepthImageMETA& out_image, XrTime& out_time, XrTime after)
+    {
+        for (u32 frame = 0; frame < 60; frame++)
+        {
+            XrEnvironmentDepthImageTimestampMETA timestamp = {};
+            if (begin_and_acquire(space, out_image, out_time, &timestamp) == XR_SUCCESS && timestamp.captureTime > after)
+            {
+                return true;
+            }
+            end(out_time);
+        }
+        return false;
+    }
+
     void end (XrTime time)
     {
         const XrFrameEndInfo end_info = { .type = XR_TYPE_FRAME_END_INFO, .displayTime = time, .environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE };
@@ -10902,7 +11043,7 @@ TEST_F(OxrDepthTest, the_image_is_the_traced_depth_texel_for_texel)
         const XrPosef& p    = image.views[v].pose;
         const Pose     view = { { p.position.x, p.position.y, p.position.z }, { p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w } };
         const Fov      fov  = { image.views[v].fov.angleLeft, image.views[v].fov.angleRight, image.views[v].fov.angleUp, image.views[v].fov.angleDown };
-        w_trace_depth(oxr_get_runtime()->world, view, fov, image.nearZ, w, h, 0, h, traced.data);
+        w_trace_depth(oxr_get_runtime()->world, nullptr, 0, view, fov, image.nearZ, w, h, 0, h, traced.data);
         u32 differ = 0;
         for (u32 i = 0; i < w * h; i++)
         {
@@ -10942,6 +11083,75 @@ TEST_F(OxrEveryFrameDepthTest, captures_come_every_frame_and_show_45_ms_later)
         end(time);
     }
     EXPECT_GE(captures, 15u);
+}
+
+// A chair moved in front of the wall shows in the depth, and the wall again once it moved on;
+// the image is the room and the props traced together
+TEST_F(OxrDepthTest, a_moving_mesh_prop_shows_in_depth_and_leaves_it)
+{
+    start();
+    ASSERT_EQ(dx.xrStartEnvironmentDepthProviderMETA(provider), XR_SUCCESS);
+    const XrSpace stage = reference_space(XR_REFERENCE_SPACE_TYPE_STAGE);
+    sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { 0.0f, 1.6f, 0.0f }, zm::QUAT_IDENTITY });
+    SIM_Prop chair = { .kind = SIM_PropKind::Mesh, .pose = { { 0.0f, 0.0f, -0.8f }, zm::QUAT_IDENTITY }, .scale = 2.0f };
+    cstr_copy(chair.model, sizeof(chair.model), "chair");
+    const u32 id = sim_add_prop(oxr_get_sim(), chair);
+    ASSERT_NE(id, 0u);
+
+    XrEnvironmentDepthImageMETA image = {};
+    XrTime                      time  = 0;
+    ASSERT_TRUE(acquire_after(stage, image, time, 0));
+    VkImage    images[8] = {};
+    u32        w         = 0;
+    u32        h         = 0;
+    ASSERT_LT(image.swapchainIndex, depth_images(images, w, h));
+    Array<u16> texels = {};
+    Array<u16> traced = {};
+    defer {
+        texels.release();
+        traced.release();
+    };
+    read_depth(images[image.swapchainIndex], 0, w, h, texels);
+    const f32 wall  = 1.0f - 0.1f / 1.5f;
+    const f32 ahead = texels[(h / 2) * w + w / 2] / 65535.0f;
+    EXPECT_LT(ahead, 1.0f - 0.1f / 1.3f) << "the back rest is nearer than the wall";
+    EXPECT_GT(ahead, 1.0f - 0.1f / 0.9f);
+
+    // What the image holds is the room and the chair traced together
+    W_Instance instances[SIM_MAX_PROPS];
+    const SIM_Prop* props = nullptr;
+    sim_props(oxr_get_sim(), props);
+    const OXR_Runtime* rt = oxr_get_runtime();
+    W_Model*           model = nullptr;
+    for (u32 i = 0; i < rt->prop_models_count; i++)
+    {
+        model = cstr_equal(rt->prop_models[i].name, "chair") ? rt->prop_models[i].model : model;
+    }
+    ASSERT_NE(model, nullptr);
+    instances[0] = { .model = model, .pose = zm::pose_mul(rt->room_from_stage, props[0].pose), .scale = { 2.0f, 2.0f, 2.0f } }; // still, so its pose at any capture
+    traced.resize((usize)w * h);
+    const XrPosef& p    = image.views[0].pose;
+    const Pose     view = { { p.position.x, p.position.y, p.position.z }, { p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w } };
+    const Fov      fov  = { image.views[0].fov.angleLeft, image.views[0].fov.angleRight, image.views[0].fov.angleUp, image.views[0].fov.angleDown };
+    w_trace_depth(rt->world, instances, 1, view, fov, image.nearZ, w, h, 0, h, traced.data);
+    u32 differ = 0;
+    for (u32 i = 0; i < w * h; i++)
+    {
+        differ += texels[i] != traced[i] ? 1u : 0u;
+    }
+    EXPECT_EQ(differ, 0u);
+    end(time);
+
+    // Pushed on along +X at 50 m/s, the first capture after it set off no longer shows it
+    chair.motion = SIM_PropMotion::Linear;
+    chair.target = { 40.0f, 0.0f, -0.8f };
+    chair.speed  = 50.0f;
+    ASSERT_TRUE(sim_update_prop(oxr_get_sim(), id, chair));
+    sim_props(oxr_get_sim(), props);
+    ASSERT_TRUE(acquire_after(stage, image, time, props[0].start + 30000000));
+    read_depth(images[image.swapchainIndex], 0, w, h, texels);
+    EXPECT_NEAR(texels[(h / 2) * w + w / 2] / 65535.0f, wall, 2e-3f);
+    end(time);
 }
 
 TEST_F(OxrQuestDepthTest, captures_come_at_25_hz_and_show_45_ms_later_in_four_images)
@@ -11088,7 +11298,7 @@ TEST_F(OxrQuestDepthTest, depth_lines_up_through_the_reported_views_not_the_eyes
             u32 off_eye      = 0;
             u32 noisy        = 0;
             u32 counted      = 0;
-            w_trace_depth(oxr_get_runtime()->world, reported, fov, image.nearZ, w, h, 0, h, traced.data);
+            w_trace_depth(oxr_get_runtime()->world, nullptr, 0, reported, fov, image.nearZ, w, h, 0, h, traced.data);
             for (u32 y = 0; y < h; y++)
             {
                 for (u32 x = 0; x < w - w / 10; x++)
@@ -11102,7 +11312,7 @@ TEST_F(OxrQuestDepthTest, depth_lines_up_through_the_reported_views_not_the_eyes
             EXPECT_GT(noisy, counted / 2) << "the sensor's noise";
             const u16 uncovered = (u16)zm::round((1.0f - image.nearZ / 29.0f) * 65535.0f);
             EXPECT_EQ(texels[(u32)(0.69f * (f32)h) * w + w - 1], uncovered) << "the uncovered band at the right view's outer edge";
-            w_trace_depth(oxr_get_runtime()->world, eye, eye_fov, image.nearZ, w, h, 0, h, traced.data);
+            w_trace_depth(oxr_get_runtime()->world, nullptr, 0, eye, eye_fov, image.nearZ, w, h, 0, h, traced.data);
             for (u32 y = 0; y < h; y++)
             {
                 for (u32 x = 0; x < w - w / 10; x++)
@@ -11635,6 +11845,34 @@ TEST_F(OxrRaycastTest, rays_hit_the_global_mesh_in_view)
 
     ASSERT_EQ(oxr_set_room(nullptr), OXR_RoomResult::Ok);
     EXPECT_EQ(cast(raycaster, stage, { 0.0f, 1.6f, 0.0f }, { 0.0f, 0.0f, -1.0f }).status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_NO_HIT_META);
+}
+
+// Quest's raycast answers from depth, so props stop rays as they hide what is behind them
+TEST_F(OxrRaycastTest, rays_stop_at_props)
+{
+    start_raycast();
+    const XrEnvironmentRaycasterMETA raycaster = make_raycaster();
+    sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { 0.0f, 1.6f, 0.0f }, zm::QUAT_IDENTITY });
+    SIM_Prop chair = { .kind = SIM_PropKind::Mesh, .pose = { { 0.0f, 0.0f, -0.8f }, zm::QUAT_IDENTITY }, .scale = 2.0f };
+    cstr_copy(chair.model, sizeof(chair.model), "chair");
+    const u32 id = sim_add_prop(oxr_get_sim(), chair);
+    ASSERT_NE(id, 0u);
+    XrEnvironmentRaycastHitMETA hit = cast(raycaster, stage, { 0.0f, 1.6f, 0.0f }, { 0.0f, 0.0f, -1.0f });
+    ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META);
+    EXPECT_GT(hit.pose.position.z, -1.3f) << "the back rest, not the wall";
+    EXPECT_LT(hit.pose.position.z, -0.9f);
+    const Quat facing = { hit.pose.orientation.x, hit.pose.orientation.y, hit.pose.orientation.z, hit.pose.orientation.w };
+    EXPECT_TRUE(zm::near(zm::rotate(facing, { 0, 0, 1 }), Vec3{ 0, 0, 1 }, 1e-3f)) << "the back rest faces the ray";
+    EXPECT_EQ(cast(raycaster, stage, { 0.0f, 1.6f, 0.0f }, { 0.0f, 0.0f, -1.0f }, 0.5f).status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_NO_HIT_META);
+
+    // A keyboard on the table stops a ray straight down 9 mm above the table top
+    ASSERT_TRUE(sim_remove_prop(oxr_get_sim(), id));
+    const SIM_Prop keyboard = { .kind = SIM_PropKind::Keyboard, .pose = { { 0.5f, 0.759f, 0.0f }, zm::QUAT_IDENTITY } };
+    ASSERT_NE(sim_add_prop(oxr_get_sim(), keyboard), 0u);
+    sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { 0.5f, 1.6f, 0.0f }, { -0.70710678f, 0.0f, 0.0f, 0.70710678f } });
+    hit = cast(raycaster, stage, { 0.5f, 1.6f, 0.0f }, { 0.0f, -1.0f, 0.0f });
+    ASSERT_EQ(hit.status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_HIT_META);
+    EXPECT_NEAR(hit.pose.position.y, 0.768f, 1e-3f);
 }
 
 TEST_F(OxrRaycastTest, rays_hit_the_room_where_it_lies_around_the_moved_stage)

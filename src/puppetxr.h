@@ -57,7 +57,7 @@ typedef long long          PUPPETXR_I64;
 extern "C" {
 #endif
 
-#define PUPPETXR_API_VERSION 1
+#define PUPPETXR_API_VERSION 2
 
 #define PUPPETXR_MAKE_VERSION(major, minor, patch) (((PUPPETXR_U32)(major) << 22) | ((PUPPETXR_U32)(minor) << 12) | (PUPPETXR_U32)(patch))
 #define PUPPETXR_VERSION_GET_MAJOR(version)     ((PUPPETXR_U32)(version) >> 22)
@@ -191,6 +191,7 @@ typedef enum PUPPETXR_PropKind
 {
     PUPPETXR_PROP_KEYBOARD   = 0, /* +Y up, its front at +Z, origin at its bounding box centre */
     PUPPETXR_PROP_QR_CODE    = 1, /* centred in its XY plane, facing +Z */
+    PUPPETXR_PROP_MESH       = 2, /* a model, in its own frame (glTF: +Y up, front at +Z); API version 2 */
     PUPPETXR_PROP_KIND_MAX_ENUM = 0x7fffffff
 } PUPPETXR_PropKind;
 
@@ -223,6 +224,9 @@ typedef struct PUPPETXR_Prop
     float            size;        /* QR code edge length, 0.01 to 10 m */
     char             text[214];   /* QR code text, up to 213 bytes */
     PUPPETXR_Pose    current;     /* get_props: where it is now */
+    /* API version 2; a struct_size without them is a prop of scale 1 and no model */
+    float            scale;       /* mesh: along every axis of the model, 0.01 to 100; 0 is 1 */
+    char             model[64];   /* mesh: a model's name, built in or loaded by load_model */
 } PUPPETXR_Prop;
 
 /* The app's XR_META_virtual_keyboard. */
@@ -395,6 +399,13 @@ typedef struct PUPPETXR_Api
        instance is destroyed; PUPPETXR_ERROR_BUSY while recording or replaying (a recording keeps the
        faults pending as it starts, and its replay fails the same calls). */
     PUPPETXR_Result (*set_frame_fault)       (PUPPETXR_FrameOp op, PUPPETXR_I32 xr_result, PUPPETXR_U32 count);
+
+    /* API version 2 */
+
+    /* Loads a .glb or .gltf file as the model `name` ([a-z0-9_-], up to 63 characters) mesh props
+       may name, replacing a model of that name (docs/props.md, Models). Recorded; a file that is no
+       model puppetxr reads is PUPPETXR_ERROR_INVALID_ARGUMENT, PUPPETXR_ERROR_BUSY during a replay. */
+    PUPPETXR_Result (*load_model)            (const char* name, const char* path);
 } PUPPETXR_Api;
 
 /* Fills the lower of `version` and the runtime's PUPPETXR_API_VERSION; version 0 is invalid */
