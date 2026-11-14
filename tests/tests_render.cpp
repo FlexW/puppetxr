@@ -18,6 +18,17 @@
 #include "environment_depth_upload.frag.h"
 #include "blocks.h"
 
+// Sanitizers make memory accesses several times slower, so upper bounds on wall-clock time scale
+// with them
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer) || __has_feature(address_sanitizer)
+#define TEST_TIME_SCALE 8ull
+#endif
+#endif
+#if !defined(TEST_TIME_SCALE)
+#define TEST_TIME_SCALE 1ull
+#endif
+
 namespace
 {
 
@@ -349,6 +360,56 @@ TEST_P(RenderTest, clear_and_read_back)
 
     r_destroy_image(device, image);
     EXPECT_FALSE(r_is_valid(device, image));
+}
+
+// Reads of every size see what the image holds now, through a staging buffer kept between reads
+TEST_P(RenderTest, read_backs_see_the_latest_contents_at_any_size)
+{
+    const R_ImageHandle small = make_target(8, 4, 1);
+    const R_ImageHandle large = make_target(64, 32, 1);
+    ASSERT_TRUE(r_is_valid(device, small));
+    ASSERT_TRUE(r_is_valid(device, large));
+    static u8 pixels[64 * 32 * 4] = {};
+    clear_layer(small, 0, { 1.0f, 0.0f, 0.0f, 1.0f });
+    ASSERT_TRUE(r_read_image(device, small, 0, R_ImageLayout::ColorAttachment, pixels, 8 * 4 * 4));
+    expect_pixel(pixels, 8, 7, 3, 255, 0, 0, 255);
+    clear_layer(large, 0, { 0.0f, 0.0f, 1.0f, 1.0f });
+    ASSERT_TRUE(r_read_image(device, large, 0, R_ImageLayout::ColorAttachment, pixels, sizeof(pixels)));
+    expect_pixel(pixels, 64, 63, 31, 0, 0, 255, 255);
+    clear_layer(small, 0, { 0.0f, 1.0f, 0.0f, 1.0f });
+    ASSERT_TRUE(r_read_image(device, small, 0, R_ImageLayout::ColorAttachment, pixels, 8 * 4 * 4));
+    expect_pixel(pixels, 8, 0, 0, 0, 255, 0, 255);
+    expect_pixel(pixels, 8, 7, 3, 0, 255, 0, 255);
+    r_destroy_image(device, small);
+    r_destroy_image(device, large);
+}
+
+// Regression: Vulkan read back through the first host visible, coherent memory type, on an AMD
+// GPU the GPU's own memory, which the CPU read uncached: a frame of two 1680 x 1760 eyes took 60 ms
+// and the control server's reads held apps at 14 fps. Best of five, as the machine may be busy;
+// Vulkan only, whose memory types puppetxr picks
+TEST_P(RenderTest, reading_back_a_frame_takes_milliseconds)
+{
+    if (GetParam() != R_Backend::Vulkan)
+    {
+        GTEST_SKIP() << "the other backends read through cached memory by design; their time is the driver's";
+    }
+    const u32           width  = 3360;
+    const u32           height = 1760;
+    const R_ImageHandle image  = make_target(width, height, 1);
+    ASSERT_TRUE(r_is_valid(device, image));
+    clear_layer(image, 0, { 0.2f, 0.4f, 0.6f, 1.0f });
+    u8* pixels = (u8*)os_memory_alloc((usize)width * height * 4);
+    defer { os_memory_release(pixels); };
+    u64 best = ~0ull;
+    for (u32 i = 0; i < 5; i++)
+    {
+        const u64 start = os_monotonic_ns();
+        ASSERT_TRUE(r_read_image(device, image, 0, R_ImageLayout::ColorAttachment, pixels, (usize)width * height * 4));
+        best = zm::min(best, os_monotonic_ns() - start);
+    }
+    EXPECT_LT(best, 60000000ull * TEST_TIME_SCALE) << "best of five reads took " << (f64)best * 1e-6 << " ms";
+    r_destroy_image(device, image);
 }
 
 TEST_P(RenderTest, composite_samples_layers_into_target)
