@@ -11,8 +11,7 @@
 # The image is x86_64, also on ARM hosts (emulated), since llvmpipe's pixels depend on the CPU.
 # The checkout is mounted at its own path and the container runs as the calling user. A proxy in
 # HTTPS_PROXY and a CA in SSL_CERT_FILE are passed through, for the build and for downloads.
-# PUPPETXR_CMAKE_ARGS adds configure arguments (e.g. FETCHCONTENT_SOURCE_DIR_<dep> for local
-# dependency checkouts), PUPPETXR_DOCKER_ARGS docker run arguments (e.g. -v to mount them).
+# PUPPETXR_CMAKE_ARGS adds configure arguments, PUPPETXR_DOCKER_ARGS docker run arguments.
 # PUPPETXR_CCACHE=1 compiles through ccache, its cache under $build/home.
 
 set -eu

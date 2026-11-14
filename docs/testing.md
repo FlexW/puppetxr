@@ -510,8 +510,7 @@ from macOS or Windows. The image is x86_64, emulated on ARM hosts (with Colima o
 with `--vz-rosetta`; QEMU works but is several times slower). The Dockerfile needs BuildKit
 (`docker buildx`). A proxy (`HTTPS_PROXY`) and its CA (`SSL_CERT_FILE`)
 are passed through; `PUPPETXR_CMAKE_ARGS` and `PUPPETXR_DOCKER_ARGS` add configure and `docker run`
-arguments, e.g. `FETCHCONTENT_SOURCE_DIR_<dep>` with a `-v` mount for local dependency
-checkouts. All sample references come from it. llvmpipe JITs for the host CPU, so another x86 CPU
+arguments. All sample references come from it. llvmpipe JITs for the host CPU, so another x86 CPU
 moves pixels by 1 and an Intel one some by up to 3 (the references are from AMD CPUs): `run.sh` and
 the Linux `samples` entry pass `--tolerance 1 --intel-tolerance 3`, and the driver prints which it
 took (`tolerance 3 on GenuineIntel`; `--cpuinfo` reads another file than `/proc/cpuinfo`).

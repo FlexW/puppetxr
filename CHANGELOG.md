@@ -7,6 +7,7 @@ config start with **Breaking:**.
 
 ## Unreleased
 
+- The dependencies are part of the repository (`third_party/`, versions and licenses in `third_party/README.md`): building no longer downloads anything, and the source release is one tarball that builds offline; the separate `-src-full.tar.gz` is gone.
 - Body tracking: the skeleton's hierarchy is a Quest 3's: the hand's wrist hangs from the lower arm and the palm from the wrist (both hung from the wrist twist), and the root's parent is -1 in the full body joint set too (was `XR_FULL_BODY_JOINT_NONE_META`). A hand wrist rotation is now relative to the lower arm.
 - Body tracking: an untracked hand bends its fingers by their joints' rotations (`body joint right_hand_index_proximal rot ...`); before, hand joint rotations were stored but had no effect.
 

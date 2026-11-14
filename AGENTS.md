@@ -42,8 +42,9 @@ limitations or private context.
    only for a non-obvious invariant, a spec requirement (cite the section), a
    workaround or a tricky algorithm. No comments that restate code, no narration,
    no doc headers on functions. Section banners (`//\n// Swapchains\n//`) are fine.
-8. **Dependencies** only if unavoidable and battle tested, fetched with CMake
-   `FetchContent`, pinned by tag and hash. Prefer writing it ourselves.
+8. **Dependencies** only if unavoidable and battle tested, part of the repository in
+   `third_party/`, trimmed to what we build, with their license and version in
+   `third_party/README.md`. Nothing is downloaded at configure time. Prefer writing it ourselves.
 9. **Docs.** Every feature updates the matching `docs/*.md`. Docs are for humans and
    LLMs: short sections, file paths, invariants, no narrative.
 10. **Open source.** Everything in the repo stands on its own for any reader. No reference

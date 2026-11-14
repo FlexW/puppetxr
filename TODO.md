@@ -17,7 +17,7 @@ Linux release (`tools/dist/dist.sh`, docs/building.md "Linux releases"):
 - [ ] the tarball runs on an old distribution (e.g. Debian 10) and a new one
 
 Source release (`tools/dist/dist-src.sh`, docs/building.md "Source releases"):
-- [ ] the real dependency downloads match their `URL_HASH`; the unpacked `-src-full.tar.gz` configures, builds and passes the tests with the network off
+- [ ] the unpacked `-src.tar.gz` configures, builds and passes the tests with the network off
 
 macOS (step 10; docs/building.md "macOS", "macOS releases"):
 - [x] `mac-debug` passes all tests on Apple silicon (macOS 27, Apple clang 21, MoltenVK 1.4); `mac-asan` too; GCC 16 compiles the sources warning free (`-fsyntax-only`; SDL's Cocoa code needs clang, so no GCC build)
@@ -59,7 +59,7 @@ GPUs:
 ## 1. Project docs and skeleton
 - [x] AGENTS.md (CLAUDE.md imports it), README.md, LICENSE (MIT), .gitignore
 - [x] docs/: README, architecture, style, building, testing, stubs for the layer docs
-- [x] CMake skeleton: options, FetchContent in third_party/, puppetxr_core object library, libpuppetxr shared library, tests target, manifest generation
+- [x] CMake skeleton: options, dependencies in third_party/, puppetxr_core object library, libpuppetxr shared library, tests target, manifest generation
 - [x] install step: library, relocatable manifest, optional active_runtime.json (PUPPETXR_INSTALL_ACTIVE_RUNTIME)
 
 ## 2. platform + base
@@ -173,7 +173,8 @@ GPUs:
 - [x] clang-tidy (`.clang-tidy`, `clang-tidy` preset fails the build on findings), code const correct
 - [x] `dist` preset: Release, full LTO, hardened, reproducible, stripped with separate debug files, logging asserts, relocatable install
 - [x] Linux release builds on glibc 2.28: `tools/dist/dist.sh` in an AlmaLinux 8 container, static libstdc++, glibc floor test, reproducible tarballs (docs/building.md)
-- [x] source release: `tools/dist/dist-src.sh`, plain and with vendored dependencies (offline), LFS content resolved, reproducible tarballs (docs/building.md)
+- [x] source release: `tools/dist/dist-src.sh`, one tarball with the dependencies of `third_party/` (offline), LFS content resolved, reproducible (docs/building.md)
+- [x] dependencies in the repository: `third_party/` holds the trimmed sources, licenses and patched CMake builds, versions in `third_party/README.md`; no download at configure time
 - [x] Windows release script: `tools/dist/dist.ps1`, clang MSVC ABI, toolchain pinned by check, DLL import test, Windows 10 1809 API floor, reproducible zips, `install-runtime.ps1` (docs/building.md)
 - [x] releases from a tag: `tools/release.sh` (version bump, CHANGELOG.md, tag, push), `.github/workflows/release.yml` builds Linux, Windows (hosted runner, pinned LLVM and shaderc) and source, drafts the GitHub release with SHA256SUMS (docs/building.md)
 - [ ] once the repository is public: build provenance of the release files (`actions/attest-build-provenance` in the `release` job of `.github/workflows/release.yml`, permissions `id-token: write` and `attestations: write`; private repositories need GitHub Enterprise Cloud); done when `gh attestation verify <file> --repo FlexW/puppetxr` passes and docs/building.md "Releasing" says how to verify

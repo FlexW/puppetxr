@@ -54,7 +54,7 @@ Agents working on this repository: read `AGENTS.md`.
 ## Build
 
 Requirements: CMake 3.25+, Ninja, a C++20 compiler (GCC, clang or MSVC), `glslc` (Vulkan
-SDK or shaderc). Dependencies are fetched by CMake.
+SDK or shaderc). The dependencies are in `third_party/`; the build downloads nothing.
 
 ```
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$HOME/.local
@@ -110,4 +110,5 @@ Details in `docs/testing.md`.
 
 ## Docs
 
-`docs/README.md` lists every document. License: MIT (`LICENSE`).
+`docs/README.md` lists every document. License: MIT (`LICENSE`); the code in `third_party/` keeps
+its own licenses (`third_party/README.md`).

@@ -1,20 +1,11 @@
-include(FetchContent)
-set(FETCHCONTENT_QUIET OFF)
+# The dependencies live in this directory, trimmed to what puppetxr builds; README.md lists their
+# versions and local changes. Nothing is downloaded at configure time.
 
 # lld-link (LLVM 22 and 23) never finishes the PDB of a link with third-party code as full LTO
 # bitcode with CodeView debug info (the Windows dist build), so on Windows only our code is LTO
 if (WIN32)
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
 endif ()
-
-# The full source release ships the dependencies in vendor/ (tools/dist/dist-src.sh); an explicit
-# FETCHCONTENT_SOURCE_DIR_* still wins
-foreach (dep SDL3 jsmn googletest OpenXR VulkanHeaders volk imgui implot stb)
-    string(TOUPPER ${dep} upper)
-    if (IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/vendor/${dep} AND NOT FETCHCONTENT_SOURCE_DIR_${upper})
-        set(FETCHCONTENT_SOURCE_DIR_${upper} ${CMAKE_CURRENT_SOURCE_DIR}/vendor/${dep})
-    endif ()
-endforeach ()
 
 #
 # SDL3, static, trimmed to window, events, input, time, memory and logging
@@ -47,86 +38,7 @@ endif ()
 # Pinned so SDL does not stamp the git revision of whatever repository it is built inside
 set(SDL_REVISION "SDL-3.4.18" CACHE STRING "" FORCE)
 
-FetchContent_Declare(SDL3
-    URL https://github.com/libsdl-org/SDL/archive/refs/tags/release-3.4.18.tar.gz
-    URL_HASH SHA256=c4b08b950bd29d83caae0ab8d884298d27046a9d30700fb42841c50992665c90
-    DOWNLOAD_EXTRACT_TIMESTAMP ON
-    EXCLUDE_FROM_ALL
-    SYSTEM
-)
-
-#
-# jsmn, header only
-#
-
-FetchContent_Declare(jsmn
-    URL https://github.com/zserge/jsmn/archive/refs/tags/v1.1.0.tar.gz
-    URL_HASH SHA256=5f0913a10657fe7ec8d5794ccf00a01000e3e1f2f1e1f143c34a0f7b47edcb38
-    DOWNLOAD_EXTRACT_TIMESTAMP ON
-    EXCLUDE_FROM_ALL
-)
-
-#
-# googletest
-#
-
-set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
-set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-
-FetchContent_Declare(googletest
-    URL https://github.com/google/googletest/archive/refs/tags/v1.18.0.tar.gz
-    URL_HASH SHA256=6e3191c1455468b3fc35a417fb565c1c5071aee1b7e7f85e30cf48a98d37d8b5
-    DOWNLOAD_EXTRACT_TIMESTAMP ON
-    EXCLUDE_FROM_ALL
-    SYSTEM
-)
-
-#
-# Declared now, made available by the steps that need them
-#
-
-FetchContent_Declare(OpenXR
-    URL https://github.com/KhronosGroup/OpenXR-SDK/archive/refs/tags/release-1.1.65.tar.gz
-    URL_HASH SHA256=27aa797baf680c5f836b6138e78e59e2f72d6becfef6d4587ed9a57756d6d3b3
-    DOWNLOAD_EXTRACT_TIMESTAMP ON
-    EXCLUDE_FROM_ALL
-)
-FetchContent_Declare(VulkanHeaders
-    URL https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/vulkan-sdk-1.4.363.0.tar.gz
-    URL_HASH SHA256=4a078be12bef21cfebc09d878b77a63cff9d68f899254a0b00d0e37ef73e7f7e
-    DOWNLOAD_EXTRACT_TIMESTAMP ON
-    EXCLUDE_FROM_ALL
-    SYSTEM
-)
-FetchContent_Declare(volk
-    URL https://github.com/zeux/volk/archive/refs/tags/vulkan-sdk-1.4.363.0.tar.gz
-    URL_HASH SHA256=1547d8d74395d4048fb3f4a6313da56db626e89b55db238d0d7e8944c8a645f3
-    DOWNLOAD_EXTRACT_TIMESTAMP ON
-    EXCLUDE_FROM_ALL
-    SYSTEM
-)
-FetchContent_Declare(imgui
-    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.93.0.tar.gz
-    URL_HASH SHA256=f7bf6bc76e5d79d40d751096663e6c5d18daf08129dd52e7f7b09e4251c8eeee
-    DOWNLOAD_EXTRACT_TIMESTAMP ON
-    EXCLUDE_FROM_ALL
-)
-# 1.1 is the first release that builds against ImGui 1.93
-FetchContent_Declare(implot
-    URL https://github.com/epezent/implot/archive/refs/tags/v1.1.tar.gz
-    URL_HASH SHA256=f13e1e111db2df1687e1568644429c2184eb5115867dc76bb0a8bd17a2e72ae8
-    DOWNLOAD_EXTRACT_TIMESTAMP ON
-    EXCLUDE_FROM_ALL
-)
-FetchContent_Declare(stb
-    URL https://github.com/nothings/stb/archive/a7d4c2175630e1ea5b6f8dd00ab96fed0b97b96d.tar.gz
-    URL_HASH SHA256=ae498e10fadeba0c2e7aa86c71cc9989c4d895201cd26b8b72061c76cfde4edf
-    DOWNLOAD_EXTRACT_TIMESTAMP ON
-    EXCLUDE_FROM_ALL
-)
-
-FetchContent_MakeAvailable(SDL3 jsmn)
+add_subdirectory(sdl EXCLUDE_FROM_ALL SYSTEM)
 # The Objective-C runtime keeps one class per name for the whole process, whatever the export list
 # says, and the app may bring its own SDL3: SDL's classes get puppetxr's prefix
 if (APPLE)
@@ -142,8 +54,14 @@ if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
 elseif (MSVC)
     target_compile_options(SDL3-static PRIVATE /w)
 endif ()
+
+#
+# googletest
+#
+
 if (PUPPETXR_BUILD_TESTS)
-    FetchContent_MakeAvailable(googletest)
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    add_subdirectory(googletest EXCLUDE_FROM_ALL SYSTEM)
     # gtest picks its own runtime for MSVC; ours must match (CMakeLists.txt)
     if (CMAKE_MSVC_RUNTIME_LIBRARY)
         set_target_properties(gtest gtest_main PROPERTIES MSVC_RUNTIME_LIBRARY "${CMAKE_MSVC_RUNTIME_LIBRARY}")
@@ -161,24 +79,19 @@ if (PUPPETXR_BUILD_TESTS)
     endif ()
 endif ()
 
-add_library(jsmn INTERFACE)
-target_include_directories(jsmn SYSTEM INTERFACE ${jsmn_SOURCE_DIR})
+#
+# jsmn, header only
+#
 
-# The runtime only needs the headers; the loader target exists for apps and is built on demand.
-set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(BUILD_API_LAYERS OFF CACHE BOOL "" FORCE)
-set(BUILD_CONFORMANCE_TESTS OFF CACHE BOOL "" FORCE)
-# EXCLUDE_FROM_ALL of FetchContent_Declare, which keeps the loader's install rules out of ours,
-# needs CMake 3.28; older versions take the subdirectory by hand
-if (CMAKE_VERSION VERSION_LESS 3.28)
-    FetchContent_GetProperties(OpenXR)
-    if (NOT openxr_POPULATED)
-        FetchContent_Populate(OpenXR)
-        add_subdirectory(${openxr_SOURCE_DIR} ${openxr_BINARY_DIR} EXCLUDE_FROM_ALL)
-    endif ()
-else ()
-    FetchContent_MakeAvailable(OpenXR)
-endif ()
+add_library(jsmn INTERFACE)
+target_include_directories(jsmn SYSTEM INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/jsmn)
+
+#
+# OpenXR SDK: the runtime only needs the headers; the loader target exists for apps and is built on
+# demand
+#
+
+add_subdirectory(openxr EXCLUDE_FROM_ALL)
 # The loader's -Werror=undef trips over mingw's headers
 if (MINGW AND TARGET openxr_loader)
     target_compile_options(openxr_loader PRIVATE -Wno-undef)
@@ -192,23 +105,19 @@ if (MSVC AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND TARGET openxr_loader 
     endif ()
 endif ()
 # The API trace's printers are generated from the registry of the same pin (tools/gen_trace.py)
-set(PUPPETXR_OPENXR_REGISTRY ${openxr_SOURCE_DIR}/specification/registry/xr.xml CACHE INTERNAL "")
+set(PUPPETXR_OPENXR_REGISTRY ${CMAKE_CURRENT_SOURCE_DIR}/openxr/specification/registry/xr.xml CACHE INTERNAL "")
 add_library(openxr_headers INTERFACE)
-target_include_directories(openxr_headers SYSTEM INTERFACE ${openxr_SOURCE_DIR}/include)
+target_include_directories(openxr_headers SYSTEM INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/openxr/include)
 target_compile_definitions(openxr_headers INTERFACE XR_NO_PROTOTYPES)
 
 #
 # Vulkan headers and volk (loads the Vulkan loader at runtime, nothing to link)
 #
 
-set(VULKAN_HEADERS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
-set(VULKAN_HEADERS_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
-set(VULKAN_HEADERS_ENABLE_MODULE OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(VulkanHeaders)
+add_subdirectory(vulkan-headers EXCLUDE_FROM_ALL SYSTEM)
 
 set(VOLK_PULL_IN_VULKAN OFF CACHE BOOL "" FORCE)
-set(VOLK_INSTALL OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(volk)
+add_subdirectory(volk EXCLUDE_FROM_ALL SYSTEM)
 target_link_libraries(volk PUBLIC Vulkan::Headers)
 target_compile_definitions(volk PUBLIC VK_NO_PROTOTYPES)
 set_target_properties(volk PROPERTIES C_VISIBILITY_PRESET hidden)
@@ -218,24 +127,22 @@ set_target_properties(volk PROPERTIES C_VISIBILITY_PRESET hidden)
 #
 
 if (NOT PUPPETXR_HEADLESS_ONLY)
-    FetchContent_MakeAvailable(imgui)
     add_library(imgui STATIC
-        ${imgui_SOURCE_DIR}/imgui.cpp
-        ${imgui_SOURCE_DIR}/imgui_draw.cpp
-        ${imgui_SOURCE_DIR}/imgui_tables.cpp
-        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_draw.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_tables.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_widgets.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends/imgui_impl_sdl3.cpp
     )
-    target_include_directories(imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+    target_include_directories(imgui SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/imgui ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends)
     target_link_libraries(imgui PUBLIC SDL3::SDL3-static)
     # The test engine hooks let ui.cpp record where items are, for tests that click them
     target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS IMGUI_DISABLE_DEMO_WINDOWS IMGUI_ENABLE_TEST_ENGINE)
     set_target_properties(imgui PROPERTIES CXX_VISIBILITY_PRESET hidden)
 
     # ImPlot: the performance tab's frame time graph
-    FetchContent_MakeAvailable(implot)
-    add_library(implot STATIC ${implot_SOURCE_DIR}/implot.cpp ${implot_SOURCE_DIR}/implot_items.cpp)
-    target_include_directories(implot SYSTEM PUBLIC ${implot_SOURCE_DIR})
+    add_library(implot STATIC ${CMAKE_CURRENT_SOURCE_DIR}/implot/implot.cpp ${CMAKE_CURRENT_SOURCE_DIR}/implot/implot_items.cpp)
+    target_include_directories(implot SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/implot)
     target_link_libraries(implot PUBLIC imgui)
     set_target_properties(implot PROPERTIES CXX_VISIBILITY_PRESET hidden)
 endif ()
@@ -244,6 +151,5 @@ endif ()
 # stb_image_write for PNG screenshots, stb_image for room albedo atlases
 #
 
-FetchContent_MakeAvailable(stb)
 add_library(stb INTERFACE)
-target_include_directories(stb SYSTEM INTERFACE ${stb_SOURCE_DIR})
+target_include_directories(stb SYSTEM INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/stb)

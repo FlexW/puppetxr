@@ -165,7 +165,7 @@ tools/dist/dist.sh --image      # only build the image, print its name
   until the Dockerfile changes or the cache goes unused for a week.
 - The container runs as the calling user with the checkout at `/src`. `DOCKER=podman` switches
   the engine, `PUPPETXR_DIST_DOCKER_ARGS` adds `run` arguments (`--network host` behind a local
-  proxy), `PUPPETXR_DIST_CMAKE_ARGS` adds configure arguments (`FETCHCONTENT_SOURCE_DIR_*`).
+  proxy), `PUPPETXR_DIST_CMAKE_ARGS` adds configure arguments.
 - `_FORTIFY_SOURCE=3` acts as level 2 with glibc 2.28 (level 3 needs 2.34).
 - Tests run inside the container on its Mesa lavapipe and llvmpipe (`mesa-dri-drivers`);
   windowed tests skip without `DISPLAY`. EL8's Mesa enables lavapipe only with `RH_SW_VULKAN=1`
@@ -173,39 +173,31 @@ tools/dist/dist.sh --image      # only build the image, print its name
   sets.
 - The build tree is configured `--fresh`: CMake caches `CFLAGS`/`LDFLAGS` of the first configure,
   so a tree of an older image would keep that image's flags.
-- CMake 3.26 of EL8 predates `EXCLUDE_FROM_ALL` of `FetchContent_Declare` (3.28);
-  `third_party/CMakeLists.txt` adds the OpenXR SDK by hand there, so its loader, headers and
-  CMake package stay out of the install. `install_relocated` fails on any file the release does
-  not ship.
+- `third_party/CMakeLists.txt` adds the OpenXR SDK `EXCLUDE_FROM_ALL`, so its loader, headers
+  and CMake package stay out of the install. `install_relocated` fails on any file the release
+  does not ship.
 
 ## Source releases
 
-`tools/dist/dist-src.sh` packages HEAD on the host (git, git-lfs, curl, tar, gzip) and leaves in
+`tools/dist/dist-src.sh` packages HEAD on the host (git, git-lfs, tar, gzip) and leaves in
 `build/dist-src/out/`:
 
-- `puppetxr-<version>-src.tar.gz`: every tracked file, LFS files with their content; configuring
-  downloads the dependencies as a checkout does
-- `puppetxr-<version>-src-full.tar.gz`: the same plus every `FetchContent_Declare` of
-  `third_party/CMakeLists.txt` in `third_party/vendor/<name>/`; configures offline (packagers)
-- `.buildinfo`: commit, dependency URLs, checksums
+- `puppetxr-<version>-src.tar.gz`: every tracked file, LFS files with their content; the
+  dependencies are in `third_party/`, so it configures offline
+- `.buildinfo`: commit, checksum
 
 | Piece | Choice | Why |
 |---|---|---|
 | Content | `git archive HEAD`, LFS pointers smudged from HEAD | uncommitted changes never ship; a file left as a pointer stops the script |
-| Dependencies | URL and `URL_HASH` read from `third_party/CMakeLists.txt`, checked by `sha256sum` | one place pins them; cached in `build/dist-src/downloads` |
-| Vendored use | `third_party/CMakeLists.txt` sets `FETCHCONTENT_SOURCE_DIR_<NAME>` for each `vendor/<name>` | an explicit `FETCHCONTENT_SOURCE_DIR_*` still wins |
 | Tarball | `tar --sort=name --mtime=<commit time> --owner=0`, `gzip -n` | byte-identical for the same commit |
 
-- A new dependency goes into the `foreach` list at the top of `third_party/CMakeLists.txt` too,
-  or the full tarball ships it without using it.
-- The CTS and the Meta samples (`PUPPETXR_BUILD_CTS`, `PUPPETXR_BUILD_SAMPLES`) are not vendored and
-  still download.
+- The CTS and the samples (`PUPPETXR_BUILD_CTS`, `PUPPETXR_BUILD_SAMPLES`) are test harnesses,
+  not dependencies; they still download.
 
 ## CMake versions
 
-The minimum is 3.25 (presets version 6, `SYSTEM` in `FetchContent_Declare`); 3.25 builds and
-passes the tests. `EXCLUDE_FROM_ALL` in `FetchContent_Declare` needs 3.28; older versions
-ignore it and build a few unused third-party targets as part of `all`.
+The minimum is 3.25 (presets version 6, `SYSTEM` in `add_subdirectory`); 3.25 builds and passes
+the tests.
 
 ## Windows
 
@@ -468,8 +460,9 @@ or use `XR_RUNTIME_JSON`.
 
 ## Dependencies
 
-All fetched by `third_party/CMakeLists.txt` with `FetchContent`, pinned by tag and
-hash, built static and linked into `libpuppetxr` with hidden visibility so only
+All in the repository under `third_party/`, trimmed to what puppetxr builds; their versions,
+licenses and local changes are in `third_party/README.md`, and nothing is downloaded at configure
+time. Built static and linked into `libpuppetxr` with hidden visibility so only
 `xrNegotiateLoaderRuntimeInterface` and `puppetxr_*` are exported.
 
 | Dependency | Why |
@@ -480,7 +473,7 @@ hash, built static and linked into `libpuppetxr` with hidden visibility so only
 | Dear ImGui | configuration UI |
 | ImPlot | the performance tab's frame time graph |
 | jsmn | JSON tokenizer under `json_*` |
-| stb_image_write | PNG screenshots |
+| stb_image, stb_image_write | room albedo atlases, PNG screenshots |
 | googletest | tests |
 
 ## Shaders
