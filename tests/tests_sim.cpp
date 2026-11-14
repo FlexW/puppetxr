@@ -3676,6 +3676,7 @@ TEST(Sim, prop_names_round_trip)
     SIM_PropKind kind = {};
     EXPECT_FALSE(sim_prop_kind_from_name("lamp", kind));
     EXPECT_STREQ(sim_prop_kind_name(SIM_PropKind::QrCode), "qr");
+    EXPECT_STREQ(sim_prop_kind_name(SIM_PropKind::Mesh), "mesh");
     EXPECT_TRUE(zm::near(sim_prop_extent(qr_prop("x", {})), Vec3{ 0.1f, 0.1f, 0.0f }, 1e-6f));
     SIM_Prop keyboard = { .kind = SIM_PropKind::Keyboard, .pose = zm::POSE_IDENTITY };
     SIM_RenderModel model = {};
@@ -3686,6 +3687,155 @@ TEST(Sim, prop_names_round_trip)
         high = zm::max(high, model.positions[v]);
     }
     EXPECT_TRUE(zm::near(sim_prop_extent(keyboard), high * 2.0f, 1e-5f)) << "a keyboard is as big as its model";
+}
+
+static SIM_Prop mesh_prop (const char* model, Vec3 position)
+{
+    SIM_Prop prop = { .kind = SIM_PropKind::Mesh, .pose = { position, zm::QUAT_IDENTITY } };
+    cstr_copy(prop.model, sizeof(prop.model), model);
+    return prop;
+}
+
+static const u8 FAKE_GLB[] = { 'g', 'l', 'T', 'F', 2, 0, 0, 0 };
+
+static u32 g_loads = 0;
+
+static b8 load_test_model (const SIM_Config& config, const char* name, Array<u8>& out_glb)
+{
+    g_loads++;
+    for (u32 i = 0; i < config.models_count; i++)
+    {
+        if (cstr_equal(config.models[i].name, name))
+        {
+            out_glb.add((const u8*)config.models[i].path, cstr_length(config.models[i].path));
+            return true;
+        }
+    }
+    if (cstr_equal(name, "chair"))
+    {
+        out_glb.add(FAKE_GLB, sizeof(FAKE_GLB));
+        return true;
+    }
+    return false;
+}
+
+TEST(Sim, mesh_props_need_a_loaded_model)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    EXPECT_EQ(sim_add_prop(sim, mesh_prop("box", { 0.0f, 0.0f, -1.0f })), 0u) << "no model, no loader";
+    const u64 generation = sim_models_generation(sim);
+    ASSERT_TRUE(sim_add_model(sim, "box", FAKE_GLB, sizeof(FAKE_GLB)));
+    EXPECT_NE(sim_models_generation(sim), generation);
+    const u32 id = sim_add_prop(sim, mesh_prop("box", { 0.0f, 0.0f, -1.0f }));
+    ASSERT_NE(id, 0u);
+    const SIM_Prop* props = nullptr;
+    ASSERT_EQ(sim_props(sim, props), 1u);
+    EXPECT_STREQ(props[0].model, "box");
+    EXPECT_EQ(props[0].scale, 1.0f) << "0 is 1";
+    EXPECT_STREQ(props[0].text, "");
+
+    SIM_Prop bigger = mesh_prop("box", { 0.0f, 0.0f, -1.0f });
+    bigger.scale    = 2.0f;
+    EXPECT_TRUE(sim_update_prop(sim, id, bigger));
+    sim_props(sim, props);
+    EXPECT_EQ(props[0].scale, 2.0f);
+    for (const f32 scale : { -1.0f, 0.001f, 101.0f, zm::nan() })
+    {
+        bigger.scale = scale;
+        EXPECT_FALSE(sim_update_prop(sim, id, bigger)) << scale;
+    }
+    EXPECT_EQ(sim_add_prop(sim, mesh_prop("Box", {})), 0u) << "names are lowercase";
+    EXPECT_EQ(sim_add_prop(sim, mesh_prop("", {})), 0u);
+    SIM_Prop unterminated = mesh_prop("box", {});
+    memset(unterminated.model, 'a', sizeof(unterminated.model));
+    EXPECT_EQ(sim_add_prop(sim, unterminated), 0u);
+
+    // A QR code keeps no model; a model replaced keeps its name
+    SIM_Prop qr = qr_prop("q", {});
+    cstr_copy(qr.model, sizeof(qr.model), "box");
+    ASSERT_NE(sim_add_prop(sim, qr), 0u);
+    ASSERT_EQ(sim_props(sim, props), 2u);
+    EXPECT_STREQ(props[1].model, "");
+    const u8 other[] = { 1, 2, 3 };
+    ASSERT_TRUE(sim_add_model(sim, "box", other, sizeof(other)));
+    const SIM_Model* models = nullptr;
+    ASSERT_EQ(sim_models(sim, models), 1u);
+    EXPECT_EQ(models[0].size, sizeof(other));
+    EXPECT_EQ(sim_find_model(sim, "box"), &models[0]);
+    EXPECT_EQ(sim_find_model(sim, "chair"), nullptr);
+    EXPECT_FALSE(sim_add_model(sim, "bad name", other, sizeof(other)));
+    EXPECT_FALSE(sim_add_model(sim, "empty", other, 0));
+    char name[16];
+    for (u32 i = 1; i < SIM_MAX_MODELS; i++)
+    {
+        cstr_format(name, sizeof(name), "m%u", i);
+        EXPECT_TRUE(sim_add_model(sim, name, other, sizeof(other)));
+    }
+    EXPECT_FALSE(sim_add_model(sim, "one_too_many", other, sizeof(other)));
+    EXPECT_TRUE(sim_model_name_valid("chair_2-b"));
+    EXPECT_FALSE(sim_model_name_valid("../x"));
+    EXPECT_FALSE(sim_model_name_valid(nullptr));
+}
+
+TEST(Sim, mesh_props_load_their_models_through_the_config)
+{
+    SIM_Config config = {};
+    sim_default_config(config);
+    ASSERT_TRUE(sim_parse_config(config, R"({ "models": [ { "name": "crate", "path": "crate.glb" }, { "name": "Bad", "path": "x.glb" }, { "name": "nopath" } ],
+        "props": [ { "kind": "mesh", "model": "crate", "position": [0, 0, -1], "scale": 0.5, "motion": "linear", "target": [1, 0, -1], "speed": 0.2 },
+                   { "kind": "mesh", "model": "chair", "position": [1, 0, -1] },
+                   { "kind": "mesh", "model": "nothing", "position": [1, 0, -1] },
+                   { "kind": "mesh", "model": "No", "position": [1, 0, -1] } ] })"));
+    ASSERT_EQ(config.models_count, 1u) << "a bad name and a missing path are skipped";
+    EXPECT_STREQ(config.models[0].path, "crate.glb");
+    ASSERT_EQ(config.props_count, 3u) << "a bad model name is skipped";
+    EXPECT_EQ(config.props[0].scale, 0.5f);
+
+    config.load_model = load_test_model;
+    g_loads           = 0;
+    SIM_Sim* sim      = sim_create(config);
+    defer { sim_destroy(sim); };
+    const SIM_Prop* props = nullptr;
+    ASSERT_EQ(sim_props(sim, props), 2u) << "the model nothing finds is not loaded";
+    EXPECT_STREQ(props[0].model, "crate");
+    EXPECT_STREQ(props[1].model, "chair");
+    const SIM_Model* models = nullptr;
+    ASSERT_EQ(sim_models(sim, models), 2u);
+    EXPECT_EQ(models[0].size, strlen("crate.glb"));
+    EXPECT_EQ(models[1].size, sizeof(FAKE_GLB));
+    const u32 loads = g_loads;
+    EXPECT_NE(sim_add_prop(sim, mesh_prop("chair", {})), 0u);
+    EXPECT_EQ(g_loads, loads) << "a loaded model is not loaded again";
+}
+
+TEST(Sim, mesh_props_are_part_of_the_frame_state)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    ASSERT_TRUE(sim_add_model(sim, "box", FAKE_GLB, sizeof(FAKE_GLB)));
+    SIM_Prop prop = mesh_prop("box", { 0.0f, 0.0f, -1.0f });
+    prop.scale    = 3.0f;
+    ASSERT_NE(sim_add_prop(sim, prop), 0u);
+    const u64 hash = sim_state_hash(sim);
+    SIM_FrameState state = {};
+    sim_capture_state(sim, state);
+
+    SIM_Sim* other = make_sim();
+    defer { sim_destroy(other); };
+    sim_replay_frame(other, state);
+    const SIM_Prop* props = nullptr;
+    EXPECT_EQ(sim_props(other, props), 0u) << "a mesh whose model is not loaded is dropped";
+    ASSERT_TRUE(sim_add_model(other, "box", FAKE_GLB, sizeof(FAKE_GLB)));
+    sim_replay_frame(other, state);
+    ASSERT_EQ(sim_props(other, props), 1u);
+    EXPECT_STREQ(props[0].model, "box");
+    EXPECT_EQ(props[0].scale, 3.0f);
+
+    SIM_Prop smaller = prop;
+    smaller.scale    = 2.0f;
+    sim_update_prop(sim, 1, smaller);
+    EXPECT_NE(sim_state_hash(sim), hash) << "the scale is part of the state";
 }
 
 //

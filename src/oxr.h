@@ -82,6 +82,10 @@ enum class OXR_ControlResult : u8
     Invalid,
 };
 
+// A .glb or .gltf file loaded as the model `name` mesh props may name, replacing one of that name
+// (docs/props.md, Models); recorded. Invalid for a bad name, a file that is no model or too many models
+OXR_ControlResult oxr_load_model    (const char* name, const char* path);
+
 // Anchor requests the simulator can make fail, docs/anchors.md
 enum class OXR_AnchorOp : u8
 {

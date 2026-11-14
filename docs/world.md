@@ -14,6 +14,7 @@ scene-understanding extension maps onto. File format: `room-format.md`.
 | visual mesh + albedo atlas | passthrough, environment depth | `w_visual_mesh`, `w_albedo` |
 | semantic entities | FB scene, META discovery, later EXT spatial entities | `w_entity`, `w_room`, `w_room_indices`, `w_boundary_points` |
 | global mesh | META spatial entity mesh, environment raycast | `w_global_mesh`, `w_raycast` |
+| models | mesh props in passthrough, environment depth and raycast (docs/props.md, Models) | `w_pack_model`, `w_create_model`, `w_raycast_instances` |
 
 ## Entity model
 
@@ -41,6 +42,26 @@ view in room space and writes `XR_META_environment_depth`'s D16 values:
 Nearer than `near` is 0, no hit or a view that is not finite 65535. It writes a range of rows, so
 threads can share an image; each row depends only on the view. Cost on the starter rooms (1300 to
 3200 visual triangles), 320 x 320, one core of a Ryzen 7 5800X, release: 14 to 20 ms.
+
+Instances (`W_Instance`: a model, a pose in room space, a scale along its axes) hide what is
+behind them: each ray goes into every instance's model space (the inverse pose, then divided by
+the scale, so the ray parameter stays the distance along -Z) against the model's own BVH, and the
+nearest of the room and the instances wins. `w_raycast_instances` answers the same for one ray,
+the normal through the inverse transpose. A degenerate or non-finite scale hides nothing.
+`w_trace_depth` prepares the first 64 instances once per image: the view's position in each
+model's space and a bounding sphere in room space, which most rays miss and so skip. Cost with the
+chair, the case and the pencil in view in the living room, 320 x 320, one core of a Ryzen 7 5800X,
+release: 15.0 ms, against 14.2 ms without them.
+
+## Models
+
+`w_pack_model` reads a glTF 2.0 subset and writes one canonical GLB (docs/props.md, Models,
+for the subset and the limits); `w_create_model` parses a GLB into `W_Model`: positions and
+texture coordinates (`W_VisualVertex`, model space), indices, a part per primitive with an sRGB
+image of its base colour (the texture times the factor in linear light, or a 4 x 4 solid), the
+bounds and a BVH like the rooms'. `w_create_mesh_model` makes a white model of a triangle mesh,
+for the shapes of keyboards and QR plates. Built-in models are `w_embedded_models`, compiled in
+from `models/` like the rooms (`World.compiled_in_models_are_the_source_models_and_load`).
 
 ## Rooms on disk
 

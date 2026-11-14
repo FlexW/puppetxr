@@ -41,7 +41,8 @@ Agents working on this repository: read `AGENTS.md`.
   anchors and raycasts; tracking drift (a step or a steady rate) to test world locking
 - Environment depth from a simulated Quest 3 sensor: its rate, latency, view offset and noise,
   measured on the headset, all configurable and deterministic
-- Props: keyboards and QR codes the app can track
+- Props: keyboards and QR codes the app can track, and meshes (a built-in chair, pencil and case,
+  or any glTF model) moving through the room in passthrough, depth and raycasts
 - Fault injection: anchor requests and frame calls (`xrWaitFrame`, `xrBeginFrame`,
   `xrLocateViews`, `xrEndFrame`) fail with a chosen error, to test an app's error handling
 - Apps on Meta's XR SDKs (OVRPlugin, Unity and Unreal) run without settings: puppetxr recognises

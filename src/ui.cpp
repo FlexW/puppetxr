@@ -1004,7 +1004,8 @@ static void log_panel (UI_Context* ui)
 static void simulator_panel (UI_Context* ui, SIM_Sim* sim, UI_Requests& requests, SIM_MirrorView& mirror_view, const SIM_Config& config);
 static void room_section    (const UI_Context* ui, UI_Requests& requests, b8 busy, const char* busy_reason);
 
-// A new prop a metre in front of the head: a QR code at eye height facing it, a keyboard below
+// A new prop a metre in front of the head: a QR code at eye height facing it, a keyboard below,
+// a chair on the floor
 static void spawn_prop (SIM_Sim* sim, SIM_PropKind kind)
 {
     const Pose  head    = sim_get_device_pose(sim, SIM_Device::Head);
@@ -1015,6 +1016,12 @@ static void spawn_prop (SIM_Sim* sim, SIM_PropKind kind)
     if (kind == SIM_PropKind::Keyboard)
     {
         prop.pose.position.y = zm::max(head.position.y - 0.6f, 0.05f);
+    }
+    else if (kind == SIM_PropKind::Mesh)
+    {
+        prop.pose.position.y = 0.0f;
+        prop.scale           = 1.0f;
+        cstr_copy(prop.model, sizeof(prop.model), "chair");
     }
     else
     {
@@ -1045,14 +1052,36 @@ static void props_panel (UI_Context* ui, SIM_Sim* sim)
     {
         spawn_prop(sim, SIM_PropKind::Keyboard);
     }
+    ImGui::SameLine();
+    if (ImGui::Button("add chair"))
+    {
+        spawn_prop(sim, SIM_PropKind::Mesh);
+    }
     ImGui::EndDisabled();
+
+    // The models a mesh may show: those loaded, then the built-in ones not loaded yet
+    const char*      models[SIM_MAX_MODELS * 2] = {};
+    i32              models_count               = 0;
+    const SIM_Model* loaded                     = nullptr;
+    const u32        loaded_count               = sim_models(sim, loaded);
+    for (u32 m = 0; m < loaded_count; m++)
+    {
+        models[models_count++] = loaded[m].name;
+    }
+    for (u32 m = 0; m < w_embedded_models_count && models_count < (i32)ARRAY_SIZE(models); m++)
+    {
+        if (!sim_find_model(sim, w_embedded_models[m].name))
+        {
+            models[models_count++] = w_embedded_models[m].name;
+        }
+    }
     u32 remove = 0;
     for (u32 i = 0; i < count; i++)
     {
         SIM_Prop prop = props[i];
         ImGui::PushID((i32)prop.id);
-        char header[32];
-        cstr_format(header, sizeof(header), "%s %u", prop.kind == SIM_PropKind::QrCode ? "QR code" : "keyboard", prop.id);
+        char header[96];
+        cstr_format(header, sizeof(header), "%s %u", prop.kind == SIM_PropKind::QrCode ? "QR code" : (prop.kind == SIM_PropKind::Keyboard ? "keyboard" : prop.model), prop.id);
         if (ImGui::CollapsingHeader(header, ImGuiTreeNodeFlags_DefaultOpen))
         {
             b8 changed = false;
@@ -1061,6 +1090,20 @@ static void props_panel (UI_Context* ui, SIM_Sim* sim)
             {
                 changed |= ImGui::InputText("text", prop.text, sizeof(prop.text));
                 changed |= ImGui::DragFloat("size", &prop.size, 0.005f, 0.01f, 2.0f, "%.3f m");
+            }
+            if (prop.kind == SIM_PropKind::Mesh)
+            {
+                i32 model = 0;
+                while (model < models_count && !cstr_equal(models[model], prop.model))
+                {
+                    model++;
+                }
+                if (combo("model", &model, models, models_count) && model >= 0 && model < models_count)
+                {
+                    cstr_copy(prop.model, sizeof(prop.model), models[model]);
+                    changed = true;
+                }
+                changed |= ImGui::DragFloat("scale", &prop.scale, 0.01f, SIM_PROP_MIN_SCALE, 10.0f, "%.2f");
             }
             const char* motions[(u32)SIM_PropMotion::Count] = { "still", "back and forth", "circle" };
             i32         motion                              = (i32)prop.motion;

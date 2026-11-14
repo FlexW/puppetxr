@@ -493,6 +493,61 @@ TEST_F(ApiTest, props)
     ASSERT_EQ(api.record_stop(), PUPPETXR_SUCCESS);
 }
 
+// Mesh props name a model: a built-in one, or one load_model read from a file
+TEST_F(ApiTest, mesh_props_and_models)
+{
+    start();
+    char      path[OS_MAX_PATH];
+    const u8* data = nullptr;
+    usize     size = 0;
+    api_path(path, sizeof(path), "puppetxr_api_crate.glb");
+    ASSERT_TRUE(w_find_embedded_model("case", data, size));
+    ASSERT_TRUE(os_write_file(path, data, size));
+    ASSERT_GE(api.version, 2u);
+    ASSERT_EQ(api.load_model("crate", path), PUPPETXR_SUCCESS);
+    EXPECT_EQ(api.load_model("Crate", path), PUPPETXR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(api.load_model("crate", "/nonexistent/puppetxr.glb"), PUPPETXR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(api.load_model(nullptr, path), PUPPETXR_ERROR_INVALID_ARGUMENT);
+    EXPECT_NE(sim_find_model(oxr_get_sim(), "crate"), nullptr);
+
+    PUPPETXR_U32  id    = 0;
+    PUPPETXR_Prop crate = { .struct_size = sizeof(PUPPETXR_Prop), .kind = PUPPETXR_PROP_MESH, .pose = { { 0, 0, -1 }, { 0, 0, 0, 1 } }, .scale = 2.0f };
+    cstr_copy(crate.model, sizeof(crate.model), "crate");
+    ASSERT_EQ(api.add_prop(&crate, &id), PUPPETXR_SUCCESS);
+    PUPPETXR_Prop chair = crate;
+    chair.scale         = 0.0f;
+    cstr_copy(chair.model, sizeof(chair.model), "chair");
+    ASSERT_EQ(api.add_prop(&chair, &id), PUPPETXR_SUCCESS) << "a built-in model loads when a prop names it";
+    cstr_copy(chair.model, sizeof(chair.model), "no_such_model");
+    EXPECT_EQ(api.add_prop(&chair, &id), PUPPETXR_ERROR_INVALID_ARGUMENT);
+
+    PUPPETXR_Prop listed[4] = {};
+    listed[0].struct_size   = sizeof(PUPPETXR_Prop);
+    PUPPETXR_U32 count      = 0;
+    ASSERT_EQ(api.get_props(listed, 4, &count), PUPPETXR_SUCCESS);
+    ASSERT_EQ(count, 2u);
+    EXPECT_EQ(listed[0].kind, PUPPETXR_PROP_MESH);
+    EXPECT_STREQ(listed[0].model, "crate");
+    EXPECT_EQ(listed[0].scale, 2.0f);
+    EXPECT_STREQ(listed[1].model, "chair");
+    EXPECT_EQ(listed[1].scale, 1.0f);
+
+    // A caller of API version 1 knows neither field: its props get no model, and it sees none
+    PUPPETXR_Prop old = crate;
+    old.struct_size   = (PUPPETXR_U32)offsetof(PUPPETXR_Prop, scale);
+    EXPECT_EQ(api.add_prop(&old, &id), PUPPETXR_ERROR_INVALID_ARGUMENT) << "a mesh without a model";
+    listed[0]             = {};
+    listed[1]             = {};
+    listed[0].struct_size = (PUPPETXR_U32)offsetof(PUPPETXR_Prop, scale);
+    ASSERT_EQ(api.get_props(listed, 1, &count), PUPPETXR_SUCCESS);
+    EXPECT_EQ(listed[0].scale, 0.0f) << "not written past the caller's struct";
+    EXPECT_STREQ(listed[0].model, "");
+    PUPPETXR_Api first = {};
+    ASSERT_EQ(puppetxr_get_api(1, &first), PUPPETXR_SUCCESS);
+    EXPECT_EQ(first.load_model, nullptr);
+    os_delete_file(path);
+}
+
 TEST_F(ApiTest, every_call_reports_a_missing_instance)
 {
     PUPPETXR_Status status = { .struct_size = sizeof(PUPPETXR_Status) };
@@ -1703,6 +1758,55 @@ TEST_F(ApiControlTest, puppetxrctl_places_and_moves_props)
     EXPECT_EQ(run_ctl(*this, remove, 5, output, sizeof(output)), 0) << output;
     EXPECT_NE(run_ctl(*this, remove, 5, output, sizeof(output)), 0) << "already gone";
     EXPECT_EQ(sim_props(oxr_get_sim(), props), 1u);
+}
+
+TEST_F(ApiControlTest, puppetxrctl_loads_models_and_places_mesh_props)
+{
+    start();
+    char target[16];
+    cstr_format(target, sizeof(target), "%u", os_process_id());
+    char      output[4096];
+    char      path[OS_MAX_PATH];
+    const u8* data = nullptr;
+    usize     size = 0;
+    api_path(path, sizeof(path), "Big Crate.glb");
+    ASSERT_TRUE(w_find_embedded_model("case", data, size));
+    ASSERT_TRUE(os_write_file(path, data, size));
+    const char* load[] = { "--target", target, "model", "load", path };
+    EXPECT_EQ(run_ctl(*this, load, 5, output, sizeof(output)), 0) << output;
+    EXPECT_NE(sim_find_model(oxr_get_sim(), "big_crate"), nullptr) << "named after the file";
+    // Regression: a name was cut at the first dot, so chair.v1.glb and chair.v2.glb were one model
+    char dotted[OS_MAX_PATH];
+    api_path(dotted, sizeof(dotted), "chair.v2.glb");
+    ASSERT_TRUE(os_write_file(dotted, data, size));
+    const char* versioned[] = { "--target", target, "model", "load", dotted };
+    EXPECT_EQ(run_ctl(*this, versioned, 5, output, sizeof(output)), 0) << output;
+    EXPECT_NE(sim_find_model(oxr_get_sim(), "chair_v2"), nullptr) << "only the extension is dropped";
+    os_delete_file(dotted);
+    const char* named[] = { "--target", target, "model", "load", path, "box" };
+    EXPECT_EQ(run_ctl(*this, named, 6, output, sizeof(output)), 0) << output;
+    const char* add[] = { "--target", target, "--json", "prop", "add", "mesh", "chair", "0", "0", "-1" };
+    EXPECT_EQ(run_ctl(*this, add, 10, output, sizeof(output)), 0) << output;
+    EXPECT_NE(cstr_find(output, "\"prop\":1"), nullptr) << output;
+    const char* scale[] = { "--target", target, "prop", "scale", "1", "1.5" };
+    EXPECT_EQ(run_ctl(*this, scale, 6, output, sizeof(output)), 0) << output;
+    const char* model[] = { "--target", target, "prop", "model", "1", "box" };
+    EXPECT_EQ(run_ctl(*this, model, 6, output, sizeof(output)), 0) << output;
+    const SIM_Prop* props = nullptr;
+    ASSERT_EQ(sim_props(oxr_get_sim(), props), 1u);
+    EXPECT_STREQ(props[0].model, "box");
+    EXPECT_FLOAT_EQ(props[0].scale, 1.5f);
+
+    const char* list[] = { "--target", target, "--json", "props" };
+    EXPECT_EQ(run_ctl(*this, list, 4, output, sizeof(output)), 0) << output;
+    EXPECT_NE(cstr_find(output, "\"model\":\"box\""), nullptr) << output;
+    const char* models[] = { "--target", target, "--json", "models" };
+    EXPECT_EQ(run_ctl(*this, models, 4, output, sizeof(output)), 0) << output;
+    EXPECT_NE(cstr_find(output, "\"name\":\"big_crate\""), nullptr) << output;
+    EXPECT_NE(cstr_find(output, "\"pencil\""), nullptr) << "the built-in models are listed" << output;
+    const char* missing[] = { "--target", target, "model", "load", "/nonexistent/puppetxr.glb" };
+    EXPECT_NE(run_ctl(*this, missing, 5, output, sizeof(output)), 0);
+    os_delete_file(path);
 }
 
 TEST_F(ApiControlTest, puppetxrctl_drifts_the_tracking_origin)

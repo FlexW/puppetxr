@@ -2793,6 +2793,255 @@ static void poll_colocation (OXR_Runtime* rt, OXR_Session* session, OXR_SessionH
 // Record and replay
 //
 
+//
+// Mesh props: the sim's models parsed for passthrough, environment depth and raycasts
+//
+
+// A model its loader parsed to check it, kept so the frame that first shows it does not parse it
+// again; one of the same name is replaced, and none is kept once SIM_MAX_MODELS are
+static void keep_parsed_model (OXR_Runtime* rt, const char* name, const Array<u8>& glb, W_Model* model)
+{
+    u32 index = 0;
+    while (index < rt->parsed_models_count && !cstr_equal(rt->parsed_models[index].name, name))
+    {
+        index++;
+    }
+    if (index == SIM_MAX_MODELS)
+    {
+        w_destroy_model(model);
+        return;
+    }
+    if (index == rt->parsed_models_count)
+    {
+        rt->parsed_models_count++;
+    }
+    else
+    {
+        w_destroy_model(rt->parsed_models[index].model);
+    }
+    rt->parsed_models[index] = { .hash = hash(glb.data, glb.length), .model = model };
+    cstr_copy(rt->parsed_models[index].name, sizeof(rt->parsed_models[index].name), name);
+}
+
+// SIM_Config::load_model: the config's models by file, then the built-in ones. Runs where the sim
+// runs, under the runtime's lock
+static b8 load_model_for_sim (const SIM_Config& config, const char* name, Array<u8>& out_glb)
+{
+    b8 packed = false;
+    for (u32 i = 0; i < config.models_count && !packed; i++)
+    {
+        if (cstr_equal(config.models[i].name, name))
+        {
+            if (!w_pack_model_file(config.models[i].path, out_glb))
+            {
+                return false;
+            }
+            packed = true;
+        }
+    }
+    const u8* data = nullptr;
+    usize     size = 0;
+    if (!packed && !(w_find_embedded_model(name, data, size) && w_pack_model(data, size, nullptr, out_glb)))
+    {
+        return false;
+    }
+    W_Model* model = w_create_model(out_glb.data, out_glb.length);
+    if (!model)
+    {
+        return false;
+    }
+    keep_parsed_model(runtime(), name, out_glb, model);
+    return true;
+}
+
+static void release_prop_models (OXR_Runtime* rt)
+{
+    for (u32 i = 0; i < rt->prop_models_count; i++)
+    {
+        w_destroy_model(rt->prop_models[i].model);
+    }
+    for (u32 i = 0; i < rt->parsed_models_count; i++)
+    {
+        w_destroy_model(rt->parsed_models[i].model);
+    }
+    rt->prop_models_count      = 0;
+    rt->parsed_models_count    = 0;
+    rt->prop_models_generation = 0;
+}
+
+// Parses the models the sim gained or changed since the last call, keeping the others
+static void refresh_prop_models (OXR_Runtime* rt)
+{
+    if (!rt->sim || sim_models_generation(rt->sim) == rt->prop_models_generation)
+    {
+        return;
+    }
+    rt->prop_models_generation = sim_models_generation(rt->sim);
+    const SIM_Model* models    = nullptr;
+    const u32        count     = sim_models(rt->sim, models);
+    OXR_PropModel    next[SIM_MAX_MODELS] = {};
+    for (u32 i = 0; i < count; i++)
+    {
+        next[i] = { .hash = models[i].hash };
+        cstr_copy(next[i].name, sizeof(next[i].name), models[i].name);
+        for (u32 j = 0; j < rt->prop_models_count; j++)
+        {
+            OXR_PropModel& old = rt->prop_models[j];
+            if (old.model && old.hash == models[i].hash && cstr_equal(old.name, models[i].name))
+            {
+                next[i].model  = old.model;
+                next[i].serial = old.serial;
+                old.model      = nullptr;
+            }
+        }
+        for (u32 j = 0; j < rt->parsed_models_count && !next[i].model; j++)
+        {
+            OXR_PropModel& parsed = rt->parsed_models[j];
+            if (parsed.model && parsed.hash == models[i].hash && cstr_equal(parsed.name, models[i].name))
+            {
+                next[i].model = parsed.model;
+                parsed.model  = nullptr;
+            }
+        }
+        if (!next[i].model)
+        {
+            next[i].model = w_create_model(models[i].data, models[i].size);
+        }
+        if (!next[i].serial)
+        {
+            next[i].serial = ++rt->prop_model_serial;
+        }
+    }
+    for (u32 j = 0; j < rt->prop_models_count; j++)
+    {
+        w_destroy_model(rt->prop_models[j].model);
+    }
+    for (u32 j = 0; j < rt->parsed_models_count; j++)
+    {
+        w_destroy_model(rt->parsed_models[j].model);
+    }
+    rt->parsed_models_count = 0;
+    memory_copy(rt->prop_models, next, sizeof(next));
+    rt->prop_models_count = count;
+}
+
+static const OXR_PropModel* find_prop_model (const OXR_Runtime* rt, const char* name)
+{
+    for (u32 i = 0; i < rt->prop_models_count; i++)
+    {
+        if (cstr_equal(rt->prop_models[i].name, name))
+        {
+            return &rt->prop_models[i];
+        }
+    }
+    return nullptr;
+}
+
+static W_Model* keyboard_shape (OXR_Runtime* rt)
+{
+    if (!rt->keyboard_shape)
+    {
+        SIM_RenderModel* keyboard = (SIM_RenderModel*)os_memory_alloc(sizeof(SIM_RenderModel));
+        defer { os_memory_release(keyboard); };
+        sim_keyboard_model(*keyboard);
+        u32 indices[SIM_MODEL_MAX_INDICES];
+        for (u32 i = 0; i < keyboard->indices_count; i++)
+        {
+            indices[i] = keyboard->indices[i];
+        }
+        rt->keyboard_shape = w_create_mesh_model(keyboard->positions, keyboard->vertices_count, indices, keyboard->indices_count);
+    }
+    return rt->keyboard_shape;
+}
+
+static W_Model* plate_shape (OXR_Runtime* rt)
+{
+    if (!rt->plate_shape)
+    {
+        Vec3 corners[8];
+        for (u32 v = 0; v < 8; v++)
+        {
+            corners[v] = { (v & 1) ? 0.5f : -0.5f, (v & 2) ? 0.5f : -0.5f, (v & 4) ? 0.0f : -1.0f };
+        }
+        const u32 indices[36] = { 0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5 };
+        rt->plate_shape = w_create_mesh_model(corners, 8, indices, 36);
+    }
+    return rt->plate_shape;
+}
+
+// Every prop as environment depth and raycasts see it at `time`, in room space; returns the count
+static u32 prop_instances (OXR_Runtime* rt, i64 time, W_Instance (&out)[SIM_MAX_PROPS])
+{
+    refresh_prop_models(rt);
+    const SIM_Prop* props = nullptr;
+    const u32       count = rt->sim ? sim_props(rt->sim, props) : 0;
+    u32             n     = 0;
+    for (u32 i = 0; i < count && n < SIM_MAX_PROPS; i++)
+    {
+        const SIM_Prop& prop     = props[i];
+        W_Instance      instance = { .pose = zm::pose_mul(rt->room_from_stage, sim_prop_pose(prop, time)), .scale = { 1.0f, 1.0f, 1.0f } };
+        switch (prop.kind)
+        {
+        case SIM_PropKind::Keyboard:
+            instance.model = keyboard_shape(rt);
+            break;
+        case SIM_PropKind::QrCode:
+        {
+            // The plate passthrough shows: the code with its quiet zone, COMP_PROP_PLATE thick
+            const u32 modules = w_qr_size(prop.text);
+            const f32 side    = modules ? prop.size * (f32)(modules + 2 * COMP_PROP_QUIET) / (f32)modules : 0.0f;
+            instance.model    = plate_shape(rt);
+            instance.scale    = { side, side, COMP_PROP_PLATE };
+            break;
+        }
+        case SIM_PropKind::Mesh:
+        {
+            const OXR_PropModel* model = find_prop_model(rt, prop.model);
+            instance.model             = model ? model->model : nullptr;
+            instance.scale             = { prop.scale, prop.scale, prop.scale };
+            break;
+        }
+        case SIM_PropKind::Count:
+            break;
+        }
+        if (instance.model)
+        {
+            out[n++] = instance;
+        }
+    }
+    return n;
+}
+
+// Every model of the sim not yet in the recording, before the frame `frame_index`
+static void record_models_locked (OXR_Runtime* rt, u64 frame_index)
+{
+    if (!rt->recorder || rt->recorded_models_generation == sim_models_generation(rt->sim))
+    {
+        return;
+    }
+    rt->recorded_models_generation = sim_models_generation(rt->sim);
+    const SIM_Model* models        = nullptr;
+    const u32        count         = sim_models(rt->sim, models);
+    for (u32 i = 0; i < count; i++)
+    {
+        rec_writer_append_model(rt->recorder, frame_index, models[i]);
+    }
+}
+
+// The replay's models loaded before the sim frame `frame_index`
+static void replay_models_locked (OXR_Runtime* rt, u64 frame_index)
+{
+    REC_Model model = {};
+    while (rt->replay_model < rec_model_count(rt->replay) && rec_read_model(rt->replay, rt->replay_model, model) && model.frame_index <= frame_index)
+    {
+        if (!sim_add_model(rt->sim, model.name, model.data, model.size))
+        {
+            LOG_ERROR("Replay: model %s cannot be loaded", model.name);
+        }
+        rt->replay_model++;
+    }
+}
+
 static b8 record_start_locked (OXR_Runtime* rt, const char* path)
 {
     if (!rt->sim || !path || !path[0])
@@ -2829,6 +3078,8 @@ static b8 record_start_locked (OXR_Runtime* rt, const char* path)
         LOG_ERROR("Cannot start recording to %s", path);
         return false;
     }
+    rt->recorded_models_generation = ~sim_models_generation(rt->sim);
+    record_models_locked(rt, initial.frame_index);
     cstr_copy(rt->record_path, sizeof(rt->record_path), path);
     LOG_INFO("Recording to %s", path);
     return true;
@@ -2889,6 +3140,8 @@ static void replay_begin_locked (OXR_Runtime* rt, REC_Recording* recording)
     const REC_Header& header = rec_header(recording);
     sim_set_controller(rt->sim, header.controller);
     sim_set_skeleton_change_period(rt->sim, header.skeleton_change_period_ns);
+    rt->replay_model = 0;
+    replay_models_locked(rt, header.initial.frame_index);
     sim_restore_snapshot(rt->sim, header.initial);
     sim_set_controls_enabled(rt->sim, false);
 
@@ -3048,6 +3301,7 @@ static void advance_frame (OXR_Runtime* rt, OXR_Session* sess, OXR_SessionHandle
         SIM_FrameState state = {};
         if (rt->replay_cursor < rec_frame_count(rt->replay) && rec_read_frame(rt->replay, rt->replay_cursor, recorded_frame, recorded_hash, state))
         {
+            replay_models_locked(rt, recorded_frame);
             sim_replay_frame(rt->sim, state);
             sim_commit_frame(rt->sim);
             rt->replay_cursor++;
@@ -3088,6 +3342,7 @@ static void advance_frame (OXR_Runtime* rt, OXR_Session* sess, OXR_SessionHandle
     {
         SIM_FrameState state = {};
         sim_capture_state(rt->sim, state);
+        record_models_locked(rt, sim_frame_index(rt->sim));
         if (!rec_writer_append(rt->recorder, sim_frame_index(rt->sim), sim_state_hash(rt->sim), state))
         {
             LOG_ERROR("Writing the recording failed, stopping it");
@@ -3483,6 +3738,7 @@ static b8 destroy_instance (OXR_InstanceHandle handle)
         replay_stop_locked(rt);
         sim_destroy(rt->sim);
         rt->sim = nullptr;
+        release_prop_models(rt);
         close_anchor_store_locked(rt);
         load_room_locked(rt, "", 0);
         os_capture_output_end();
@@ -3554,6 +3810,8 @@ b8 oxr_release_runtime ()
         rt->render_model_assets.data()[i].glb.release();
     }
     rt->render_model_assets.release();
+    w_destroy_model(rt->keyboard_shape);
+    w_destroy_model(rt->plate_shape);
     os_mutex_destroy(rt->mutex);
     os_memory_release(rt);
     g_runtime = nullptr;
@@ -4146,6 +4404,30 @@ static OXR_ControlResult wipe_anchors_locked (OXR_Runtime* rt, b8 include_cloud)
     return OXR_ControlResult::Ok;
 }
 
+// The file is read and parsed before the lock is taken, so frames go on meanwhile, and the parse
+// is handed to the frames that show the model
+OXR_ControlResult oxr_load_model (const char* name, const char* path)
+{
+    Array<u8> glb = {};
+    defer { glb.release(); };
+    W_Model* model = sim_model_name_valid(name) && w_pack_model_file(path, glb) ? w_create_model(glb.data, glb.length) : nullptr;
+    if (!model)
+    {
+        return OXR_ControlResult::Invalid;
+    }
+    const OXR_Lock lock(__func__);
+    OXR_Runtime*   rt = runtime();
+    if (!rt->sim || (rt->replay && !rt->replay_finished) || !sim_add_model(rt->sim, name, glb.data, glb.length))
+    {
+        const OXR_ControlResult result = !rt->sim ? OXR_ControlResult::NoInstance : (rt->replay && !rt->replay_finished ? OXR_ControlResult::Busy : OXR_ControlResult::Invalid);
+        w_destroy_model(model);
+        return result;
+    }
+    keep_parsed_model(rt, name, glb, model);
+    LOG_INFO("Model %s loaded from %s", name, path);
+    return OXR_ControlResult::Ok;
+}
+
 OXR_ControlResult oxr_wipe_anchors (b8 include_cloud)
 {
     const OXR_Lock lock(__func__);
@@ -4601,6 +4883,7 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrCreateInstance (const XrInstanceCrea
     cstr_copy(inst->application_name, sizeof(inst->application_name), info->applicationInfo.applicationName);
     open_anchor_store_locked(rt, config, inst->application_name);
 
+    config.load_model          = load_model_for_sim;
     rt->sim                    = sim_create(config);
     // Time conversions anchor here, so the clock's first frame counts from here too
     sim_start_clock(rt->sim, os_time_ns());
@@ -7138,9 +7421,16 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrEndFrame (XrSession session, const X
         sess->room_uploaded       = rt->world_generation;
         oxr_startup.room_upload  += oxr_startup.logged ? 0 : os_monotonic_ns() - upload_start;
     }
-    const SIM_Prop* props = nullptr;
+    const SIM_Prop* props       = nullptr;
     const u32       props_count = sim_props(rt->sim, props);
-    comp_set_props(sess->compositor, props, props_count, info->displayTime, rt->room_from_stage);
+    COMP_PropModel  models[SIM_MAX_PROPS] = {};
+    refresh_prop_models(rt);
+    for (u32 i = 0; i < props_count && i < SIM_MAX_PROPS; i++)
+    {
+        const OXR_PropModel* model = props[i].kind == SIM_PropKind::Mesh ? find_prop_model(rt, props[i].model) : nullptr;
+        models[i]                  = model ? COMP_PropModel{ model->model, model->serial } : COMP_PropModel{};
+    }
+    comp_set_props(sess->compositor, props, models, props_count, info->displayTime, rt->room_from_stage);
     {
         PROF_ZONE("compose");
         comp_compose(sess->compositor, layers, layers_count, (COMP_ViewMode)rt->mirror_view);
@@ -10723,7 +11013,9 @@ namespace
 
 struct OXR_DepthJob
 {
-    const W_World* world;
+    const W_World*    world;
+    const W_Instance* instances; // the props at the capture time
+    u32               instances_count;
     u32            width;
     u32            height;
     Pose           views[OXR_VIEW_COUNT]; // room space
@@ -10756,9 +11048,9 @@ static void trace_depth_chunks (OXR_DepthTracer* tracer)
         }
         const u32 view = chunk / chunks;
         const u32 row  = (chunk % chunks) * OXR_DEPTH_ROWS;
-        if (job.world)
+        if (job.world || job.instances_count > 0)
         {
-            w_trace_depth(job.world, job.views[view], job.fovs[view], OXR_DEPTH_NEAR, job.width, job.height, row, OXR_DEPTH_ROWS, job.out[view]);
+            w_trace_depth(job.world, job.instances, job.instances_count, job.views[view], job.fovs[view], OXR_DEPTH_NEAR, job.width, job.height, row, OXR_DEPTH_ROWS, job.out[view]);
         }
         else
         {
@@ -11164,7 +11456,9 @@ static void render_depth (const OXR_Session* sess, OXR_SessionHandle session, Xr
         }
         depth_views(model, at, image.views, image.fovs);
 
-        OXR_DepthJob job = { .world = rt->world, .width = swapchain->width, .height = swapchain->height };
+        W_Instance   instances[SIM_MAX_PROPS];
+        const u32    instances_count = prop_instances(rt, capture, instances);
+        OXR_DepthJob job             = { .world = rt->world, .instances = instances, .instances_count = instances_count, .width = swapchain->width, .height = swapchain->height };
         for (u32 v = 0; v < OXR_VIEW_COUNT; v++)
         {
             job.views[v] = zm::pose_mul(rt->room_from_stage, image.views[v]);
@@ -11624,13 +11918,30 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrPerformEnvironmentRaycastMETA (XrEnv
     hit->status = XR_ENVIRONMENT_RAYCAST_HIT_STATUS_NO_HIT_META;
     hit->pose   = pose_to_xr(zm::POSE_IDENTITY);
 
-    const OXR_Runtime* rt     = runtime();
+    OXR_Runtime* rt     = runtime();
     SIM_Sample   sample = {};
     sim_sample(rt->sim, time, sample);
-    const OXR_Located base = locate_world(space, sample);
-    W_RaycastHit      room_hit = {};
-    const Pose        ray_base = zm::pose_mul(rt->room_from_stage, base.pose);
-    if (!rt->world || !base.valid || !w_raycast(rt->world, zm::transform_point(ray_base, origin), zm::rotate(ray_base.orientation, direction), max_distance, room_hit))
+    const OXR_Located base       = locate_world(space, sample);
+    W_RaycastHit      room_hit   = {};
+    const Pose        ray_base   = zm::pose_mul(rt->room_from_stage, base.pose);
+    const Vec3        ray_origin = zm::transform_point(ray_base, origin);
+    const Vec3        ray_dir    = zm::rotate(ray_base.orientation, direction);
+    if (!base.valid)
+    {
+        return XR_SUCCESS;
+    }
+    // Quest's raycast is a depth query, so props in view stop it as they stop depth
+    b8           found           = rt->world && w_raycast(rt->world, ray_origin, ray_dir, max_distance, room_hit);
+    W_Instance   instances[SIM_MAX_PROPS];
+    const u32    instances_count = prop_instances(rt, time, instances);
+    W_RaycastHit prop_hit        = {};
+    u32          prop_index      = 0;
+    if (w_raycast_instances(instances, instances_count, ray_origin, ray_dir, found ? room_hit.distance : max_distance, prop_hit, prop_index))
+    {
+        room_hit = prop_hit;
+        found    = true;
+    }
+    if (!found)
     {
         return XR_SUCCESS;
     }
