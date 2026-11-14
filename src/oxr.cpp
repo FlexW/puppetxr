@@ -1803,6 +1803,11 @@ static void destroy_depth_swapchain (OXR_DepthSwapchainHandle handle)
     {
         provider->swapchain = {};
     }
+    OXR_DepthSwapchain* owned = rt->depth_swapchains.try_get(handle);
+    for (Array<u16>& view : owned->depth)
+    {
+        view.release();
+    }
     rt->depth_swapchains.remove(handle);
 }
 
@@ -3523,6 +3528,7 @@ b8 oxr_release_runtime ()
         os_memory_release(lut.rgba);
     }
     rt->color_luts.release();
+    ASSERT_MSG(!rt->depth_tracer, "depth tracing threads outlived the last instance");
     rt->depth_providers.release();
     rt->depth_swapchains.release();
     rt->camera_providers.release();
@@ -4629,6 +4635,8 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrCreateInstance (const XrInstanceCrea
     return XR_SUCCESS;
 }
 
+static void destroy_depth_tracer (OXR_DepthTracer* tracer);
+
 static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrDestroyInstance (XrInstance instance)
 {
     b8 last = false;
@@ -4637,6 +4645,12 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrDestroyInstance (XrInstance instance
         OXR_GET_CONST_INSTANCE(inst, instance);
         UNUSED(inst);
         last = destroy_instance(instance_handle(instance));
+        if (last)
+        {
+            // Threads end with the last instance: the release at unload may run under the loader lock
+            destroy_depth_tracer(runtime()->depth_tracer);
+            runtime()->depth_tracer = nullptr;
+        }
         // A run that showed frames is over; the next instance starts the next startup, as each
         // Play in an editor does
         if (oxr_startup.logged)
@@ -10698,24 +10712,165 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrGeometryInstanceSetTransformFB (XrGe
 }
 
 // Environment depth: XR_META_environment_depth
+//
+// The sensor is the config's (SIM_DepthModel, docs/compositor.md, Environment depth). Captures
+// are taken on the simulator's clock and traced into the room's visual mesh (w_trace_depth) by
+// OXR_DEPTH_WORKERS threads and the one in xrEndFrame; each row depends only on the capture, so
+// the image is the same whichever thread traces it.
 
-// Infinite projection with y up, the convention apps rebuild from nearZ, farZ and fov:
-// depth = 1 - near / distance, and the image's last row looks up
-static Mat4 depth_projection (const Fov& fov)
+namespace
 {
-    const f32 l = zm::tan(fov.angle_left);
-    const f32 r = zm::tan(fov.angle_right);
-    const f32 u = zm::tan(fov.angle_up);
-    const f32 d = zm::tan(fov.angle_down);
-    Mat4      m = {};
-    m.m[0][0]   = 2.0f / (r - l);
-    m.m[2][0]   = (r + l) / (r - l);
-    m.m[1][1]   = 2.0f / (u - d);
-    m.m[2][1]   = (u + d) / (u - d);
-    m.m[2][2]   = -1.0f;
-    m.m[3][2]   = -OXR_DEPTH_NEAR;
-    m.m[2][3]   = -1.0f;
-    return m;
+
+struct OXR_DepthJob
+{
+    const W_World* world;
+    u32            width;
+    u32            height;
+    Pose           views[OXR_VIEW_COUNT]; // room space
+    Fov            fovs[OXR_VIEW_COUNT];
+    u16*           out[OXR_VIEW_COUNT];
+};
+
+} // namespace
+
+struct OXR_DepthTracer
+{
+    OS_Thread*    threads[OXR_DEPTH_WORKERS];
+    OS_Semaphore* start;
+    OS_Semaphore* done;
+    OS_Atomic32   next_chunk;
+    OS_Atomic32   quit;
+    OXR_DepthJob  job;
+};
+
+static void trace_depth_chunks (OXR_DepthTracer* tracer)
+{
+    const OXR_DepthJob& job    = tracer->job;
+    const u32           chunks = (job.height + OXR_DEPTH_ROWS - 1) / OXR_DEPTH_ROWS;
+    for (;;)
+    {
+        const u32 chunk = (u32)os_atomic_add(&tracer->next_chunk, 1);
+        if (chunk >= chunks * OXR_VIEW_COUNT)
+        {
+            return;
+        }
+        const u32 view = chunk / chunks;
+        const u32 row  = (chunk % chunks) * OXR_DEPTH_ROWS;
+        if (job.world)
+        {
+            w_trace_depth(job.world, job.views[view], job.fovs[view], OXR_DEPTH_NEAR, job.width, job.height, row, OXR_DEPTH_ROWS, job.out[view]);
+        }
+        else
+        {
+            const u32 end = zm::min(row + OXR_DEPTH_ROWS, job.height);
+            for (usize i = (usize)row * job.width; i < (usize)end * job.width; i++)
+            {
+                job.out[view][i] = 0xffff;
+            }
+        }
+    }
+}
+
+static i32 depth_worker (void* user)
+{
+    OXR_DepthTracer* tracer = (OXR_DepthTracer*)user;
+    for (;;)
+    {
+        os_semaphore_wait(tracer->start);
+        if (os_atomic_load(&tracer->quit))
+        {
+            return 0;
+        }
+        trace_depth_chunks(tracer);
+        os_semaphore_signal(tracer->done);
+    }
+}
+
+static void destroy_depth_tracer (OXR_DepthTracer* tracer)
+{
+    if (!tracer)
+    {
+        return;
+    }
+    os_atomic_store(&tracer->quit, 1);
+    for (u32 i = 0; i < OXR_DEPTH_WORKERS; i++)
+    {
+        os_semaphore_signal(tracer->start);
+    }
+    for (OS_Thread* thread : tracer->threads)
+    {
+        if (thread)
+        {
+            os_thread_join(thread);
+        }
+    }
+    os_semaphore_destroy(tracer->start);
+    os_semaphore_destroy(tracer->done);
+    os_memory_release(tracer);
+}
+
+// Null when the threads cannot start; the caller traces alone then
+static OXR_DepthTracer* create_depth_tracer ()
+{
+    OXR_DepthTracer* tracer = (OXR_DepthTracer*)os_memory_alloc(sizeof(OXR_DepthTracer));
+    *tracer                 = {};
+    tracer->start           = os_semaphore_create(0);
+    tracer->done            = os_semaphore_create(0);
+    b8 started              = tracer->start && tracer->done;
+    for (u32 i = 0; i < OXR_DEPTH_WORKERS && started; i++)
+    {
+        tracer->threads[i] = os_thread_create("puppetxr depth", depth_worker, tracer);
+        started            = tracer->threads[i] != nullptr;
+    }
+    if (!started)
+    {
+        LOG_ERROR("Environment depth: tracing threads did not start, tracing on the app's thread");
+        destroy_depth_tracer(tracer);
+        return nullptr;
+    }
+    return tracer;
+}
+
+static void trace_depth (const OXR_DepthJob& job)
+{
+    OXR_DepthTracer* tracer = runtime()->depth_tracer;
+    if (!tracer)
+    {
+        OXR_DepthTracer alone = { .job = job };
+        trace_depth_chunks(&alone);
+        return;
+    }
+    tracer->job = job;
+    os_atomic_store(&tracer->next_chunk, 0);
+    for (u32 i = 0; i < OXR_DEPTH_WORKERS; i++)
+    {
+        os_semaphore_signal(tracer->start);
+    }
+    trace_depth_chunks(tracer);
+    for (u32 i = 0; i < OXR_DEPTH_WORKERS; i++)
+    {
+        os_semaphore_wait(tracer->done);
+    }
+}
+
+// The depth views at a sample: with a baseline, views that far apart on the line through the eyes,
+// centred between them and turned like them; without one, the eyes. Both have the eyes' field of view
+static void depth_views (const SIM_DepthModel& model, const SIM_Sample& sample, Pose (&out_views)[OXR_VIEW_COUNT], Fov (&out_fovs)[OXR_VIEW_COUNT])
+{
+    const OXR_Runtime* rt = runtime();
+    for (u32 v = 0; v < OXR_VIEW_COUNT; v++)
+    {
+        sim_sample_view(rt->sim, sample, v, out_views[v], out_fovs[v]);
+    }
+    if (model.baseline > 0.0f)
+    {
+        const Vec3 center = (out_views[0].position + out_views[1].position) * 0.5f;
+        for (u32 v = 0; v < OXR_VIEW_COUNT; v++)
+        {
+            const f32 side        = v == 0 ? -0.5f : 0.5f;
+            out_views[v].position = center + zm::rotate(out_views[v].orientation, { side * model.baseline, 0.0f, 0.0f });
+        }
+    }
 }
 
 static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrCreateEnvironmentDepthProviderMETA (XrSession session, const XrEnvironmentDepthProviderCreateInfoMETA* info, XrEnvironmentDepthProviderMETA* out_provider)
@@ -10762,7 +10917,12 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrStartEnvironmentDepthProviderMETA (X
     }
     target->running        = true;
     target->acquired_frame = 0;
-    target->rendered_time  = 0;
+    target->start_time     = sim_predicted_display_time(runtime()->sim);
+    target->last_capture   = 0;
+    for (OXR_DepthImage& image : target->images)
+    {
+        image = {};
+    }
     return XR_SUCCESS;
 }
 
@@ -10816,13 +10976,23 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrCreateEnvironmentDepthSwapchainMETA 
     {
         return XR_ERROR_FEATURE_UNSUPPORTED;
     }
-    COMP_DepthTarget* depth = comp_create_depth_target(sess->compositor, OXR_DEPTH_WIDTH, OXR_DEPTH_HEIGHT, OXR_DEPTH_IMAGES);
+    const SIM_DepthModel& model = sim_get_config(rt->sim).environment_depth;
+    COMP_DepthTarget*     depth = comp_create_depth_target(sess->compositor, model.width, model.height, OXR_DEPTH_IMAGES);
     if (!depth)
     {
         return XR_ERROR_RUNTIME_FAILURE;
     }
-    target->swapchain = rt->depth_swapchains.add({ .session = target->session, .provider = depth_provider_handle(provider), .target = depth });
-    *out_swapchain    = depth_swapchain_xr(target->swapchain);
+    if (!rt->depth_tracer)
+    {
+        rt->depth_tracer = create_depth_tracer();
+    }
+    target->swapchain             = rt->depth_swapchains.add({ .session = target->session, .provider = depth_provider_handle(provider), .target = depth, .width = model.width, .height = model.height });
+    OXR_DepthSwapchain* swapchain = rt->depth_swapchains.try_get(target->swapchain);
+    for (Array<u16>& view : swapchain->depth)
+    {
+        view.resize((usize)model.width * model.height);
+    }
+    *out_swapchain = depth_swapchain_xr(target->swapchain);
     return XR_SUCCESS;
 }
 
@@ -10839,14 +11009,15 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrDestroyEnvironmentDepthSwapchainMETA
 
 static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrGetEnvironmentDepthSwapchainStateMETA (XrEnvironmentDepthSwapchainMETA swapchain, XrEnvironmentDepthSwapchainStateMETA* state)
 {
-    const OXR_Lock lock(__func__);
-    if (!oxr_find_depth_swapchain(swapchain))
+    const OXR_Lock            lock(__func__);
+    const OXR_DepthSwapchain* target = oxr_find_depth_swapchain(swapchain);
+    if (!target)
     {
         return XR_ERROR_HANDLE_INVALID;
     }
     OXR_CHECK_TYPE(state, XR_TYPE_ENVIRONMENT_DEPTH_SWAPCHAIN_STATE_META);
-    state->width  = OXR_DEPTH_WIDTH;
-    state->height = OXR_DEPTH_HEIGHT;
+    state->width  = target->width;
+    state->height = target->height;
     return XR_SUCCESS;
 }
 
@@ -10910,56 +11081,106 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrAcquireEnvironmentDepthImageMETA (Xr
         return XR_ERROR_CALL_ORDER_INVALID;
     }
     target->acquired_frame = sess->frames_begun;
-    if (target->rendered_time == 0)
+
+    // The newest capture old enough for this display time
+    const SIM_DepthModel& model  = sim_get_config(rt->sim).environment_depth;
+    u32                   newest = OXR_DEPTH_IMAGES;
+    for (u32 i = 0; i < OXR_DEPTH_IMAGES; i++)
+    {
+        const XrTime capture = target->images[i].capture;
+        if (capture > 0 && capture + model.latency_ns <= display_time && (newest == OXR_DEPTH_IMAGES || capture > target->images[newest].capture))
+        {
+            newest = i;
+        }
+    }
+    if (newest == OXR_DEPTH_IMAGES)
     {
         return XR_ENVIRONMENT_DEPTH_NOT_AVAILABLE_META;
     }
 
-    // The newest image xrEndFrame rendered, seen from the eyes at its own display time
-    SIM_Sample sample = {};
-    sim_sample(rt->sim, target->rendered_time, sample);
+    // The views where they were at the capture, in the space where it is at the display time
+    const OXR_DepthImage& depth  = target->images[newest];
+    SIM_Sample            sample = {};
+    sim_sample(rt->sim, display_time, sample);
     const OXR_Located base = locate_world(space, sample);
     for (u32 v = 0; v < OXR_VIEW_COUNT; v++)
     {
-        Pose eye_pose = {};
-        Fov  fov      = {};
-        sim_sample_view(rt->sim, sample, v, eye_pose, fov);
+        const Fov& fov       = depth.fovs[v];
         image->views[v].fov  = { fov.angle_left, fov.angle_right, fov.angle_up, fov.angle_down };
-        image->views[v].pose = pose_to_xr(base.valid ? zm::pose_relative(base.pose, eye_pose) : zm::POSE_IDENTITY);
+        image->views[v].pose = pose_to_xr(base.valid ? zm::pose_relative(base.pose, depth.views[v]) : zm::POSE_IDENTITY);
     }
-    image->swapchainIndex = target->rendered_index;
+    image->swapchainIndex = newest;
     image->nearZ          = OXR_DEPTH_NEAR;
     image->farZ           = INFINITY;
+    // The registry declares this output structure's next const, yet the timestamp extends it
+    for (XrBaseOutStructure* next = (XrBaseOutStructure*)(uintptr_t)image->next; next; next = next->next)
+    {
+        if (next->type == XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_TIMESTAMP_META)
+        {
+            ((XrEnvironmentDepthImageTimestampMETA*)next)->captureTime = depth.capture;
+        }
+    }
     return XR_SUCCESS;
 }
 
 // In xrEndFrame, the only call besides xrBeginFrame and the swapchain image calls that may use
-// the app's queue (XR_KHR_vulkan_enable, Concurrency); apps acquire depth on any thread. The image
-// in use by the frame being ended is not the next one, as the images rotate through three.
+// the app's queue (XR_KHR_vulkan_enable, Concurrency); apps acquire depth on any thread. The
+// capture traced is the newest the next frame may show; the image it replaces holds the oldest
+// capture, never one the app may still be shown.
 static void render_depth (const OXR_Session* sess, OXR_SessionHandle session, XrTime display_time, const SIM_Sample& sample)
 {
-    OXR_Runtime* rt = runtime();
+    OXR_Runtime*          rt       = runtime();
+    const SIM_DepthModel& model    = sim_get_config(rt->sim).environment_depth;
+    const XrTime          interval = sess->frame_interval > 0 ? sess->frame_interval : sim_display_period(rt->sim);
     for (OXR_DepthProvider& provider : rt->depth_providers)
     {
-        OXR_DepthSwapchain* swapchain = rt->depth_swapchains.try_get(provider.swapchain);
+        const OXR_DepthSwapchain* swapchain = rt->depth_swapchains.try_get(provider.swapchain);
         if (!(provider.session == session) || !provider.running || !swapchain)
         {
             continue;
         }
-        f32 clip_from_room[COMP_MAX_VIEWS][16];
+        // Without a period a capture comes every frame, taken its latency before the frame's display
+        XrTime capture = display_time - model.latency_ns;
+        if (model.period_ns > 0)
+        {
+            const XrTime shown = display_time + interval - model.latency_ns;
+            capture            = shown < 0 ? 0 : shown - shown % model.period_ns;
+        }
+        if (capture <= provider.last_capture || capture < provider.start_time || capture <= 0)
+        {
+            continue;
+        }
+
+        u32 slot = 0;
+        for (u32 i = 1; i < OXR_DEPTH_IMAGES; i++)
+        {
+            slot = provider.images[i].capture < provider.images[slot].capture ? i : slot;
+        }
+        OXR_DepthImage& image = provider.images[slot];
+        SIM_Sample      at    = sample;
+        if (capture + model.pose_delay_ns != display_time)
+        {
+            sim_sample(rt->sim, capture + model.pose_delay_ns, at);
+        }
+        depth_views(model, at, image.views, image.fovs);
+
+        OXR_DepthJob job = { .world = rt->world, .width = swapchain->width, .height = swapchain->height };
         for (u32 v = 0; v < OXR_VIEW_COUNT; v++)
         {
-            Pose eye_pose = {};
-            Fov  fov      = {};
-            sim_sample_view(rt->sim, sample, v, eye_pose, fov);
-            const Mat4 clip = depth_projection(fov) * zm::inverse(zm::mat4_from_pose(zm::pose_mul(rt->room_from_stage, eye_pose)));
-            memory_copy(clip_from_room[v], clip.m, sizeof(clip.m));
+            job.views[v] = zm::pose_mul(rt->room_from_stage, image.views[v]);
+            job.fovs[v]  = image.fovs[v];
+            job.out[v]   = swapchain->depth[v].data;
         }
-        const u32 index        = swapchain->next_index;
-        swapchain->next_index  = (index + 1) % OXR_DEPTH_IMAGES;
-        comp_render_depth(sess->compositor, swapchain->target, index, clip_from_room);
-        provider.rendered_index = index;
-        provider.rendered_time  = display_time;
+        trace_depth(job);
+        const u16* views[OXR_VIEW_COUNT];
+        for (u32 v = 0; v < OXR_VIEW_COUNT; v++)
+        {
+            sim_depth_sensor(model, (u64)capture, v, OXR_DEPTH_NEAR, swapchain->width, swapchain->height, swapchain->depth[v].data);
+            views[v] = swapchain->depth[v].data;
+        }
+        comp_upload_depth(sess->compositor, swapchain->target, slot, views);
+        image.capture         = capture;
+        provider.last_capture = capture;
     }
 }
 

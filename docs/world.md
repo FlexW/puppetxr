@@ -25,10 +25,22 @@ translate labels and components; the world knows no OpenXR vocabulary.
 ## Raycast
 
 `w_raycast` hits the global mesh, both faces, nearest hit in `(0, max_distance]`,
-normal turned towards the origin. A BVH (median split on the longest centroid axis,
-leaves of 4 triangles) is built once on load; a ray parallel to an axis that lies in a box face
-enters it (`ray_slab`), so rays straight down through the vertices of a scan-sized mesh hit. Pure
-`zmath`, so results are deterministic; ties go to the lower triangle index.
+normal turned towards the origin. Each mesh, global and visual, gets a BVH on load (`W_Bvh`:
+binned surface area heuristic over 16 bins per axis, stable partitions, leaves of up to 4
+triangles); traversal visits the nearer child first and skips nodes behind the best hit. A ray
+parallel to an axis that lies in a box face enters it (`ray_slab`), so rays straight down through
+the vertices of a scan-sized mesh hit. Pure `zmath`, so results are deterministic; ties go to the
+lower triangle index.
+
+## Environment depth
+
+`w_trace_depth` traces one ray per pixel into the visual mesh, which passthrough shows, from a
+view in room space and writes `XR_META_environment_depth`'s D16 values:
+`round((1 - near / z) * 65535)` with `z` the distance along the view's -Z (the ray
+`(tan, tan, -1)` in the view's frame, so its parameter is `z`), row 0 at the bottom of the view.
+Nearer than `near` is 0, no hit or a view that is not finite 65535. It writes a range of rows, so
+threads can share an image; each row depends only on the view. Cost on the starter rooms (1300 to
+3200 visual triangles), 320 x 320, one core of a Ryzen 7 5800X, release: 14 to 20 ms.
 
 ## Rooms on disk
 

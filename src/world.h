@@ -200,6 +200,13 @@ b8                    w_albedo              (const W_World* world, const u8*& ou
 // Nearest hit with the global mesh, in room space, within (0, max_distance]
 b8                    w_raycast             (const W_World* world, Vec3 origin, Vec3 direction, f32 max_distance, W_RaycastHit& out_hit);
 
+// XR_META_environment_depth's image of the visual mesh from a view in room space: D16 of an
+// infinite projection, round((1 - near / z) * 65535) with z the distance along the view's -Z, row
+// 0 at the bottom of the view. Hits nearer than `near` are 0, rays that hit nothing or a view that
+// is not finite 65535. Writes rows [row_first, row_first + row_count) of the width x height image
+// only, so threads can share one
+void                  w_trace_depth         (const W_World* world, const Pose& view, const Fov& fov, f32 near, u32 width, u32 height, u32 row_first, u32 row_count, u16* out_image);
+
 const char*           w_label_name          (W_Label label);
 b8                    w_label_from_name     (const char* name, W_Label& out_label);
 b8                    w_uuid_from_string    (const char* str, W_Uuid& out_uuid); // 32 hex digits

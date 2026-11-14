@@ -8,6 +8,8 @@
 #include "passthrough.frag.h"
 #include "environment_depth.vert.h"
 #include "environment_depth.frag.h"
+#include "environment_depth_upload.vert.h"
+#include "environment_depth_upload.frag.h"
 #include "blocks.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -30,6 +32,7 @@
 #define COMP_LUT_SIZE      256
 #define COMP_ENV_DEPTH_FORMAT R_Format::D16_UNORM
 #define COMP_MAX_DEPTH_IMAGES 4
+static_assert(R_MAX_FRAMES_IN_FLIGHT < COMP_MAX_DEPTH_IMAGES, "depth uploads reuse an image's buffers once its frame is done");
 #define COMP_GEOMETRY_SLOTS   (R_MAX_FRAMES_IN_FLIGHT + 1) // a slot is rewritten only after every frame that read it finished
 #define COMP_GEOMETRY_VERTICES 65536 // per frame, over every projected layer
 #define COMP_GEOMETRY_INDICES  (3 * 65536)
@@ -79,6 +82,8 @@ struct COMP_GeometryDraw
 
 } // namespace
 
+// Each depth image has its own upload image and buffers. Fewer frames are in flight than there
+// are images, so the GPU is done with an image's buffers when its next upload writes them
 struct COMP_DepthTarget
 {
     u32                 width = {};
@@ -86,6 +91,8 @@ struct COMP_DepthTarget
     u32                 images_count = {};
     R_ImageHandle       images[COMP_MAX_DEPTH_IMAGES];
     R_FramebufferHandle framebuffers[COMP_MAX_DEPTH_IMAGES][COMP_MAX_VIEWS];
+    R_ImageHandle       packed[COMP_MAX_DEPTH_IMAGES]; // RGBA8, a layer per view: high byte, low byte
+    R_BufferHandle      staging[COMP_MAX_DEPTH_IMAGES][COMP_MAX_VIEWS];
 };
 
 struct COMP_CameraTarget
@@ -142,7 +149,7 @@ struct COMP_Compositor
     f32                 lens_mask_radius = {};
     R_PipelineHandle    passthrough_pipeline;
     R_RenderPassHandle  depth_pass;     // created with the first depth target
-    R_PipelineHandle    depth_pipeline;
+    R_PipelineHandle    depth_upload_pipeline;
     COMP_Room           room;
     R_ImageHandle       luts[COMP_MAX_LAYERS]; // per layer slot, uploaded when the style's map changes
     u64                 lut_hashes[COMP_MAX_LAYERS] = {};
@@ -981,7 +988,7 @@ void comp_destroy (COMP_Compositor* comp)
         return;
     }
     release_room(comp);
-    r_destroy_pipeline(comp->device, comp->depth_pipeline);
+    r_destroy_pipeline(comp->device, comp->depth_upload_pipeline);
     r_destroy_render_pass(comp->device, comp->depth_pass);
     for (const R_ImageHandle lut : comp->luts)
     {
@@ -1434,18 +1441,18 @@ COMP_DepthTarget* comp_create_depth_target (COMP_Compositor* comp, u32 width, u3
             .depth_initial_layout = R_ImageLayout::ShaderReadOnly,
             .depth_final_layout   = R_ImageLayout::ShaderReadOnly,
         });
-        comp->depth_pipeline = r_create_pipeline(device, {
-            .vertex                  = &environment_depth_vert_shader,
-            .fragment                = &environment_depth_frag_shader,
-            .render_pass             = comp->depth_pass,
-            .push_constants_size     = sizeof(COMP_DepthPush),
-            .depth_test              = true,
-            .depth_write             = true,
-            .vertex_stride           = sizeof(W_VisualVertex),
-            .vertex_attributes       = { { 0, R_Format::R32G32B32_SFLOAT, 0 } },
-            .vertex_attributes_count = 1,
+        comp->depth_upload_pipeline = r_create_pipeline(device, {
+            .vertex              = &environment_depth_upload_vert_shader,
+            .fragment            = &environment_depth_upload_frag_shader,
+            .render_pass         = comp->depth_pass,
+            .textures_count      = 1,
+            .texture_type        = R_TextureType::Type2DArray,
+            .push_constants_size = sizeof(COMP_DepthUploadPush),
+            .depth_test          = true,
+            .depth_compare       = R_CompareOp::Always,
+            .depth_write         = true,
         });
-        if (!comp->depth_pass || !comp->depth_pipeline)
+        if (!comp->depth_pass || !comp->depth_upload_pipeline)
         {
             LOG_ERROR("Failed to create the environment depth pipeline");
             return nullptr;
@@ -1466,11 +1473,22 @@ COMP_DepthTarget* comp_create_depth_target (COMP_Compositor* comp, u32 width, u3
             .usage_flags    = (u32)R_ImageUsageFlags::DepthStencilAttachment | (u32)R_ImageUsageFlags::Sampled | (u32)R_ImageUsageFlags::TransferSrc,
             .initial_layout = R_ImageLayout::ShaderReadOnly,
         });
-        for (u32 v = 0; v < COMP_MAX_VIEWS && target->images[i]; v++)
+        target->packed[i] = r_create_image(device, {
+            .width          = width,
+            .height         = height,
+            .layers         = COMP_MAX_VIEWS,
+            .format         = R_Format::R8G8B8A8_UNORM,
+            .usage_flags    = (u32)R_ImageUsageFlags::TransferDst | (u32)R_ImageUsageFlags::Sampled,
+            .initial_layout = R_ImageLayout::ShaderReadOnly,
+        });
+        b8 complete = target->images[i] && target->packed[i];
+        for (u32 v = 0; v < COMP_MAX_VIEWS && complete; v++)
         {
             target->framebuffers[i][v] = r_create_framebuffer(device, { .render_pass = comp->depth_pass, .depth_image = target->images[i], .depth_layer = v });
+            target->staging[i][v]      = r_create_buffer(device, { .size = (u64)width * height * 4, .usage_flags = (u32)R_BufferUsageFlags::TransferSrc, .host_visible = true });
+            complete                   = target->framebuffers[i][v] && target->staging[i][v];
         }
-        if (!target->images[i] || !target->framebuffers[i][0] || !target->framebuffers[i][1])
+        if (!complete)
         {
             LOG_ERROR("Failed to create environment depth images");
             comp_destroy_depth_target(comp, target);
@@ -1492,8 +1510,10 @@ void comp_destroy_depth_target (const COMP_Compositor* comp, COMP_DepthTarget* t
         for (u32 v = 0; v < COMP_MAX_VIEWS; v++)
         {
             r_destroy_framebuffer(comp->device, target->framebuffers[i][v]);
+            r_destroy_buffer(comp->device, target->staging[i][v]);
         }
         r_destroy_image(comp->device, target->images[i]);
+        r_destroy_image(comp->device, target->packed[i]);
     }
     os_memory_release(target);
 }
@@ -1504,24 +1524,42 @@ u64 comp_depth_image_native (const COMP_Compositor* comp, const COMP_DepthTarget
     return r_get_image_native(comp->device, target->images[index]);
 }
 
-void comp_render_depth (const COMP_Compositor* comp, const COMP_DepthTarget* target, u32 index, const f32 clip_from_room[COMP_MAX_VIEWS][16])
+void comp_upload_depth (const COMP_Compositor* comp, const COMP_DepthTarget* target, u32 index, const u16* const depth[COMP_MAX_VIEWS])
 {
-    ASSERT(comp && target && index < target->images_count);
-    R_Device*               device = comp->device;
-    const R_CmdBufferHandle cmd    = r_begin_frame(device);
+    ASSERT(comp && target && index < target->images_count && depth);
+    R_Device*  device = comp->device;
+    const u32  texels = target->width * target->height;
+    const u64  size   = (u64)texels * 4;
     for (u32 v = 0; v < COMP_MAX_VIEWS; v++)
     {
-        r_cmd_begin_render_pass(device, cmd, comp->depth_pass, target->framebuffers[index][v], {});
-        if (comp->room.indices_count > 0)
+        u8* packed = (u8*)r_get_buffer_mapped_data(device, target->staging[index][v]);
+        for (u32 i = 0; i < texels; i++)
         {
-            r_cmd_bind_pipeline(device, cmd, comp->depth_pipeline);
-            r_cmd_set_viewport(device, cmd, { 0.0f, 0.0f, (f32)target->width, (f32)target->height });
-            r_cmd_set_scissor(device, cmd, { 0, 0, target->width, target->height });
-            r_cmd_push_constants(device, cmd, comp->depth_pipeline, clip_from_room[v], sizeof(COMP_DepthPush));
-            r_cmd_bind_vertex_buffer(device, cmd, comp->room.vertices, 0);
-            r_cmd_bind_index_buffer(device, cmd, comp->room.indices, 0, false);
-            r_cmd_draw_indexed(device, cmd, comp->room.indices_count, 0, 0);
+            packed[i * 4 + 0] = (u8)(depth[v][i] >> 8);
+            packed[i * 4 + 1] = (u8)depth[v][i];
+            packed[i * 4 + 2] = 0;
+            packed[i * 4 + 3] = 255;
         }
+        r_flush_buffer(device, target->staging[index][v], 0, size);
+    }
+
+    const R_CmdBufferHandle cmd = r_begin_frame(device);
+    r_cmd_transition_image(device, cmd, target->packed[index], R_ImageLayout::ShaderReadOnly, R_ImageLayout::TransferDst);
+    for (u32 v = 0; v < COMP_MAX_VIEWS; v++)
+    {
+        r_cmd_copy_buffer_to_image(device, cmd, target->staging[index][v], target->packed[index], v);
+    }
+    r_cmd_transition_image(device, cmd, target->packed[index], R_ImageLayout::TransferDst, R_ImageLayout::ShaderReadOnly);
+    for (u32 v = 0; v < COMP_MAX_VIEWS; v++)
+    {
+        const COMP_DepthUploadPush push = { .layer = (i32)v };
+        r_cmd_begin_render_pass(device, cmd, comp->depth_pass, target->framebuffers[index][v], {});
+        r_cmd_bind_pipeline(device, cmd, comp->depth_upload_pipeline);
+        r_cmd_set_viewport(device, cmd, { 0.0f, 0.0f, (f32)target->width, (f32)target->height });
+        r_cmd_set_scissor(device, cmd, { 0, 0, target->width, target->height });
+        r_cmd_bind_texture(device, cmd, comp->depth_upload_pipeline, target->packed[index], R_Filter::Nearest);
+        r_cmd_push_constants(device, cmd, comp->depth_upload_pipeline, &push, sizeof(push));
+        r_cmd_draw(device, cmd, 3, 0);
         r_cmd_end_render_pass(device, cmd);
     }
     r_end_frame(device, cmd);

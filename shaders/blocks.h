@@ -62,6 +62,12 @@
 #define COMP_DEPTH_PUSH_FIELDS(F, A) \
     F(mat4, clip_from_room)
 
+#define COMP_DEPTH_UPLOAD_PUSH_FIELDS(F, A) \
+    F(int, layer)                           \
+    F(int, padding0)                        \
+    F(int, padding1)                        \
+    F(int, padding2)
+
 //
 // ImGui (shaders/imgui.*)
 //
@@ -109,6 +115,7 @@ typedef f32 R_BlockType_mat4[16];
 R_BLOCK(COMP_Push,            COMP_PUSH_FIELDS)
 R_BLOCK(COMP_PassthroughPush, COMP_PASSTHROUGH_PUSH_FIELDS)
 R_BLOCK(COMP_DepthPush,       COMP_DEPTH_PUSH_FIELDS)
+R_BLOCK(COMP_DepthUploadPush, COMP_DEPTH_UPLOAD_PUSH_FIELDS)
 R_BLOCK(UI_Push,              UI_PUSH_FIELDS)
 R_BLOCK(R_BlitPush,           BLIT_PUSH_FIELDS)
 

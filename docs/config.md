@@ -62,7 +62,9 @@ unknown keys are ignored with a warning only for bad values.
     "origin_offset": "none",
     "origin_seed": 0,
     "drift_rate": { "yaw_degrees": 0, "velocity": [0, 0, 0] },
-    "anchors": { "dir": "", "cloud_dir": "", "app_id": "", "user_id": 1, "latency_frames": 0, "localize_frames": 0 }
+    "anchors": { "dir": "", "cloud_dir": "", "app_id": "", "user_id": 1, "latency_frames": 0, "localize_frames": 0 },
+    "environment_depth": { "model": "quest3", "width": 320, "height": 320, "rate_hz": 25, "latency_ms": 45, "pose_delay_ms": 26, "baseline": 0.06485,
+                           "noise": 0.002, "noise_cell": 8, "seed": 0, "uncovered": { "width": 0.05, "center": 0.69, "height": 0.42, "depth": 29 } }
 }
 ```
 
@@ -115,6 +117,7 @@ unknown keys are ignored with a warning only for bad values.
 | `passthrough.default_active` | the simulated user prefers to start in passthrough: `XR_META_passthrough_preferences` reports `DEFAULT_TO_ACTIVE`. Default false |
 | `keyboard_tracking.enabled` | the simulated user's keyboard tracking setting (Settings > Devices > Keyboard on Quest); false: `XR_META_dynamic_object_tracker`'s create result is `XR_ERROR_INITIALIZATION_FAILED`, as Meta documents for a tracker the user turned off. Default true |
 | `anchors` | anchor stores (`docs/anchors.md`): `dir` (default `os_state_dir()/anchors`), `cloud_dir` (default `<dir>/cloud`), `app_id` (default the application name), `user_id` (default 1), `latency_frames` and `localize_frames` (default 0) |
+| `environment_depth` | the `XR_META_environment_depth` sensor (see Environment depth): `quest3` (default), `eyes`, or an object of the keys there; `PUPPETXR_ENVIRONMENT_DEPTH=quest3\|eyes` |
 | `rooms_dir` | where rooms are looked up; empty means `rooms/` of the source tree for development builds, else `<datadir>/puppetxr/rooms` of the install |
 | key names | `a`..`z`, `0`..`9`, `f1`..`f12`, `space`, `escape`, `enter`, `tab`, `backspace`, `arrow_*`, `left_shift`, `left_ctrl`, `left_alt`, `right_*`, `mouse_left`, `mouse_right`, `mouse_middle`, `grave` (the key left of 1), `left_bracket`, `right_bracket` (right of P; Ü and + on German layouts), `insert`, `delete`, `home`, `end`, `page_up`, `page_down`, `minus`, `equals`, `backslash`, `semicolon`, `apostrophe`, `comma`, `period`, `slash`, `non_us_backslash`, `caps_lock`, `scroll_lock`, `num_lock`, `print_screen`, `pause`, `menu`, `left_super`, `right_super`, `keypad_0`..`keypad_9`, `keypad_decimal`, `keypad_divide`, `keypad_multiply`, `keypad_minus`, `keypad_plus`, `keypad_enter`, `keypad_equals`, `f13`..`f24`, `mouse_x1`, `mouse_x2`; all name positions on a US layout |
 | slot names | `trigger`, `grip`, `primary` (X left, A right), `secondary` (Y, B), `menu` (left Touch, both simple; on the right Touch, which has none, the left one's), `system` (right Touch), `stick`, `stick_click`; the same on every Touch generation; on `khr_simple` only `trigger` (select) and `menu` |
@@ -125,10 +128,37 @@ Environment overrides: `PUPPETXR_TRACE=1|<names>`, `PUPPETXR_DEVICE=<preset>` (w
 `PUPPETXR_EXIT_AT=<frame>`, `PUPPETXR_ROOM=<name|none>`, `PUPPETXR_ROOMS_DIR=<dir>`, `PUPPETXR_CONTROL=1`,
 `PUPPETXR_CONTROL_PORT=<port>`, `PUPPETXR_CONTROL_ADDRESS=<ip>`, `PUPPETXR_CONTROL_PAUSED=1`,
 `PUPPETXR_DISABLE_EXTENSIONS=<name>,<name>` (replaces `disabled_extensions`), `PUPPETXR_GRAPHICS=<api>,<api>` (replaces `graphics`),
-`PUPPETXR_ORIGIN_OFFSET=none|per_run|<yaw>,<x>,<z>`, `PUPPETXR_ORIGIN_SEED=<n>`, `PUPPETXR_DRIFT_RATE=<yaw degrees/s>,<x>,<y>,<z m/s>`, `PUPPETXR_HAND_TRACKING_FOV=<degrees>`, `PUPPETXR_SKELETON_CHANGE_PERIOD_MS=<ms>`, `PUPPETXR_PROPS=<JSON array of props>`, `PUPPETXR_KEYBOARD_TRACKING=0|1`, `PUPPETXR_ANCHORS_DIR=<dir>`,
+`PUPPETXR_ORIGIN_OFFSET=none|per_run|<yaw>,<x>,<z>`, `PUPPETXR_ORIGIN_SEED=<n>`, `PUPPETXR_DRIFT_RATE=<yaw degrees/s>,<x>,<y>,<z m/s>`, `PUPPETXR_HAND_TRACKING_FOV=<degrees>`, `PUPPETXR_SKELETON_CHANGE_PERIOD_MS=<ms>`, `PUPPETXR_PROPS=<JSON array of props>`, `PUPPETXR_KEYBOARD_TRACKING=0|1`, `PUPPETXR_ENVIRONMENT_DEPTH=quest3|eyes`, `PUPPETXR_ANCHORS_DIR=<dir>`,
 `PUPPETXR_CLOUD_DIR=<dir>`, `PUPPETXR_APP_ID=<id>`, `PUPPETXR_USER_ID=<n>`, `PUPPETXR_CONFIG=<path>`, `PUPPETXR_LOG_FILE=<path>` (append every runtime
 log line to a file, for hosts that swallow stdout and stderr such as test frameworks
 and engines; others may read it, and more processes append to it, while it is open), `PUPPETXR_STATE_DIR=<dir>` (the per-user state directory itself, see below).
+
+## Environment depth
+
+`environment_depth` (`SIM_DepthModel`, `src/sim.h`) describes the sensor behind
+`XR_META_environment_depth` (docs/compositor.md, Environment depth). A string names a model; an
+object starts from the current values (the default or the one `model` names) and sets the keys it
+has. It is part of recordings, so a replay uses the recorded sensor.
+
+| Key | Meaning | `quest3` | `eyes` |
+|---|---|---|---|
+| `width`, `height` | pixels of each view's image, 1..1024 | 320 x 320 | kept |
+| `rate_hz` | captures per second on the simulator's clock, at multiples of the period from time 0; 0 captures at every frame, `latency_ms` before its display time | 25 | 0 |
+| `latency_ms` | a capture shows to frames whose display time is at least this much later, 0..1000 | 45 | 0 |
+| `pose_delay_ms` | the views are where the head was this long after the capture, at most `latency_ms` | 26 | 0 |
+| `baseline` | metres between the two views, centred on the head and turned with it; 0 the eye views. The views always have the eyes' field of view | 0.06485 | 0 |
+| `noise` | metres of error at 1 m, one standard deviation, growing with the square of the distance; 0 none | 0.002 | 0 |
+| `noise_cell` | pixels between the noise's random values, interpolated in between, so neighbours err alike | 8 | kept |
+| `seed` | of the noise, with the capture's number and the view | 0 | kept |
+| `uncovered` | the half ellipse at each view's outer edge that no camera sees, reading `depth` metres: `width` its widest extent as a fraction of the image width, `center` the row of that, `height` its extent, both fractions of the height from the bottom; width 0 none | 0.05, 0.69, 0.42, 29 | width 0 |
+
+`quest3` was measured on a Quest 3: images of 320 x 320 every 40.000 ms
+whatever the display rate; the first frame showing an image displays it 44 to 72 ms after its
+`captureTime`; the views' poses are the head's 26 ms (24 to 28) after it; both views have the
+eyes' field of view at a fixed 64.85 mm apart whatever the IPD; texel row 0 is the bottom of the
+view; a band about 16 pixels wide at each outer edge, in the upper half, reads 25 to 33 m; the
+depth of a still scene varies by about 3 mm at 0.5 to 1 m, 4 mm at 2 m and 20 to 40 mm at 3 to
+4.5 m. Not simulated yet: the rounded edges of near objects and hand removal (TODO.md).
 
 ## Device presets
 

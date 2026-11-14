@@ -377,12 +377,21 @@ environment blend mode):
   than `COMP_MAX_GEOMETRY` meshes, `COMP_GEOMETRY_VERTICES` vertices or `COMP_GEOMETRY_INDICES`
   indices per frame are left out with a warning.
 
-Environment depth (`COMP_DepthTarget`, `XR_META_environment_depth`): D16 images of two
-layers with `Sampled | DepthStencilAttachment | TransferSrc` usage and one framebuffer per
-layer, rendered by a depth-only pass (`environment_depth.vert`, an empty fragment shader)
-whose attachment starts and ends in `ShaderReadOnly`. `comp_render_depth` submits on the
-app's queue from inside `xrAcquireEnvironmentDepthImageMETA`, which the extension allows;
-queue order puts it before the app's sampling.
+## Environment depth
+
+`COMP_DepthTarget`, `XR_META_environment_depth`: D16 images of two layers with
+`Sampled | DepthStencilAttachment | TransferSrc` usage and one framebuffer per layer, whose
+attachment starts and ends in `ShaderReadOnly`. The depth is traced on the CPU (docs/world.md,
+Environment depth; docs/openxr.md, Environment depth and raycast); `comp_upload_depth` writes it
+in `xrEndFrame`, on the app's queue, ordered before the app's later sampling. D3D11 cannot copy
+a buffer into a depth image, so every backend takes the same path: each view's values go into a
+layer of an RGBA8 image (`packed`, high byte in red, low byte in green) through a host-visible
+buffer, and a depth-only pass draws one triangle over the view (`environment_depth_upload.vert`,
+`.frag`) that fetches the texel at the fragment's coordinates, which count rows in memory order
+on every backend, and writes `(value + 0.25) / 65535` as depth, which converts to the value
+whether the attachment rounds or truncates. `RenderDepthTest.packed_depth_upload_writes_every_d16_value_exactly`
+checks all 65536 values on every backend that reads depth back. Each image has its own packed
+image and buffers, so an upload never waits for the GPU.
 
 Passthrough cameras (`COMP_CameraTarget`, `XR_METAX1_passthrough_camera_data`): a colour and a
 depth image in the compositor's formats with a framebuffer of `render_pass`.

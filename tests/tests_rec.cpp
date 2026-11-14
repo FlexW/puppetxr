@@ -1044,24 +1044,23 @@ TEST_F(RecTest, header_records_the_skeleton_change_period)
     EXPECT_EQ(replayed.skeleton_change_period_ns, 2000000000);
 }
 
-// A recording of format 1, before the header held the skeleton change period, still reads, with none
-TEST_F(RecTest, a_version_1_recording_reads_without_a_skeleton_change_period)
-{
-    char path[OS_MAX_PATH];
-    temp_path(path, sizeof(path), "puppetxr_test_version_1.xrrec");
-    ASSERT_TRUE(write_recording(path, 2));
-    u8*   data = nullptr;
-    usize size = 0;
-    ASSERT_TRUE(os_read_file(path, &data, &size));
-    defer { os_memory_release(data); };
+// The bytes format 3 appended to the header: the environment depth model
+#define REC_TEST_DEPTH_BYTES 68
 
-    // Format 1's header is format 2's without the period's 8 bytes at its end
-    const u32 tail        = 8;
+// A recording written now, turned into one of an older format by cutting `tail` bytes off the
+// end of its header; the frames stay
+static b8 older_recording (const char* path, u32 version, u32 tail, u8*& out_data, usize& out_size)
+{
+    if (!write_recording(path, 2) || !os_read_file(path, &out_data, &out_size))
+    {
+        return false;
+    }
+    u8*       data        = out_data;
     const u32 header_size = (u32)data[12] | ((u32)data[13] << 8) | ((u32)data[14] << 16) | ((u32)data[15] << 24);
     const u32 old_size    = header_size - tail;
-    memory_move(data + 16 + old_size, data + 16 + header_size, size - 16 - header_size);
-    const usize old_file = size - tail;
-    data[8]  = 1;
+    memory_move(data + 16 + old_size, data + 16 + header_size, out_size - 16 - header_size);
+    out_size -= tail;
+    data[8]  = (u8)version;
     data[12] = (u8)old_size;
     data[13] = (u8)(old_size >> 8);
     data[14] = (u8)(old_size >> 16);
@@ -1071,13 +1070,101 @@ TEST_F(RecTest, a_version_1_recording_reads_without_a_skeleton_change_period)
     data[16 + old_size + 1] = (u8)(crc >> 8);
     data[16 + old_size + 2] = (u8)(crc >> 16);
     data[16 + old_size + 3] = (u8)(crc >> 24);
+    return true;
+}
 
-    REC_Recording* recording = rec_load_from_memory(data, old_file);
+// A recording of format 1, before the header held the skeleton change period, still reads, with none
+TEST_F(RecTest, a_version_1_recording_reads_without_a_skeleton_change_period)
+{
+    char path[OS_MAX_PATH];
+    temp_path(path, sizeof(path), "puppetxr_test_version_1.xrrec");
+    u8*   data = nullptr;
+    usize size = 0;
+    ASSERT_TRUE(older_recording(path, 1, REC_TEST_DEPTH_BYTES + 8, data, size));
+    defer { os_memory_release(data); };
+
+    REC_Recording* recording = rec_load_from_memory(data, size);
     ASSERT_NE(recording, nullptr);
     defer { rec_release(recording); };
     EXPECT_EQ(rec_header(recording).format_version, 1u);
     EXPECT_EQ(rec_header(recording).skeleton_change_period_ns, 0);
     EXPECT_EQ(rec_frame_count(recording), 2u);
+}
+
+// Environment depth is what an app sees, so a replay takes the recording's sensor
+TEST_F(RecTest, header_records_the_environment_depth_sensor)
+{
+    SIM_Config config = {};
+    sim_default_config(config);
+    config.environment_depth.width = 200;
+    config.environment_depth.seed  = 77;
+    config.environment_depth.noise = 0.005f;
+    REC_Header header = {};
+    rec_header_from_config(config, make_header().initial, header);
+    char path[OS_MAX_PATH];
+    temp_path(path, sizeof(path), "puppetxr_test_depth_sensor.xrrec");
+    ASSERT_TRUE(rec_writer_close(rec_writer_create(path, header)));
+
+    REC_Recording* recording = rec_load(path);
+    ASSERT_NE(recording, nullptr);
+    defer { rec_release(recording); };
+    SIM_Config replayed = {};
+    sim_default_config(replayed);
+    rec_apply_header(rec_header(recording), replayed);
+    const SIM_DepthModel& a = replayed.environment_depth;
+    const SIM_DepthModel& b = config.environment_depth;
+    EXPECT_EQ(a.width, b.width);
+    EXPECT_EQ(a.height, b.height);
+    EXPECT_EQ(a.period_ns, b.period_ns);
+    EXPECT_EQ(a.latency_ns, b.latency_ns);
+    EXPECT_EQ(a.pose_delay_ns, b.pose_delay_ns);
+    EXPECT_EQ(a.baseline, b.baseline);
+    EXPECT_EQ(a.noise, b.noise);
+    EXPECT_EQ(a.noise_cell, b.noise_cell);
+    EXPECT_EQ(a.seed, b.seed);
+    EXPECT_EQ(a.uncovered_width, b.uncovered_width);
+    EXPECT_EQ(a.uncovered_center, b.uncovered_center);
+    EXPECT_EQ(a.uncovered_height, b.uncovered_height);
+    EXPECT_EQ(a.uncovered_depth, b.uncovered_depth);
+}
+
+// A recording of format 2 was made with depth from the eye views at every frame, and replays so
+TEST_F(RecTest, a_version_2_recording_replays_depth_from_the_eyes)
+{
+    char path[OS_MAX_PATH];
+    temp_path(path, sizeof(path), "puppetxr_test_version_2.xrrec");
+    u8*   data = nullptr;
+    usize size = 0;
+    ASSERT_TRUE(older_recording(path, 2, REC_TEST_DEPTH_BYTES, data, size));
+    defer { os_memory_release(data); };
+
+    REC_Recording* recording = rec_load_from_memory(data, size);
+    ASSERT_NE(recording, nullptr);
+    defer { rec_release(recording); };
+    EXPECT_EQ(rec_header(recording).format_version, 2u);
+    const SIM_DepthModel& depth = rec_header(recording).environment_depth;
+    EXPECT_EQ(depth.width, 320u);
+    EXPECT_EQ(depth.period_ns, 0);
+    EXPECT_EQ(depth.latency_ns, 0);
+    EXPECT_EQ(depth.baseline, 0.0f);
+    EXPECT_EQ(depth.noise, 0.0f);
+    EXPECT_EQ(depth.uncovered_width, 0.0f);
+    EXPECT_EQ(rec_frame_count(recording), 2u);
+}
+
+// A header naming a sensor outside the ranges the config allows is corrupt
+TEST_F(RecTest, a_header_with_an_impossible_depth_sensor_fails_to_load)
+{
+    SIM_Config config = {};
+    sim_default_config(config);
+    REC_Header header = {};
+    rec_header_from_config(config, make_header().initial, header);
+    header.environment_depth.width = 0;
+    char path[OS_MAX_PATH];
+    temp_path(path, sizeof(path), "puppetxr_test_bad_depth.xrrec");
+    ASSERT_TRUE(rec_writer_close(rec_writer_create(path, header)));
+    os_set_assert_mode(OS_AssertMode::Log);
+    EXPECT_EQ(rec_load(path), nullptr);
 }
 
 TEST_F(RecTest, header_records_the_hand_tracking_cone)

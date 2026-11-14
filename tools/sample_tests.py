@@ -2308,6 +2308,9 @@ def run_test(name, test, opts):
         # llvmpipe of Mesa 26.2.4 (LLVM 23.1.1) crashes in shaders loaded from its disk cache
         "MESA_SHADER_CACHE_DISABLE": "true",
     })
+    if test["app"].startswith(("unity", "unreal")):
+        # Their references were recorded with environment depth from the eyes (TODO.md)
+        env["PUPPETXR_ENVIRONMENT_DEPTH"] = "eyes"
     env.update(test.get("env", {}))
     apps = [App(test, opts, out, env, "")]
     if test.get("peer"):

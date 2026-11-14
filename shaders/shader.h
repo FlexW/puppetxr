@@ -137,6 +137,9 @@ vec3 r_cube_direction (vec2 st, float layer)
 #define R_FRAGMENT_COLOR_DEPTH_MAIN_END   }
 #define R_FRAGMENT_DEPTH_MAIN_BEGIN void main() {
 #define R_FRAGMENT_DEPTH_MAIN_END   }
+// A fragment shader of a depth-only pass that writes R_DEPTH
+#define R_FRAGMENT_DEPTH_WRITE_MAIN_BEGIN void main() {
+#define R_FRAGMENT_DEPTH_WRITE_MAIN_END   }
 
 #endif
 
@@ -231,6 +234,8 @@ float r_atan2 (float y, float x)
 #define R_FRAGMENT_COLOR_DEPTH_MAIN_END   }
 #define R_FRAGMENT_DEPTH_MAIN_BEGIN void main() {
 #define R_FRAGMENT_DEPTH_MAIN_END   }
+#define R_FRAGMENT_DEPTH_WRITE_MAIN_BEGIN static float r_depth; void r_main(); float main(R_FragmentIn input) : SV_Depth { r_fin = input; r_depth = 0.0; r_main(); return r_depth; } void r_main() {
+#define R_FRAGMENT_DEPTH_WRITE_MAIN_END   }
 
 #endif
 
