@@ -5247,6 +5247,94 @@ TEST_F(OxrWindowedTest, the_window_hides_with_its_session_and_returns_with_the_n
     }
 }
 
+// A Vulkan driver without the offscreen window's surface extension, like Intel's on Windows
+namespace
+{
+
+const char*               hidden_extension = "VK_EXT_headless_surface";
+PFN_vkGetInstanceProcAddr unhidden_gipa    = nullptr;
+
+VKAPI_ATTR VkResult VKAPI_CALL hiding_enumerate (const char* layer, uint32_t* count, VkExtensionProperties* properties)
+{
+    const PFN_vkEnumerateInstanceExtensionProperties enumerate = (PFN_vkEnumerateInstanceExtensionProperties)unhidden_gipa(VK_NULL_HANDLE, "vkEnumerateInstanceExtensionProperties");
+    VkExtensionProperties all[256];
+    u32                   all_count = 256;
+    const VkResult        result    = enumerate(layer, &all_count, all);
+    if (result < 0)
+    {
+        return result;
+    }
+    u32 kept = 0;
+    for (u32 i = 0; i < all_count; i++)
+    {
+        if (!cstr_equal(all[i].extensionName, hidden_extension))
+        {
+            all[kept++] = all[i];
+        }
+    }
+    if (!properties)
+    {
+        *count = kept;
+        return VK_SUCCESS;
+    }
+    const u32 written = *count < kept ? *count : kept;
+    for (u32 i = 0; i < written; i++)
+    {
+        properties[i] = all[i];
+    }
+    *count = written;
+    return written < kept ? VK_INCOMPLETE : VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL hiding_create_instance (const VkInstanceCreateInfo* info, const VkAllocationCallbacks* allocator, VkInstance* out_instance)
+{
+    for (u32 i = 0; i < info->enabledExtensionCount; i++)
+    {
+        if (cstr_equal(info->ppEnabledExtensionNames[i], hidden_extension))
+        {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+    }
+    const PFN_vkCreateInstance create = (PFN_vkCreateInstance)unhidden_gipa(VK_NULL_HANDLE, "vkCreateInstance");
+    return create(info, allocator, out_instance);
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL hiding_gipa (VkInstance vk_instance, const char* name)
+{
+    if (cstr_equal(name, "vkEnumerateInstanceExtensionProperties"))
+    {
+        return (PFN_vkVoidFunction)hiding_enumerate;
+    }
+    if (cstr_equal(name, "vkCreateInstance"))
+    {
+        return (PFN_vkVoidFunction)hiding_create_instance;
+    }
+    return unhidden_gipa(vk_instance, name);
+}
+
+} // namespace
+
+// Regression: the runtime asked for VK_EXT_headless_surface regardless, failing the app's
+// vkCreateInstance; now the mirror window stays blank instead
+TEST_F(OxrWindowedTest, a_driver_without_the_window_surface_extension_still_creates_instances)
+{
+    if (os_is_headless())
+    {
+        GTEST_SKIP() << "no offscreen video driver";
+    }
+    unhidden_gipa = vkGetInstanceProcAddr;
+    const VkApplicationInfo             app_info         = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "puppetxr_tests", .apiVersion = VK_API_VERSION_1_0 };
+    const VkInstanceCreateInfo          instance_info    = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app_info };
+    const XrVulkanInstanceCreateInfoKHR xr_instance_info = { .type = XR_TYPE_VULKAN_INSTANCE_CREATE_INFO_KHR, .systemId = system, .pfnGetInstanceProcAddr = hiding_gipa, .vulkanCreateInfo = &instance_info };
+    VkResult vk_result = VK_ERROR_UNKNOWN;
+    ASSERT_EQ(create_vk_instance(instance, &xr_instance_info, &vk_instance, &vk_result), XR_SUCCESS);
+    EXPECT_EQ(vk_result, VK_SUCCESS);
+    if (vk_instance)
+    {
+        volkLoadInstanceOnly(vk_instance);
+    }
+}
+
 // Unity runs xrWaitFrame and xrEndFrame on its render thread while its main thread, the window
 // thread on macOS, blocks until the render thread is done. Frames run on a thread of their own
 // here while the test's main thread waits for that thread without serving window calls

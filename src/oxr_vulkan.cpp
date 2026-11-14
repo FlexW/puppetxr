@@ -128,23 +128,6 @@ static VkPhysicalDevice pick_physical_device (PFN_vkGetInstanceProcAddr gipa, Vk
     return best;
 }
 
-// Extensions the runtime needs on the app's instance and device for the mirror window
-static u32 required_instance_extensions (const char** out_names, u32 capacity)
-{
-    u32 count = 0;
-    if (os_is_headless())
-    {
-        return 0;
-    }
-    const char* const* window_names = nullptr;
-    u32                window_count = 0;
-    os_window_vulkan_extensions(window_names, window_count);
-    for (u32 i = 0; i < window_count && count < capacity; i++)
-    {
-        out_names[count++] = window_names[i];
-    }
-    return count;
-}
 
 static u32 required_device_extensions (const char** out_names, u32 capacity)
 {
@@ -202,6 +185,46 @@ static b8 has_extension (const VkExtensionProperties* properties, u32 count, con
         }
     }
     return false;
+}
+
+// Extensions the runtime needs on the app's instance for the mirror window. Without one of them
+// the window cannot get a surface, and asking for it would fail the app's vkCreateInstance, so
+// none is asked for and the mirror stays blank (Windows drivers lack VK_EXT_headless_surface)
+static u32 required_instance_extensions (PFN_vkGetInstanceProcAddr get_proc, const char** out_names, u32 capacity)
+{
+    if (os_is_headless() || !get_proc)
+    {
+        return 0;
+    }
+    const char* const* window_names = nullptr;
+    u32                window_count = 0;
+    os_window_vulkan_extensions(window_names, window_count);
+    const PFN_vkEnumerateInstanceExtensionProperties enumerate = (PFN_vkEnumerateInstanceExtensionProperties)get_proc(VK_NULL_HANDLE, "vkEnumerateInstanceExtensionProperties");
+    u32 properties_count = 0;
+    if (window_count == 0 || !enumerate || enumerate(nullptr, &properties_count, nullptr) < 0 || properties_count == 0)
+    {
+        return 0;
+    }
+    VkExtensionProperties* properties = (VkExtensionProperties*)os_memory_alloc(properties_count * sizeof(VkExtensionProperties));
+    defer { os_memory_release(properties); };
+    if (enumerate(nullptr, &properties_count, properties) < 0)
+    {
+        return 0;
+    }
+    for (u32 i = 0; i < window_count; i++)
+    {
+        if (!has_extension(properties, properties_count, window_names[i]))
+        {
+            LOG_WARNING("The Vulkan driver has no %s; the mirror window stays blank", window_names[i]);
+            return 0;
+        }
+    }
+    u32 count = 0;
+    for (u32 i = 0; i < window_count && count < capacity; i++)
+    {
+        out_names[count++] = window_names[i];
+    }
+    return count;
 }
 
 // Vulkan 1.3.216: the loader lists portability drivers such as MoltenVK only to an instance that
@@ -270,13 +293,12 @@ static XrResult extension_string (XrInstance instance, XrSystemId system, uint32
 {
     const OXR_Lock lock(__func__);
     OXR_GET_CONST_INSTANCE(inst, instance);
-    UNUSED(inst);
     if (system != 1)
     {
         return XR_ERROR_SYSTEM_INVALID;
     }
     const char* names[16];
-    const u32   names_count = device_level ? required_device_extensions(names, 16) : required_instance_extensions(names, 16);
+    const u32   names_count = device_level ? required_device_extensions(names, 16) : required_instance_extensions(instance_gipa(inst), names, 16);
     char        extensions[1024];
     join_extensions(names, names_count, extensions, sizeof(extensions));
     const u32      length     = (u32)cstr_length(extensions) + 1;
@@ -361,7 +383,7 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrCreateVulkanInstanceKHR (XrInstance 
     }
 
     const char* required[16];
-    u32         required_count     = required_instance_extensions(required, 16);
+    u32         required_count     = required_instance_extensions(info->pfnGetInstanceProcAddr, required, 16);
     const u32   portability_count  = portability_instance_extensions(info->pfnGetInstanceProcAddr, required + required_count, 16 - required_count);
     required_count                += portability_count;
     const char* merged[64];
