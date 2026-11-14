@@ -19,9 +19,7 @@ images (`tools/samples/run.sh`, `tools/dist/dist.sh`):
 apt-get install build-essential gcc-14 g++-14 clang clang-tidy lld llvm cmake ninja-build pkg-config \
   python3 git git-lfs curl rsync glslc glslang-tools mesa-vulkan-drivers libvulkan1 vulkan-tools \
   libgl1-mesa-dri libegl1 libgles2 libegl-dev libgl-dev libglx-dev \
-  libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxxf86vm-dev \
-  libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libdrm-dev libgbm-dev \
-  libdbus-1-dev libudev-dev libasound2-dev libpulse-dev libpipewire-0.3-dev xvfb xauth \
+  libx11-dev libxrandr-dev libxcursor-dev libxi-dev libxkbcommon-dev xvfb xauth \
   mingw-w64 wine64 docker.io docker-buildx
 ```
 
@@ -82,7 +80,7 @@ a C caller passes is a valid value in C++ too; validation rejects it.
 | `PUPPETXR_CLANG_TIDY` | OFF | run clang-tidy on the runtime and `puppetxrctl` while building, findings are errors |
 | `PUPPETXR_CLANG_TIDY_ALL` | OFF | with `PUPPETXR_CLANG_TIDY`, also on the tests, apps and build tools |
 | `PUPPETXR_SANITIZE` | empty | `address` (ASan and UBSan) or `thread` (TSan) on our targets, not third-party code |
-| `PUPPETXR_HEADLESS_ONLY` | OFF | no SDL video, no ImGui, no mirror window |
+| `PUPPETXR_HEADLESS_ONLY` | OFF | no video drivers but the offscreen one, no ImGui, no mirror window |
 | `PUPPETXR_FAST_MATH` | OFF | allow libm and FMA; breaks cross-platform determinism |
 | `PUPPETXR_BUILD_TESTS` | ON | gtest binary |
 | `PUPPETXR_BUILD_APPS` | ON | our sample apps in `apps/` |
@@ -91,8 +89,7 @@ a C caller passes is a valid value in C++ too; validation rejects it.
 | `PUPPETXR_UNREAL` | empty | with `PUPPETXR_BUILD_SAMPLES` on Windows, the `UnrealEditor.exe` of Meta's Unreal fork (`oculus-5.8`) that builds and runs Meta's Unreal MRUK sample for the `samples_unreal` ctest entry (see testing.md) |
 | `PUPPETXR_UNITY` | empty | with `PUPPETXR_BUILD_SAMPLES` on Windows, the `Unity.exe` (6000.0.66f2, licensed) that builds Meta's Unity MRUK samples for the `samples_unity` ctest entry (see testing.md) |
 
-`PUPPETXR_HEADLESS_ONLY` builds SDL as a console build (`SDL_UNIX_CONSOLE_BUILD`), so it needs no
-X11 or Wayland headers. Code using `ui.h` sits under `#if !PUPPETXR_HEADLESS_ONLY`. The `gcc-headless` preset
+`PUPPETXR_HEADLESS_ONLY` builds no window system drivers, so it needs no X11 or xkbcommon headers. Code using `ui.h` sits under `#if !PUPPETXR_HEADLESS_ONLY`. The `gcc-headless` preset
 builds it; worth running for changes to `ui`, `oxr` or the CMake files.
 
 ## Distribution
@@ -104,8 +101,7 @@ builds it; worth running for changes to `ui`, `oxr` or the CMake files.
 - Hardening: `-fstack-protector-strong`, `_FORTIFY_SOURCE=3`, full RELRO, `BIND_NOW`,
   non-executable stack.
 - Dead code removal: `-ffunction-sections -fdata-sections`, `--gc-sections`, `--as-needed`.
-- Reproducible: `-ffile-prefix-map` for the source and build directories, SDL's revision
-  pinned. The same source gives byte-identical binaries and debug files in any directory, so
+- Reproducible: `-ffile-prefix-map` for the source and build directories. The same source gives byte-identical binaries and debug files in any directory, so
   the preset uses clang: GCC's LTO hashes the unmapped working directory into symbol names.
 - Stripped: `libpuppetxr.so` and `puppetxrctl` keep only their dynamic symbols (three exports for the
   library). The debug info goes to `bin/<file>.debug` in the build directory, linked by build
@@ -235,7 +231,7 @@ set XR_RUNTIME_JSON=%CD%\build\msvc-debug\puppetxr-dev.json
   high entropy, `/Brepro` for reproducible binaries, source paths trimmed, debug info in a PDB
   next to the binary in the build tree (`/PDBALTPATH:%_PDB%`), never installed. clang takes control
   flow guard as `-Xclang -cfguard` (`-mguard=cf` is the MinGW spelling). Only our code is LTO:
-  lld-link (LLVM 22 and 23) never finishes the PDB when third-party code (SDL, ImGui, gtest) is
+  lld-link (LLVM 22 and 23) never finishes the PDB when third-party code (ImGui, gtest) is
   full LTO bitcode with CodeView debug info, so `third_party/CMakeLists.txt` turns LTO off there.
   Test `shipped_binaries_are_hardened` (`cmake/check_hardening.cmake`, llvm-readobj) fails when
   guard, instrumentation, CET compatibility, ASLR or NX is missing; `hardening_check_rejects_missing_flags`
@@ -259,17 +255,16 @@ cmake --preset mac-debug && cmake --build --preset mac-debug && ctest --preset m
 ```
 
 - The library is `libpuppetxr.dylib` with install name `@rpath/libpuppetxr.dylib`; only
-  `xrNegotiateLoaderRuntimeInterface` and `puppetxr_*` are exported (`cmake/puppetxr.exports`), not the
-  SDL linked into it. SDL's Objective-C classes are renamed with an `PUPPETXR_` prefix
-  (`third_party/CMakeLists.txt`), since the Objective-C runtime keeps one class per name for the
-  whole process and an app may bring its own SDL3. Installed, it goes to `<prefix>/lib` and the
-  manifest names it relative to itself.
+  `xrNegotiateLoaderRuntimeInterface` and `puppetxr_*` are exported (`cmake/puppetxr.exports`).
+  The Objective-C runtime keeps one class per name for the whole process, so the window classes
+  carry a `PUPPETXR` prefix (`PUPPETXRWindow`, `PUPPETXRView`, `src/platform_macos.mm`). Installed,
+  it goes to `<prefix>/lib` and the manifest names it relative to itself.
 - Vulkan runs on MoltenVK. The loader lists it only to an instance created with
   `VK_KHR_portability_enumeration`; `xrCreateVulkanInstanceKHR` and `xrCreateVulkanDeviceKHR` add
   that extension and `VK_KHR_portability_subset` where offered, as the spec requires.
 - The app's Vulkan loader is used, found among the loaded images by file or install name
   (`os_vulkan_loader`, `os_library_path`), even when the app bundle carries it off dyld's search
-  path; SDL's window gets it through `SDL_HINT_VULKAN_LIBRARY`.
+  path; the window's surface (`VK_EXT_metal_surface` over its `CAMetalLayer`) is made through it.
 - Metal apps (Unity's macOS players and editor) bind `XR_KHR_metal_enable`; the backend is
   `src/render_metal.mm` (`PUPPETXR_HAVE_METAL`, linked with the Metal, QuartzCore and Foundation
   frameworks). Its shaders are MSL that `spirv-cross` (Homebrew) translates from the Vulkan
@@ -294,20 +289,13 @@ cmake --preset mac-debug && cmake --build --preset mac-debug && ctest --preset m
   within `OS_MAIN_THREAD_TIMEOUT_MS` (250 ms) is withdrawn without running and logs one warning;
   later calls fail at once until the main thread comes by again. Video starts on the main thread
   with a 2 s timeout, else the runtime runs headless with a warning. Inside NSApp's running event
-  loop the app dispatches the events, so the pump only takes SDL's queue (`app_runs_event_loop`).
-- Keys and mouse in apps that own NSApp: SDL's Cocoa backend takes key events, and mouse moves in
-  relative mode, only in its own pump or inside its own NSApp class, and Unity's editor and Godot
-  dispatch events from their own loop with an NSApp of their own class. A local NSEvent monitor
-  (`add_input_monitor`, which fires inside `-[NSApplication sendEvent:]`) hands the key and move
-  events of our windows to SDL's handlers (`Cocoa_HandleKeyEvent`, `Cocoa_HandleMouseEvent`,
-  through `SDL_GetVideoDevice`), except the one SDL's own pump just handled: an SDL event watch
-  (`note_sdl_input_event`) notes SDL's last key (its raw code is the NSEvent's `keyCode`, with the
-  ISO swap of the keys left of 1 and Z) and relative move. Modifier changes go through either way;
-  SDL compares them with its own state. Tests: `PlatformAppEventsTest.*` (NSApp swapped to a
-  plain `NSApplication`, real `NSEvent`s dispatched like the app or like SDL's pump).
-- Off the main thread, `os_poll_queued_events` takes what SDL's queue holds without pumping
-  (`SDL_PeepEvents` is thread-safe); text and drop events and everything after them stay for the
-  main thread, as SDL frees their text when the thread that took them pumps.
+  loop the app dispatches the events, so the pump leaves them (`app_runs_event_loop`).
+- Keys and mouse in apps that own NSApp (Unity's editor, Godot): NSApp routes keys and moves to the
+  key window alone, whoever dispatches them. A local NSEvent monitor, which fires inside
+  `-[NSApplication sendEvent:]`, takes the key, modifier and move events of our windows; the view
+  takes buttons, the wheel and the text keys type (`NSTextInputClient`). The ISO swap of the keys
+  left of 1 and Z follows the keyboard's type. Tests: `PlatformAppEventsTest.*` (NSApp swapped to a
+  plain `NSApplication`, real `NSEvent`s dispatched like the app or queued for the pump).
 - Active runtime: the macOS loader reads only `/usr/local/share/openxr/1/active_runtime.json`
   (`PlatformGetGlobalRuntimeFileName` in the OpenXR SDK); there is no per-user file.
   `XR_RUNTIME_JSON` overrides it.
@@ -469,7 +457,6 @@ time. Built static and linked into `libpuppetxr` with hidden visibility so only
 |---|---|
 | OpenXR-SDK | `openxr.h`, loader negotiation header; the loader for apps and tests |
 | Vulkan-Headers, volk | Vulkan API without linking the Vulkan loader |
-| SDL3 | window, events, time, memory, logging; built with `SDL_OPENGL` only for the X11 visual hint of GLX mirror windows, it never makes a GL context |
 | Dear ImGui | configuration UI |
 | ImPlot | the performance tab's frame time graph |
 | jsmn | JSON tokenizer under `json_*` |

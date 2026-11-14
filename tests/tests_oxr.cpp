@@ -206,7 +206,7 @@ struct OxrTest : testing::Test
     XrSystemId                system   = XR_NULL_SYSTEM_ID;
     XrSession                 session  = XR_NULL_HANDLE;
     b8                        headless = true;    // derived fixtures may clear it in their constructor
-    b8                        real_window = false; // with headless cleared: the platform's video driver instead of SDL's offscreen one
+    b8                        real_window = false; // with headless cleared: the platform's video driver instead of the offscreen one
     const char*               extension = nullptr; // enabled next to XR_MND_headless, set in a derived constructor
     const char*               more_extensions[12] = {};
     u32                       more_extensions_count = 0;
@@ -223,7 +223,7 @@ struct OxrTest : testing::Test
             os_unset_env("PUPPETXR_HEADLESS");
             if (!real_window)
             {
-                os_set_env("SDL_VIDEODRIVER", "offscreen");
+                os_set_env("PUPPETXR_VIDEO_DRIVER", "offscreen");
             }
         }
         os_set_env("PUPPETXR_FIXED_STEP", "1");
@@ -242,7 +242,7 @@ struct OxrTest : testing::Test
         os_unset_env("PUPPETXR_RECORD");
         os_unset_env("PUPPETXR_REPLAY");
         os_unset_env("PUPPETXR_REPLAY_EXIT");
-        os_unset_env("SDL_VIDEODRIVER");
+        os_unset_env("PUPPETXR_VIDEO_DRIVER");
     }
 
     XrResult create_instance (const char* const* extensions, u32 extensions_count, XrVersion api_version = XR_API_VERSION_1_1)
@@ -461,15 +461,19 @@ TEST_F(OxrTest, frames_are_timed_for_the_performance_tab)
         frame();
     }
     ASSERT_EQ(times.count, start + 10);
-    // A headless frame's work can fit in one tick of macOS's 42 ns clock, so only the sum is above zero
+    // macOS's CLOCK_MONOTONIC ticks in microseconds, and a headless release frame can fit in one
+    // tick, so only the sums are above zero
+    f32 frames   = 0.0f;
     f32 puppetxr = 0.0f;
     for (u32 i = 0; i < times.count; i++)
     {
-        EXPECT_GT(times.frame_ms[i], 0.0f) << i;
+        EXPECT_GE(times.frame_ms[i], 0.0f) << i;
         EXPECT_GE(times.puppetxr_ms[i], 0.0f) << i;
         EXPECT_LE(times.puppetxr_ms[i], times.frame_ms[i]) << "the lock is held within the frame";
+        frames += times.frame_ms[i];
         puppetxr += times.puppetxr_ms[i];
     }
+    EXPECT_GT(frames, 0.0f);
     EXPECT_GT(puppetxr, 0.0f);
     for (u32 i = 0; i < UI_FRAME_TIMES; i++)
     {
@@ -5240,6 +5244,94 @@ TEST_F(OxrWindowedTest, the_window_hides_with_its_session_and_returns_with_the_n
         ASSERT_EQ(xr.xrDestroySession(session), XR_SUCCESS);
         session = XR_NULL_HANDLE;
         EXPECT_FALSE(os_window_shown(rt->window)) << "round " << round;
+    }
+}
+
+// A Vulkan driver without the offscreen window's surface extension, like Intel's on Windows
+namespace
+{
+
+const char*               hidden_extension = "VK_EXT_headless_surface";
+PFN_vkGetInstanceProcAddr unhidden_gipa    = nullptr;
+
+VKAPI_ATTR VkResult VKAPI_CALL hiding_enumerate (const char* layer, uint32_t* count, VkExtensionProperties* properties)
+{
+    const PFN_vkEnumerateInstanceExtensionProperties enumerate = (PFN_vkEnumerateInstanceExtensionProperties)unhidden_gipa(VK_NULL_HANDLE, "vkEnumerateInstanceExtensionProperties");
+    VkExtensionProperties all[256];
+    u32                   all_count = 256;
+    const VkResult        result    = enumerate(layer, &all_count, all);
+    if (result < 0)
+    {
+        return result;
+    }
+    u32 kept = 0;
+    for (u32 i = 0; i < all_count; i++)
+    {
+        if (!cstr_equal(all[i].extensionName, hidden_extension))
+        {
+            all[kept++] = all[i];
+        }
+    }
+    if (!properties)
+    {
+        *count = kept;
+        return VK_SUCCESS;
+    }
+    const u32 written = *count < kept ? *count : kept;
+    for (u32 i = 0; i < written; i++)
+    {
+        properties[i] = all[i];
+    }
+    *count = written;
+    return written < kept ? VK_INCOMPLETE : VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL hiding_create_instance (const VkInstanceCreateInfo* info, const VkAllocationCallbacks* allocator, VkInstance* out_instance)
+{
+    for (u32 i = 0; i < info->enabledExtensionCount; i++)
+    {
+        if (cstr_equal(info->ppEnabledExtensionNames[i], hidden_extension))
+        {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+    }
+    const PFN_vkCreateInstance create = (PFN_vkCreateInstance)unhidden_gipa(VK_NULL_HANDLE, "vkCreateInstance");
+    return create(info, allocator, out_instance);
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL hiding_gipa (VkInstance vk_instance, const char* name)
+{
+    if (cstr_equal(name, "vkEnumerateInstanceExtensionProperties"))
+    {
+        return (PFN_vkVoidFunction)hiding_enumerate;
+    }
+    if (cstr_equal(name, "vkCreateInstance"))
+    {
+        return (PFN_vkVoidFunction)hiding_create_instance;
+    }
+    return unhidden_gipa(vk_instance, name);
+}
+
+} // namespace
+
+// Regression: the runtime asked for VK_EXT_headless_surface regardless, failing the app's
+// vkCreateInstance; now the mirror window stays blank instead
+TEST_F(OxrWindowedTest, a_driver_without_the_window_surface_extension_still_creates_instances)
+{
+    if (os_is_headless())
+    {
+        GTEST_SKIP() << "no offscreen video driver";
+    }
+    unhidden_gipa = vkGetInstanceProcAddr;
+    const VkApplicationInfo             app_info         = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "puppetxr_tests", .apiVersion = VK_API_VERSION_1_0 };
+    const VkInstanceCreateInfo          instance_info    = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app_info };
+    const XrVulkanInstanceCreateInfoKHR xr_instance_info = { .type = XR_TYPE_VULKAN_INSTANCE_CREATE_INFO_KHR, .systemId = system, .pfnGetInstanceProcAddr = hiding_gipa, .vulkanCreateInfo = &instance_info };
+    VkResult vk_result = VK_ERROR_UNKNOWN;
+    ASSERT_EQ(create_vk_instance(instance, &xr_instance_info, &vk_instance, &vk_result), XR_SUCCESS);
+    EXPECT_EQ(vk_result, VK_SUCCESS);
+    if (vk_instance)
+    {
+        volkLoadInstanceOnly(vk_instance);
     }
 }
 
@@ -14342,7 +14434,7 @@ TEST_P(OxrGLTest, projection_depth_is_tested_upright)
 
 namespace
 {
-// With a mirror window, here SDL's offscreen one
+// With a mirror window, here the offscreen one
 struct OxrGLWindowedTest : OxrGLTest
 {
     OxrGLWindowedTest ()
@@ -14902,7 +14994,7 @@ TEST_P(OxrD3DTest, projection_depth_is_tested)
 
 namespace
 {
-// With a mirror window: SDL's offscreen driver on Linux, a real window on Windows
+// With a mirror window: the offscreen video driver on Linux, a real window on Windows
 struct OxrD3DWindowedTest : OxrD3DTest
 {
     OxrD3DWindowedTest ()
@@ -14938,7 +15030,7 @@ TEST_P(OxrD3DWindowedTest, frames_composite_with_a_mirror_window)
 // old one, which the UI's framebuffer of its back buffer did, and the window stayed black
 namespace
 {
-// A window D3D can present to, which SDL's offscreen driver has none of
+// A window D3D can present to, which the offscreen video driver has none of
 struct OxrD3DRealWindowTest : OxrD3DTest
 {
     OxrD3DRealWindowTest ()
@@ -15451,7 +15543,7 @@ struct OxrMetalWindowedTest : OxrMetalTest
     }
 };
 
-// A window with a CAMetalLayer, which SDL's offscreen driver has none of
+// A window with a CAMetalLayer, which the offscreen video driver has none of
 struct OxrMetalRealWindowTest : OxrMetalTest
 {
     OxrMetalRealWindowTest ()

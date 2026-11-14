@@ -1,17 +1,10 @@
-# ThreadSanitizer suppressions for code we do not build: system libraries (dbus under SDL video), Vulkan and GL drivers.
+# ThreadSanitizer suppressions for code we do not build: system libraries, Vulkan and GL drivers.
 # Drivers are not instrumented, so their own threads race on memory TSan cannot see synchronized.
 # Never suppress a report in puppetxr itself; fix it.
 deadlock:libdbus-1.so
 race:libgallium
 race:libvulkan_lvp
+race:libvulkan_radeon
 race:libLLVM
 race:libEGL_mesa
 race:libGLX_mesa
-# On a Wayland desktop SDL decorates windows through libdecor, whose GTK plugin loads fonts and
-# images on glib threads of its own
-race:libglib-2.0.so
-race:libpango
-race:libfontconfig.so
-race:libgtk-3.so
-race:libgdk
-race:libglycin

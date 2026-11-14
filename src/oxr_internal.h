@@ -512,6 +512,7 @@ struct OXR_Instance
     // Vulkan binding state, owned by oxr_vulkan.cpp
     b8                vk_requirements_called;
     void*             vk_get_instance_proc_addr; // from xrCreateVulkanInstanceKHR, null for KHR_vulkan_enable
+    b8                vk_no_window_extensions;   // xrCreateVulkanInstanceKHR left out the mirror window's, which the driver lacks
     void*             vk_instance;               // the app's VkInstance once known
     void*             vk_physical_device;        // the device handed out by xrGetVulkanGraphicsDevice(2)KHR
     u64               vk_surface;                // VkSurfaceKHR of the mirror window, 0 when headless
@@ -1226,7 +1227,7 @@ struct OXR_Runtime
     SIM_Sim*                   sim = {};
     OXR_InstanceHandle         live_instance;
     OS_Window*                 window = {};        // mirror window, null when headless
-    u32                        window_x11_visual = {}; // the X visual it was made with for GLX, 0 for SDL's choice
+    u32                        window_x11_visual = {}; // the X visual it was made with for GLX, 0 for the driver's default
     b8                         window_closed = {};
     b8                         window_shown = {};  // created hidden, shown once a frame is in it
     b8                         mouse_captured = {}; // a click into the view took the mouse: moves turn, the panels get no input; Escape gives it back

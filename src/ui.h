@@ -89,7 +89,7 @@ struct UI_Status
 UI_Context* ui_create          (const UI_CreateInfo& info);
 void        ui_destroy         (UI_Context* ui);
 
-void        ui_handle_raw_event(const UI_Context* ui, const void* native_event);
+void        ui_handle_raw_event(const UI_Context* ui, const OS_RawEvent& event);
 b8          ui_wants_mouse     (const UI_Context* ui);
 b8          ui_wants_keyboard  (const UI_Context* ui);
 void        ui_set_captured    (UI_Context* ui, b8 captured); // the mirror window holds the mouse: no mouse or key reaches the panels
@@ -103,7 +103,7 @@ b8          ui_find_item       (const UI_Context* ui, const char* label, f32& ou
 // Builds and records the panels into `target`, which must be in TransferDst layout and ends in Present layout
 // The REC or REPLAY badge and the welcome overlay are drawn even when the panels are hidden
 UI_Requests ui_draw            (UI_Context* ui, SIM_Sim* sim, R_CmdBufferHandle cmd, R_ImageHandle target, b8 show_panels, SIM_MirrorView& mirror_view, const UI_Status& status);
-// ui_draw in two halves: the frame is built on the window thread, which SDL's ImGui backend needs,
+// ui_draw in two halves: the frame is built on the window thread, where the window calls it makes run,
 // and recorded later on the thread of the app's queue; a render records the frame built last
 UI_Requests ui_build           (UI_Context* ui, SIM_Sim* sim, b8 show_panels, SIM_MirrorView& mirror_view, const UI_Status& status);
 void        ui_render          (UI_Context* ui, R_CmdBufferHandle cmd, R_ImageHandle target);
