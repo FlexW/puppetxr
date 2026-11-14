@@ -71,13 +71,15 @@ is what they share and nothing else includes.
   (`cmake/check_glibc.cmake`); their headers are needed to build, except Wayland's, whose ABI and
   protocol tables `platform_linux.cpp` declares. They stay loaded for the process.
 - Wayland decorations: the compositor's (`xdg-decoration`) where it draws them (KDE, wlroots), else
-  a title bar of puppetxr's own (GNOME): a subsurface above the window drawn on the CPU into shared
-  memory (the title in the desktop's bold sans serif, which fontconfig names when it is installed,
-  drawn by `stb_truetype`, else in a built-in 5x7 font; minimize, maximize, close; double click maximizes, right
-  click opens the window menu), and a transparent subsurface below it, a 1x1 buffer stretched by
-  its viewport, whose 8 points around the window take resize drags. Moving and resizing are the
-  compositor's (`xdg_toplevel` move and resize); the window geometry takes in the title bar. A shown
-  window waits for the first configure, as a buffer before it ends the connection.
+  a title bar of puppetxr's own (GNOME) in the colours of libadwaita's dark header bar, fixed, no
+  theme read: a subsurface above the window drawn on the CPU into shared memory, its top corners
+  rounded, the title centred in the desktop's bold sans serif (fontconfig names it when installed,
+  `stb_truetype` draws it; else a built-in 5x7 font), and a round close button, GNOME's only one
+  by default (a double click maximizes, a right click opens the window menu, which minimizes). A
+  transparent subsurface below the window, a 1x1 buffer stretched by its viewport, takes resize
+  drags 8 points around it. Moving and resizing are the compositor's (`xdg_toplevel` move and
+  resize); the window geometry takes in the title bar. A shown window waits for the first
+  configure, as a buffer before it ends the connection.
 - Raw events (`OS_RawEvent`): what a driver reports, in window points, queued from the video
   thread; `os_poll_events` hands the raw event to the UI's hook, then translates it to
   `OS_Event` for the sim. Repeats and text go to the UI only.

@@ -1203,9 +1203,11 @@ const OS_VideoDriver os_x11_driver = {
 #define WL_LOCK_PERSISTENT   2u
 #define WL_KEYMAP_XKB_V1     1u
 #define WL_XDG_STATE_ACTIVATED 4u
-#define WL_TITLE_HEIGHT      32   // points
+#define WL_TITLE_HEIGHT      38   // points
 #define WL_BORDER            8    // points around the window that resize it
-#define WL_BUTTON_WIDTH      44
+#define WL_BUTTON_SIZE       24   // the round close button
+#define WL_BUTTON_MARGIN     7    // between the close button and the bar's right end
+#define WL_CORNER_RADIUS     12
 #define WL_DOUBLE_CLICK_NS   400000000ull
 #define WL_SHM_ARGB8888      0u
 
@@ -1327,6 +1329,7 @@ struct WaylandWindow
     u32      title_drawn_width;  // what the title bar was drawn for, to skip redrawing it
     f32      title_drawn_scale;
     i32      title_drawn_hover;
+    i32      title_drawn_pressed;
     b8       title_drawn_activated;
     b8       title_drawn_maximized;
     WlProxy* edge_surface;
@@ -2366,12 +2369,12 @@ static const u8 wl_font[95][5] = {
     { 0x00, 0x00, 0x7F, 0x00, 0x00 }, { 0x00, 0x41, 0x36, 0x08, 0x00 }, { 0x08, 0x04, 0x08, 0x10, 0x08 },
 };
 
-#define WL_TITLE_BACKGROUND          0xFF2B2D31u
-#define WL_TITLE_BACKGROUND_INACTIVE 0xFF34363Bu
-#define WL_TITLE_TEXT                0xFFE6E6E6u
-#define WL_TITLE_TEXT_INACTIVE       0xFF8C8F94u
-#define WL_TITLE_HOVER               0xFF45484Eu
-#define WL_TITLE_CLOSE_HOVER         0xFFC42B1Cu
+// The dark header bar of libadwaita: the close button is white over the bar at 10 %, 15 % under
+// the pointer and 30 % pressed
+#define WL_TITLE_BACKGROUND          0xFF303030u
+#define WL_TITLE_BACKGROUND_INACTIVE 0xFF242424u
+#define WL_TITLE_TEXT                0xFFFFFFFFu
+#define WL_TITLE_TEXT_INACTIVE       0xFF919191u
 
 // xdg_toplevel's resize edges
 #define WL_EDGE_TOP    1u
@@ -2423,14 +2426,45 @@ static void wl_fill (const ShmBuffer& target, i32 width, i32 height, i32 x, i32 
 }
 
 // The title bar button at a point of the title bar, in points: 0 minimize, 1 maximize, 2 close
+// GNOME shows only the close button by default; maximize is a double click, minimize in the
+// window menu. Its click area is the bar's full height at the right end
 static i32 wl_title_button_at (const WaylandWindow* data, f32 x, f32 y)
 {
-    const f32 buttons = (f32)data->logical_width - 3.0f * (f32)WL_BUTTON_WIDTH;
-    if (y < 0.0f || y >= (f32)WL_TITLE_HEIGHT || x < buttons || x >= (f32)data->logical_width)
+    const f32 area = (f32)(WL_BUTTON_SIZE + 2 * WL_BUTTON_MARGIN);
+    if (y < 0.0f || y >= (f32)WL_TITLE_HEIGHT || x < (f32)data->logical_width - area || x >= (f32)data->logical_width)
     {
         return -1;
     }
-    return (i32)((x - buttons) / (f32)WL_BUTTON_WIDTH);
+    return 2;
+}
+
+// A colour over an opaque pixel at a coverage of 0 to 1
+static u32 wl_blend (u32 back, u32 front, f32 coverage)
+{
+    const u32 a     = (u32)(coverage * 255.0f + 0.5f);
+    u32       mixed = 0xFF000000u;
+    for (u32 shift = 0; shift < 24; shift += 8)
+    {
+        mixed |= ((((front >> shift) & 0xFF) * a + ((back >> shift) & 0xFF) * (255 - a) + 127) / 255) << shift;
+    }
+    return mixed;
+}
+
+static f32 wl_coverage (f32 distance_inside)
+{
+    return distance_inside >= 0.5f ? 1.0f : (distance_inside <= -0.5f ? 0.0f : distance_inside + 0.5f);
+}
+
+// Distance from a point to a line segment
+static f32 wl_segment_distance (f32 px, f32 py, f32 ax, f32 ay, f32 bx, f32 by)
+{
+    const f32 dx = bx - ax;
+    const f32 dy = by - ay;
+    f32       t  = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy);
+    t            = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    const f32 ex = px - (ax + t * dx);
+    const f32 ey = py - (ay + t * dy);
+    return __builtin_sqrtf(ex * ex + ey * ey);
 }
 
 // fontconfig's few calls, declared here instead of including its header
@@ -2638,7 +2672,7 @@ static void wl_draw_title (OS_Window* window)
     const f32      scale  = wl_scale(data);
     const i32      width  = (i32)((f32)data->logical_width * scale + 0.5f);
     const i32      height = (i32)((f32)WL_TITLE_HEIGHT * scale + 0.5f);
-    if (data->title_buffer && data->title_drawn_width == data->logical_width && data->title_drawn_scale == scale && data->title_drawn_hover == data->hover &&
+    if (data->title_buffer && data->title_drawn_width == data->logical_width && data->title_drawn_scale == scale && data->title_drawn_hover == data->hover && data->title_drawn_pressed == data->pressed &&
         data->title_drawn_activated == data->activated && data->title_drawn_maximized == data->maximized)
     {
         return;
@@ -2649,69 +2683,74 @@ static void wl_draw_title (OS_Window* window)
         return;
     }
     const u32 text_color = data->activated ? WL_TITLE_TEXT : WL_TITLE_TEXT_INACTIVE;
-    wl_fill(target, width, height, 0, 0, width, height, data->activated ? WL_TITLE_BACKGROUND : WL_TITLE_BACKGROUND_INACTIVE);
+    const u32 background = data->activated ? WL_TITLE_BACKGROUND : WL_TITLE_BACKGROUND_INACTIVE;
+    wl_fill(target, width, height, 0, 0, width, height, background);
 
-    // Buttons from the right: close, maximize, minimize; an icon is 10 points with lines of one
-    const i32 button = (i32)((f32)WL_BUTTON_WIDTH * scale + 0.5f);
-    const i32 icon   = (i32)(10.0f * scale + 0.5f);
-    const i32 line   = scale >= 1.5f ? (i32)(scale + 0.5f) : 1;
-    for (i32 b = 0; b < 3; b++)
+    // Rounded top corners, transparent outside, unless the window fills the screen
+    const f32 radius = data->maximized ? 0.0f : (f32)WL_CORNER_RADIUS * scale;
+    for (i32 row = 0; row < (i32)radius + 1 && row < height; row++)
     {
-        const i32 x0 = width - (3 - b) * button;
-        if (data->hover == b)
+        for (i32 column = 0; column < (i32)radius + 1 && column < width / 2; column++)
         {
-            wl_fill(target, width, height, x0, 0, button, height, b == 2 ? WL_TITLE_CLOSE_HOVER : WL_TITLE_HOVER);
-        }
-        const i32 left = x0 + (button - icon) / 2;
-        const i32 top  = (height - icon) / 2;
-        switch (b)
-        {
-        case 0:
-            wl_fill(target, width, height, left, top + icon / 2, icon, line, text_color);
-            break;
-        case 1:
-        {
-            // Restore draws the window behind as well
-            const i32 inset = data->maximized ? icon / 4 : 0;
-            if (inset > 0)
+            const f32 dx       = radius - ((f32)column + 0.5f);
+            const f32 dy       = radius - ((f32)row + 0.5f);
+            const f32 coverage = dx > 0.0f && dy > 0.0f ? wl_coverage(radius - __builtin_sqrtf(dx * dx + dy * dy)) : 1.0f;
+            // Premultiplied: the bar's colour scaled by its coverage
+            const u32 a     = (u32)(coverage * 255.0f + 0.5f);
+            u32       pixel = a << 24;
+            for (u32 shift = 0; shift < 24; shift += 8)
             {
-                wl_fill(target, width, height, left + inset, top, icon - inset, line, text_color);
-                wl_fill(target, width, height, left + icon - line, top, line, icon - inset, text_color);
+                pixel |= ((((background >> shift) & 0xFF) * a + 127) / 255) << shift;
             }
-            const i32 x = left;
-            const i32 y = top + inset;
-            const i32 s = icon - inset;
-            wl_fill(target, width, height, x, y, s, line, text_color);
-            wl_fill(target, width, height, x, y + s - line, s, line, text_color);
-            wl_fill(target, width, height, x, y, line, s, text_color);
-            wl_fill(target, width, height, x + s - line, y, line, s, text_color);
-            break;
-        }
-        default:
-            for (i32 i = 0; i < icon; i++)
-            {
-                wl_fill(target, width, height, left + i, top + i, line, line, text_color);
-                wl_fill(target, width, height, left + icon - 1 - i, top + i, line, line, text_color);
-            }
-            break;
+            target.pixels[(usize)row * (usize)width + (usize)column]                = pixel;
+            target.pixels[(usize)row * (usize)width + (usize)(width - 1 - column)] = pixel;
         }
     }
 
-    // The title in the desktop's font; without fontconfig in the 5x7 font, two pixels per font
-    // pixel at one pixel per point
+    // The close button: a circle of white at 10 % (15 % under the pointer, 30 % pressed) with a
+    // thin cross of 8 points
+    const f32 size    = (f32)WL_BUTTON_SIZE * scale;
+    const f32 cx      = (f32)width - ((f32)WL_BUTTON_MARGIN * scale + size * 0.5f);
+    const f32 cy      = (f32)height * 0.5f;
+    const f32 opacity = data->pressed == 2 ? 0.3f : (data->hover == 2 ? 0.15f : 0.1f);
+    const f32 arm     = 4.0f * scale;
+    const f32 half    = 0.75f * scale;
+    for (i32 row = (i32)(cy - size * 0.5f) - 1; row <= (i32)(cy + size * 0.5f) + 1; row++)
+    {
+        for (i32 column = (i32)(cx - size * 0.5f) - 1; column <= (i32)(cx + size * 0.5f) + 1; column++)
+        {
+            if (row < 0 || column < 0 || row >= height || column >= width)
+            {
+                continue;
+            }
+            const f32 px     = (f32)column + 0.5f;
+            const f32 py     = (f32)row + 0.5f;
+            u32&      pixel  = target.pixels[(usize)row * (usize)width + (usize)column];
+            const f32 circle = wl_coverage(size * 0.5f - __builtin_sqrtf((px - cx) * (px - cx) + (py - cy) * (py - cy)));
+            pixel            = wl_blend(pixel, 0xFFFFFFFFu, circle * opacity);
+            const f32 first  = wl_segment_distance(px, py, cx - arm, cy - arm, cx + arm, cy + arm);
+            const f32 second = wl_segment_distance(px, py, cx + arm, cy - arm, cx - arm, cy + arm);
+            const f32 cross  = wl_coverage(half - (first < second ? first : second));
+            pixel            = wl_blend(pixel, text_color, cross);
+        }
+    }
+
+    // The title centred on the whole bar, in the desktop's font; without fontconfig in the 5x7
+    // font, two pixels per font pixel at one pixel per point
+    const i32 button = (i32)((f32)(WL_BUTTON_SIZE + 2 * WL_BUTTON_MARGIN) * scale + 0.5f);
     if (wl_title_font())
     {
-        wl_draw_text(target, width, height, button, width - 3 * button, data->title, 14.0f * scale, text_color);
+        wl_draw_text(target, width, height, button, width - button, data->title, 14.5f * scale, text_color);
     }
     const i32 dot     = (i32)(scale * 2.0f + 0.5f) > 1 ? (i32)(scale * 2.0f + 0.5f) : 1;
     const i32 advance = 6 * dot;
-    const i32 room    = width - 3 * button - 2 * advance;
+    const i32 room    = width - 2 * button;
     const i32 count   = lx_wl.title_font_ok ? 0 : ((i32)cstr_length(data->title) < room / advance ? (i32)cstr_length(data->title) : (room > 0 ? room / advance : 0));
-    i32       x       = (width - 3 * button - count * advance) / 2;
+    i32       x       = (width - count * advance) / 2;
     const i32 y       = (height - 7 * dot) / 2;
     for (i32 i = 0; i < count; i++, x += advance)
     {
-        const u8 c     = (u8)data->title[i];
+        const u8  c     = (u8)data->title[i];
         const u8* glyph = wl_font[(c >= 32 && c < 127 ? c : '?') - 32];
         for (i32 column = 0; column < 5; column++)
         {
@@ -2743,6 +2782,7 @@ static void wl_draw_title (OS_Window* window)
     data->title_drawn_width     = data->logical_width;
     data->title_drawn_scale     = scale;
     data->title_drawn_hover     = data->hover;
+    data->title_drawn_pressed   = data->pressed;
     data->title_drawn_activated = data->activated;
     data->title_drawn_maximized = data->maximized;
 }
@@ -2969,6 +3009,7 @@ static void wl_decoration_button (u32 serial, u32 button, b8 down)
     if (button == WL_BUTTON_LEFT && down && at >= 0)
     {
         data->pressed = at;
+        wl_draw_title(window);
     }
     else if (button == WL_BUTTON_LEFT && down)
     {
@@ -2988,20 +3029,10 @@ static void wl_decoration_button (u32 serial, u32 button, b8 down)
     {
         if (data->pressed >= 0 && data->pressed == at)
         {
-            switch (at)
-            {
-            case 0:
-                lx_wl.wl.wl_proxy_marshal_flags(data->toplevel, 13, nullptr, version, 0); // set_minimized
-                break;
-            case 1:
-                lx_wl.wl.wl_proxy_marshal_flags(data->toplevel, data->maximized ? 10 : 9, nullptr, version, 0);
-                break;
-            default:
-                os_queue_event(window, { .type = OS_RawEventType::WindowClose });
-                break;
-            }
+            os_queue_event(window, { .type = OS_RawEventType::WindowClose });
         }
         data->pressed = -1;
+        wl_draw_title(window);
     }
     else if (button == WL_BUTTON_RIGHT && down && at < 0)
     {
