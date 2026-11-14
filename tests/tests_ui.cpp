@@ -61,7 +61,16 @@ struct UiTest : testing::TestWithParam<R_Backend>
         SIM_Config config = {};
         sim_default_config(config);
         config.clock_mode = SIM_ClockMode::FixedStep;
+        config.load_model = load_builtin_model;
         sim = sim_create(config);
+    }
+
+    // The runtime's loader, without files: the built-in models only
+    static b8 load_builtin_model (const SIM_Config&, const char* name, Array<u8>& out_glb)
+    {
+        const u8* data = nullptr;
+        usize     size = 0;
+        return w_find_embedded_model(name, data, size) && w_pack_model(data, size, nullptr, out_glb);
     }
 
     void create_vulkan ()
@@ -325,6 +334,33 @@ TEST_P(UiTest, prop_motion_is_picked_from_its_drop_down)
     f32 x = 0.0f;
     f32 y = 0.0f;
     EXPECT_TRUE(ui_find_item(clicker.ui, "radius", x, y)) << "the prop's editor stays open";
+}
+
+// A chair is added on the floor in front of the head; its model is picked from the loaded and the
+// built-in ones
+TEST_P(UiTest, a_chair_is_added_and_its_model_picked)
+{
+    UiClicker clicker(*this, 1280, 900);
+    clicker.frame();
+    clicker.frame();
+    ASSERT_TRUE(clicker.click("add chair"));
+    clicker.frame();
+    const SIM_Prop* props = nullptr;
+    ASSERT_EQ(sim_props(sim, props), 1u);
+    EXPECT_EQ(props[0].kind, SIM_PropKind::Mesh);
+    EXPECT_STREQ(props[0].model, "chair");
+    EXPECT_EQ(props[0].pose.position.y, 0.0f) << "on the floor";
+    clicker.frame();
+
+    ASSERT_TRUE(clicker.click("model"));
+    ASSERT_TRUE(clicker.click("pencil")) << "the drop-down offers the built-in models";
+    clicker.frame();
+    ASSERT_EQ(sim_props(sim, props), 1u);
+    EXPECT_STREQ(props[0].model, "pencil");
+    EXPECT_NE(sim_find_model(sim, "pencil"), nullptr);
+    f32 x = 0.0f;
+    f32 y = 0.0f;
+    EXPECT_TRUE(ui_find_item(clicker.ui, "scale", x, y));
 }
 
 // Every input the Devices panel shows for a controller does what its label says: a button is

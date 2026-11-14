@@ -115,7 +115,125 @@ struct W_QrBuilder
     b8  function[W_QR_MAX_SIZE][W_QR_MAX_SIZE];
 };
 
+// A model as the glTF reader leaves it: every mesh placed by its nodes, a part per primitive
+struct W_ModelMaterial
+{
+    f32 factor[4]; // linear RGBA
+    u32 image;     // into W_ModelSource::images, W_NONE untextured
+};
+
+struct W_ModelImage
+{
+    u32 offset; // into W_ModelSource::image_bytes
+    u32 size;
+    u32 texels; // decoded
+};
+
+struct W_SourcePart
+{
+    u32 vertices_first; // the part's own vertices; its indices point into them
+    u32 vertices_count;
+    u32 indices_first;
+    u32 indices_count;
+    u32 material;
+};
+
+struct W_ModelSource
+{
+    Array<Vec3>            positions;
+    Array<Vec2>            uvs; // one per position, zero where a primitive has none
+    b8                     has_uvs;
+    Array<u32>             indices;
+    Array<W_SourcePart>    parts;
+    Array<W_ModelMaterial> materials;
+    Array<W_ModelImage>    images;
+    Array<u8>              image_bytes; // PNG or JPEG files as the model holds them
+};
+
+struct W_GltfBuffer
+{
+    const u8* data;
+    u32       size;
+};
+
+struct W_GltfView
+{
+    u32 buffer;
+    u32 offset;
+    u32 length;
+    u32 stride; // 0 for tightly packed
+};
+
+struct W_Accessor
+{
+    const u8* data;
+    u32       count;
+    u32       stride;
+    u32       component_type;
+    b8        normalized;
+};
+
+// An allocation a glTF document read owns: a file or a decoded data URI
+struct W_OwnedBytes
+{
+    u8* data;
+};
+
+// A glTF document being read: buffers either point into the GLB or are files and data URIs it owns
+struct W_Gltf
+{
+    JsonValue           root;
+    const char*         dir;
+    Array<W_GltfBuffer> buffers;
+    Array<W_OwnedBytes> owned;
+    Array<W_GltfView>   views;
+    Array<u32>          material_map; // glTF material to source material, W_NONE before its first use
+    Array<u32>          image_map;
+    u32                 default_material;
+    u32                 visits;
+    b8                  warned_points;
+};
+
+struct W_ModelTexture
+{
+    u8* rgba;
+    u32 width;
+    u32 height;
+};
+
+// An instance prepared for the rays of one origin: that origin in its model space, and a sphere
+// around it in room space that rays which miss it skip
+struct W_TraceInstance
+{
+    const W_Model* model;
+    Quat           inverse;
+    Vec3           inv_scale;
+    Vec3           origin;
+    Vec3           to_center; // from the rays' origin to the sphere's centre
+    f32            radius;
+};
+
+// Where a node of the scene is visited from: its node index, its transform to the model, its depth
+struct W_NodeVisit
+{
+    u32  node;
+    Mat4 model_from_node;
+    u32  depth;
+};
+
 } // namespace
+
+struct W_Model
+{
+    Array<W_VisualVertex> vertices;
+    Array<Vec3>           positions; // of vertices, for bvh
+    Array<u32>            indices;
+    Array<W_ModelPart>    parts;
+    Array<W_ModelTexture> images;
+    Vec3                  min;
+    Vec3                  max;
+    W_Bvh                 bvh;
+};
 
 //
 // Statics
@@ -991,6 +1109,1278 @@ static u32 nearest_hit (const W_Bvh& bvh, Vec3 origin, Vec3 direction, f32& inou
         }
     }
     return best_triangle;
+}
+
+//
+// Models: glTF 2.0 (Khronos glTF 2.0 specification)
+//
+
+#define W_GLB_MAGIC      0x46546C67u // "glTF"
+#define W_GLB_JSON       0x4E4F534Au
+#define W_GLB_BIN        0x004E4942u
+#define W_GLTF_MAX_DEPTH 32
+#define W_GLTF_MAX_VISITS 65536
+#define W_GLTF_FLOAT     5126u
+#define W_GLTF_UBYTE     5121u
+#define W_GLTF_USHORT    5123u
+#define W_GLTF_UINT      5125u
+
+static void release_source (W_ModelSource& source)
+{
+    source.positions.release();
+    source.uvs.release();
+    source.indices.release();
+    source.parts.release();
+    source.materials.release();
+    source.images.release();
+    source.image_bytes.release();
+}
+
+static void release_gltf (W_Gltf& gltf)
+{
+    for (const W_OwnedBytes& owned : gltf.owned)
+    {
+        os_memory_release(owned.data);
+    }
+    gltf.owned.release();
+    gltf.buffers.release();
+    gltf.views.release();
+    gltf.material_map.release();
+    gltf.image_map.release();
+}
+
+static u32 read_le32 (const u8* p)
+{
+    return (u32)p[0] | (u32)p[1] << 8 | (u32)p[2] << 16 | (u32)p[3] << 24;
+}
+
+static void put_le32 (Array<u8>& out, u32 value)
+{
+    for (u32 i = 0; i < 4; i++)
+    {
+        out.add((u8)(value >> (8 * i)));
+    }
+}
+
+// The JSON text, terminated, and the BIN chunk of a GLB, or the whole file as the JSON of a .gltf
+static b8 split_gltf (const u8* data, usize size, Array<char>& out_json, const u8*& out_bin, usize& out_bin_size)
+{
+    out_bin      = nullptr;
+    out_bin_size = 0;
+    out_json.clear();
+    if (!data || size == 0 || size > W_MODEL_MAX_FILE_SIZE)
+    {
+        LOG_ERROR("Model: empty or larger than %u bytes", W_MODEL_MAX_FILE_SIZE);
+        return false;
+    }
+    if (size >= 4 && read_le32(data) == W_GLB_MAGIC)
+    {
+        // Spec glTF 2.0 4.4 (GLB): a 12 byte header, then a JSON chunk, then an optional BIN chunk
+        if (size < 20 || read_le32(data + 4) != 2 || read_le32(data + 8) > size || read_le32(data + 8) < 20)
+        {
+            LOG_ERROR("Model: not a GLB of version 2, or cut short");
+            return false;
+        }
+        const usize length    = read_le32(data + 8);
+        const usize json_size = read_le32(data + 12);
+        if (read_le32(data + 16) != W_GLB_JSON || json_size > length - 20)
+        {
+            LOG_ERROR("Model: the GLB's first chunk is not JSON or runs past the file");
+            return false;
+        }
+        out_json.add((const char*)data + 20, json_size);
+        const usize next = 20 + ((json_size + 3) & ~(usize)3);
+        if (next + 8 <= length && read_le32(data + next + 4) == W_GLB_BIN)
+        {
+            const usize bin_size = read_le32(data + next);
+            if (bin_size > length - next - 8)
+            {
+                LOG_ERROR("Model: the GLB's BIN chunk runs past the file");
+                return false;
+            }
+            out_bin      = data + next + 8;
+            out_bin_size = bin_size;
+        }
+    }
+    else
+    {
+        out_json.add((const char*)data, size);
+    }
+    for (const char c : out_json)
+    {
+        if (c == 0)
+        {
+            LOG_ERROR("Model: its JSON holds a zero byte");
+            return false;
+        }
+    }
+    out_json.add(0);
+    return true;
+}
+
+static i32 base64_digit (char c)
+{
+    if (c >= 'A' && c <= 'Z')
+    {
+        return c - 'A';
+    }
+    if (c >= 'a' && c <= 'z')
+    {
+        return c - 'a' + 26;
+    }
+    if (c >= '0' && c <= '9')
+    {
+        return c - '0' + 52;
+    }
+    return c == '+' ? 62 : (c == '/' ? 63 : -1);
+}
+
+// RFC 4648 base64; JSON may escape the slash, padding ends the data
+static b8 decode_base64 (const char* text, usize length, Array<u8>& out)
+{
+    u32 bits  = 0;
+    u32 count = 0;
+    for (usize i = 0; i < length; i++)
+    {
+        const char c = text[i];
+        if (c == '\\')
+        {
+            continue;
+        }
+        if (c == '=')
+        {
+            break;
+        }
+        const i32 digit = base64_digit(c);
+        if (digit < 0)
+        {
+            return false;
+        }
+        bits = bits << 6 | (u32)digit;
+        count += 6;
+        if (count >= 8)
+        {
+            count -= 8;
+            out.add((u8)(bits >> count));
+        }
+        if (out.length > W_MODEL_MAX_FILE_SIZE)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static i32 hex_digit (char c)
+{
+    if (c >= '0' && c <= '9')
+    {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f')
+    {
+        return c - 'a' + 10;
+    }
+    return c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+// A data URI, or a file relative to the document's directory (percent-decoded, no scheme, not absolute)
+static b8 read_uri (W_Gltf& gltf, const JsonValue& value, const u8*& out_data, usize& out_size)
+{
+    const char* text   = nullptr;
+    usize       length = 0;
+    if (!json_is_string(value) || !json_raw(value, text, length))
+    {
+        return false;
+    }
+    if (length >= 5 && memory_equal(text, "data:", 5))
+    {
+        usize start = 0;
+        for (usize i = 5; i + 8 <= length && start == 0; i++)
+        {
+            start = memory_equal(text + i, ";base64,", 8) ? i + 8 : 0;
+        }
+        Array<u8> bytes = {};
+        if (start == 0 || !decode_base64(text + start, length - start, bytes))
+        {
+            bytes.release();
+            LOG_ERROR("Model: a data URI that is not base64");
+            return false;
+        }
+        gltf.owned.add({ bytes.data });
+        out_data = bytes.data;
+        out_size = bytes.length;
+        return true;
+    }
+
+    char name[OS_MAX_PATH];
+    u32  n = 0;
+    for (usize i = 0; i < length; i++)
+    {
+        char c = text[i];
+        if (c == '%' && i + 2 < length && hex_digit(text[i + 1]) >= 0 && hex_digit(text[i + 2]) >= 0)
+        {
+            c = (char)(hex_digit(text[i + 1]) * 16 + hex_digit(text[i + 2]));
+            i += 2;
+        }
+        else if (c == '\\' && i + 1 < length && text[i + 1] == '/')
+        {
+            continue;
+        }
+        if (c == 0 || c == ':' || n + 1 >= sizeof(name))
+        {
+            LOG_ERROR("Model: a URI that is neither a data URI nor a relative file");
+            return false;
+        }
+        name[n++] = c;
+    }
+    name[n] = 0;
+    if (!gltf.dir || n == 0 || name[0] == '/' || name[0] == '\\')
+    {
+        LOG_ERROR("Model: %s names a file but has no directory to find it in", n ? name : "a URI");
+        return false;
+    }
+    char path[OS_MAX_PATH];
+    cstr_format(path, sizeof(path), "%s/%s", gltf.dir, name);
+    u8*   data = nullptr;
+    usize size = 0;
+    if (!os_read_file(path, &data, &size))
+    {
+        LOG_ERROR("Model: cannot read %s", path);
+        return false;
+    }
+    gltf.owned.add({ data });
+    if (size > W_MODEL_MAX_FILE_SIZE)
+    {
+        LOG_ERROR("Model: %s is larger than %u bytes", path, W_MODEL_MAX_FILE_SIZE);
+        return false;
+    }
+    out_data = data;
+    out_size = size;
+    return true;
+}
+
+static b8 read_buffers (W_Gltf& gltf, const u8* bin, usize bin_size)
+{
+    const JsonValue buffers = json_find(gltf.root, "buffers");
+    const u32       count   = json_is_array(buffers) ? json_length(buffers) : 0;
+    for (u32 i = 0; i < count; i++)
+    {
+        const JsonValue buffer = json_at(buffers, i);
+        u32             length = 0;
+        if (!json_is_object(buffer) || !json_find_uint(buffer, "byteLength", length))
+        {
+            LOG_ERROR("Model: buffer %u has no byteLength", i);
+            return false;
+        }
+        const JsonValue uri  = json_find(buffer, "uri");
+        const u8*       data = nullptr;
+        usize           size = 0;
+        if (json_is_valid(uri))
+        {
+            if (!read_uri(gltf, uri, data, size))
+            {
+                return false;
+            }
+        }
+        else if (i == 0 && bin)
+        {
+            data = bin;
+            size = bin_size;
+        }
+        if (size < length)
+        {
+            LOG_ERROR("Model: buffer %u holds %zu bytes of its %u", i, size, length);
+            return false;
+        }
+        gltf.buffers.add({ data, length });
+    }
+
+    const JsonValue views       = json_find(gltf.root, "bufferViews");
+    const u32       views_count = json_is_array(views) ? json_length(views) : 0;
+    for (u32 i = 0; i < views_count; i++)
+    {
+        const JsonValue view   = json_at(views, i);
+        W_GltfView      out    = {};
+        if (!json_is_object(view) || !json_find_uint(view, "buffer", out.buffer) || !json_find_uint(view, "byteLength", out.length) || out.buffer >= gltf.buffers.length)
+        {
+            LOG_ERROR("Model: buffer view %u names no buffer or length", i);
+            return false;
+        }
+        json_find_uint(view, "byteOffset", out.offset, 0);
+        json_find_uint(view, "byteStride", out.stride, 0);
+        if ((u64)out.offset + out.length > gltf.buffers[out.buffer].size || (out.stride != 0 && (out.stride < 4 || out.stride > 252)))
+        {
+            LOG_ERROR("Model: buffer view %u runs past its buffer or has a bad stride", i);
+            return false;
+        }
+        gltf.views.add(out);
+    }
+    return true;
+}
+
+static u32 component_size (u32 type)
+{
+    switch (type)
+    {
+        case 5120:
+        case W_GLTF_UBYTE:
+            return 1;
+        case 5122:
+        case W_GLTF_USHORT:
+            return 2;
+        case W_GLTF_UINT:
+        case W_GLTF_FLOAT:
+            return 4;
+        default:
+            return 0;
+    }
+}
+
+static b8 read_accessor (const W_Gltf& gltf, u32 index, const char* type, u32 components, W_Accessor& out)
+{
+    const JsonValue accessors = json_find(gltf.root, "accessors");
+    const JsonValue accessor  = json_is_array(accessors) && index < json_length(accessors) ? json_at(accessors, index) : JsonValue{};
+    char            got[8]    = {};
+    u32             view      = 0;
+    u32             offset    = 0;
+    if (!json_is_object(accessor))
+    {
+        LOG_ERROR("Model: accessor %u does not exist", index);
+        return false;
+    }
+    if (json_is_valid(json_find(accessor, "sparse")))
+    {
+        LOG_ERROR("Model: accessor %u is sparse, which puppetxr does not read", index);
+        return false;
+    }
+    out = {};
+    if (!json_find_uint(accessor, "bufferView", view) || view >= gltf.views.length || !json_find_uint(accessor, "componentType", out.component_type) || !json_find_uint(accessor, "count", out.count) || out.count == 0 ||
+        !json_find_string(accessor, "type", got, nullptr, sizeof(got)) || !cstr_equal(got, type) || component_size(out.component_type) == 0)
+    {
+        LOG_ERROR("Model: accessor %u is not a %s in a buffer view", index, type);
+        return false;
+    }
+    json_find_uint(accessor, "byteOffset", offset, 0);
+    json_find_bool(accessor, "normalized", out.normalized, false);
+    const W_GltfView& v       = gltf.views[view];
+    const u32         element = components * component_size(out.component_type);
+    out.stride                = v.stride ? v.stride : element;
+    if (out.stride < element || (u64)offset + (u64)(out.count - 1) * out.stride + element > v.length)
+    {
+        LOG_ERROR("Model: accessor %u runs past its buffer view", index);
+        return false;
+    }
+    out.data = gltf.buffers[v.buffer].data + v.offset + offset;
+    return true;
+}
+
+static f32 accessor_f32 (const W_Accessor& accessor, u32 index, u32 component)
+{
+    const u8* p = accessor.data + (usize)index * accessor.stride;
+    switch (accessor.component_type)
+    {
+        case W_GLTF_FLOAT:
+        {
+            f32 value = 0.0f;
+            memory_copy(&value, p + (usize)component * 4, 4);
+            return value;
+        }
+        case W_GLTF_UBYTE:
+            return (f32)p[component] / 255.0f;
+        case W_GLTF_USHORT:
+        {
+            u16 value = 0;
+            memory_copy(&value, p + (usize)component * 2, 2);
+            return (f32)value / 65535.0f;
+        }
+        default:
+            return 0.0f;
+    }
+}
+
+static u32 accessor_index (const W_Accessor& accessor, u32 index)
+{
+    const u8* p = accessor.data + (usize)index * accessor.stride;
+    switch (accessor.component_type)
+    {
+        case W_GLTF_UBYTE:
+            return p[0];
+        case W_GLTF_USHORT:
+        {
+            u16 value = 0;
+            memory_copy(&value, p, 2);
+            return value;
+        }
+        default:
+        {
+            u32 value = 0;
+            memory_copy(&value, p, 4);
+            return value;
+        }
+    }
+}
+
+static b8 read_image_bytes (W_Gltf& gltf, u32 index, W_ModelSource& source, u32& out_image)
+{
+    if (index < gltf.image_map.length && gltf.image_map[index] != W_NONE)
+    {
+        out_image = gltf.image_map[index];
+        return true;
+    }
+    const JsonValue images = json_find(gltf.root, "images");
+    const JsonValue image  = json_is_array(images) && index < json_length(images) ? json_at(images, index) : JsonValue{};
+    if (!json_is_object(image))
+    {
+        LOG_ERROR("Model: image %u does not exist", index);
+        return false;
+    }
+    const u8* data = nullptr;
+    usize     size = 0;
+    u32       view = 0;
+    if (json_find_uint(image, "bufferView", view))
+    {
+        if (view >= gltf.views.length)
+        {
+            LOG_ERROR("Model: image %u names no buffer view", index);
+            return false;
+        }
+        data = gltf.buffers[gltf.views[view].buffer].data + gltf.views[view].offset;
+        size = gltf.views[view].length;
+    }
+    else if (!read_uri(gltf, json_find(image, "uri"), data, size))
+    {
+        LOG_ERROR("Model: image %u has neither a buffer view nor a URI", index);
+        return false;
+    }
+    int width    = 0;
+    int height   = 0;
+    int channels = 0;
+    if (size == 0 || size > 0x7fffffff || !stbi_info_from_memory(data, (int)size, &width, &height, &channels) || width <= 0 || height <= 0 || width > W_MODEL_MAX_IMAGE_SIZE || height > W_MODEL_MAX_IMAGE_SIZE)
+    {
+        LOG_ERROR("Model: image %u is not a PNG or JPEG of at most %u texels per side", index, W_MODEL_MAX_IMAGE_SIZE);
+        return false;
+    }
+    const W_ModelImage out = { .offset = (u32)source.image_bytes.length, .size = (u32)size, .texels = (u32)width * (u32)height };
+    source.image_bytes.add(data, size);
+    if (source.image_bytes.length > W_MODEL_MAX_FILE_SIZE)
+    {
+        LOG_ERROR("Model: its images hold more than %u bytes", W_MODEL_MAX_FILE_SIZE);
+        return false;
+    }
+    while (gltf.image_map.length <= index)
+    {
+        gltf.image_map.add(W_NONE);
+    }
+    gltf.image_map[index] = (u32)source.images.length;
+    out_image             = (u32)source.images.length;
+    source.images.add(out);
+    return true;
+}
+
+// The source material of a glTF material, -1 (none) being the spec's default: white, untextured
+static b8 read_material (W_Gltf& gltf, i64 index, W_ModelSource& source, u32& out_material)
+{
+    if (index < 0)
+    {
+        if (gltf.default_material == W_NONE)
+        {
+            gltf.default_material = (u32)source.materials.length;
+            source.materials.add({ .factor = { 1.0f, 1.0f, 1.0f, 1.0f }, .image = W_NONE });
+        }
+        out_material = gltf.default_material;
+        return true;
+    }
+    if ((u64)index < gltf.material_map.length && gltf.material_map[(usize)index] != W_NONE)
+    {
+        out_material = gltf.material_map[(usize)index];
+        return true;
+    }
+    const JsonValue materials = json_find(gltf.root, "materials");
+    const JsonValue material  = json_is_array(materials) && (u64)index < json_length(materials) ? json_at(materials, (u32)index) : JsonValue{};
+    if (!json_is_object(material))
+    {
+        LOG_ERROR("Model: material %lld does not exist", (long long)index);
+        return false;
+    }
+    W_ModelMaterial out    = { .factor = { 1.0f, 1.0f, 1.0f, 1.0f }, .image = W_NONE };
+    const JsonValue pbr    = json_find(material, "pbrMetallicRoughness");
+    const JsonValue factor = json_find(pbr, "baseColorFactor");
+    if (json_is_valid(factor) && !read_floats(factor, out.factor, 4))
+    {
+        LOG_ERROR("Model: material %lld has a bad baseColorFactor", (long long)index);
+        return false;
+    }
+    for (f32& f : out.factor)
+    {
+        f = zm::clamp(f, 0.0f, 1.0f);
+    }
+    const JsonValue texture   = json_find(pbr, "baseColorTexture");
+    u32             tex_index = 0;
+    u32             tex_coord = 0;
+    json_find_uint(texture, "texCoord", tex_coord, 0);
+    if (json_is_object(texture) && json_find_uint(texture, "index", tex_index) && tex_coord == 0)
+    {
+        const JsonValue textures = json_find(gltf.root, "textures");
+        const JsonValue tex      = json_is_array(textures) && tex_index < json_length(textures) ? json_at(textures, tex_index) : JsonValue{};
+        u32             image    = 0;
+        if (!json_is_object(tex) || !json_find_uint(tex, "source", image) || !read_image_bytes(gltf, image, source, out.image))
+        {
+            LOG_ERROR("Model: material %lld names a texture without an image", (long long)index);
+            return false;
+        }
+    }
+    while (gltf.material_map.length <= (usize)index)
+    {
+        gltf.material_map.add(W_NONE);
+    }
+    gltf.material_map[(usize)index] = (u32)source.materials.length;
+    out_material                    = (u32)source.materials.length;
+    source.materials.add(out);
+    return true;
+}
+
+static b8 read_primitive (W_Gltf& gltf, const JsonValue& primitive, const Mat4& model_from_node, b8 flip, W_ModelSource& source)
+{
+    u32 mode = 4;
+    json_find_uint(primitive, "mode", mode, 4);
+    if (mode <= 3)
+    {
+        if (!gltf.warned_points)
+        {
+            LOG_WARNING("Model: points and lines are skipped");
+            gltf.warned_points = true;
+        }
+        return true;
+    }
+    if (mode > 6)
+    {
+        LOG_ERROR("Model: primitive mode %u does not exist", mode);
+        return false;
+    }
+    if (json_is_valid(json_find(primitive, "targets")))
+    {
+        LOG_ERROR("Model: morph targets are not supported");
+        return false;
+    }
+    const JsonValue attributes = json_find(primitive, "attributes");
+    u32             index      = 0;
+    W_Accessor      positions  = {};
+    if (!json_is_object(attributes) || !json_find_uint(attributes, "POSITION", index) || !read_accessor(gltf, index, "VEC3", 3, positions) || positions.component_type != W_GLTF_FLOAT)
+    {
+        LOG_ERROR("Model: a primitive without float positions");
+        return false;
+    }
+    W_Accessor uvs     = {};
+    const b8   has_uvs = json_find_uint(attributes, "TEXCOORD_0", index);
+    if (has_uvs && (!read_accessor(gltf, index, "VEC2", 2, uvs) || uvs.count != positions.count ||
+                    !(uvs.component_type == W_GLTF_FLOAT || (uvs.normalized && (uvs.component_type == W_GLTF_UBYTE || uvs.component_type == W_GLTF_USHORT)))))
+    {
+        LOG_ERROR("Model: TEXCOORD_0 is not float or normalized unsigned, or not one per position");
+        return false;
+    }
+    W_Accessor indices     = {};
+    const b8   has_indices = json_find_uint(primitive, "indices", index);
+    if (has_indices && (!read_accessor(gltf, index, "SCALAR", 1, indices) || !(indices.component_type == W_GLTF_UBYTE || indices.component_type == W_GLTF_USHORT || indices.component_type == W_GLTF_UINT)))
+    {
+        LOG_ERROR("Model: indices are not unsigned integers");
+        return false;
+    }
+    i32 material_index = -1;
+    json_find_int(primitive, "material", material_index, -1);
+    u32 material = 0;
+    if (!read_material(gltf, material_index, source, material))
+    {
+        return false;
+    }
+
+    const u32 base = (u32)source.positions.length;
+    if ((u64)base + positions.count > W_MODEL_MAX_VERTICES)
+    {
+        LOG_ERROR("Model: more than %u vertices", W_MODEL_MAX_VERTICES);
+        return false;
+    }
+    for (u32 v = 0; v < positions.count; v++)
+    {
+        const Vec3 p = zm::transform_point(model_from_node, { accessor_f32(positions, v, 0), accessor_f32(positions, v, 1), accessor_f32(positions, v, 2) });
+        if (!coordinate_valid(p.x) || !coordinate_valid(p.y) || !coordinate_valid(p.z))
+        {
+            LOG_ERROR("Model: a position that is not finite or beyond %g m", (f64)W_MAX_COORDINATE);
+            return false;
+        }
+        source.positions.add(p);
+        source.uvs.add(has_uvs ? Vec2{ accessor_f32(uvs, v, 0), accessor_f32(uvs, v, 1) } : Vec2{});
+        if (has_uvs && (!zm::is_finite(source.uvs.last().x) || !zm::is_finite(source.uvs.last().y)))
+        {
+            LOG_ERROR("Model: a texture coordinate that is not finite");
+            return false;
+        }
+    }
+    source.has_uvs = source.has_uvs || has_uvs;
+
+    const u32 count = has_indices ? indices.count : positions.count;
+    const u32 first = (u32)source.indices.length;
+    u32       tri[3];
+    for (u32 i = 0; i < count; i++)
+    {
+        const u32 vertex = has_indices ? accessor_index(indices, i) : i;
+        if (vertex >= positions.count)
+        {
+            LOG_ERROR("Model: an index past the primitive's %u vertices", positions.count);
+            return false;
+        }
+        b8 emit = false;
+        if (mode == 4)
+        {
+            tri[i % 3] = vertex;
+            emit       = i % 3 == 2;
+        }
+        else if (i >= 2)
+        {
+            // Spec glTF 2.0 3.7.2.1: strips alternate their winding, fans share the first vertex
+            const u32 previous = has_indices ? accessor_index(indices, i - 1) : i - 1;
+            const u32 anchor   = mode == 5 ? (has_indices ? accessor_index(indices, i - 2) : i - 2) : (has_indices ? accessor_index(indices, 0) : 0);
+            const b8  odd      = mode == 5 && (i % 2) == 1;
+            tri[0]             = odd ? previous : anchor;
+            tri[1]             = odd ? anchor : previous;
+            tri[2]             = vertex;
+            emit               = true;
+        }
+        if (emit)
+        {
+            source.indices.add(base + tri[0]);
+            source.indices.add(base + (flip ? tri[2] : tri[1]));
+            source.indices.add(base + (flip ? tri[1] : tri[2]));
+        }
+    }
+    if (source.indices.length / 3 > W_MODEL_MAX_TRIANGLES)
+    {
+        LOG_ERROR("Model: more than %u triangles", W_MODEL_MAX_TRIANGLES);
+        return false;
+    }
+    if (source.indices.length > first)
+    {
+        if (source.parts.length == W_MODEL_MAX_PARTS)
+        {
+            LOG_ERROR("Model: more than %u primitives", W_MODEL_MAX_PARTS);
+            return false;
+        }
+        source.parts.add({ .vertices_first = base, .vertices_count = positions.count, .indices_first = first, .indices_count = (u32)source.indices.length - first, .material = material });
+    }
+    return true;
+}
+
+static b8 node_transform (const JsonValue& node, Mat4& out)
+{
+    f32 values[16];
+    if (json_is_valid(json_find(node, "matrix")))
+    {
+        if (!read_floats(json_find(node, "matrix"), values, 16))
+        {
+            return false;
+        }
+        memory_copy(out.m, values, sizeof(values));
+        return true;
+    }
+    Vec3 t = {};
+    Quat r = zm::QUAT_IDENTITY;
+    Vec3 s = { 1.0f, 1.0f, 1.0f };
+    if ((json_is_valid(json_find(node, "translation")) && !read_vec3(json_find(node, "translation"), t)) || (json_is_valid(json_find(node, "scale")) && !read_vec3(json_find(node, "scale"), s)))
+    {
+        return false;
+    }
+    if (json_is_valid(json_find(node, "rotation")))
+    {
+        if (!read_floats(json_find(node, "rotation"), values, 4))
+        {
+            return false;
+        }
+        r                = { values[0], values[1], values[2], values[3] };
+        const f32 length = zm::length(r);
+        if (!(length > zm::EPSILON) || !zm::is_finite(length))
+        {
+            return false;
+        }
+        r = r * (1.0f / length);
+    }
+    out = zm::mat4_translation(t) * zm::mat4_from_quat(r) * zm::mat4_scale(s);
+    return true;
+}
+
+static f32 determinant3 (const Mat4& m)
+{
+    return m.m[0][0] * (m.m[1][1] * m.m[2][2] - m.m[2][1] * m.m[1][2]) - m.m[1][0] * (m.m[0][1] * m.m[2][2] - m.m[2][1] * m.m[0][2]) + m.m[2][0] * (m.m[0][1] * m.m[1][2] - m.m[1][1] * m.m[0][2]);
+}
+
+static b8 read_node (W_Gltf& gltf, const W_NodeVisit& visit, W_ModelSource& source, Array<W_NodeVisit>& stack)
+{
+    const JsonValue nodes = json_find(gltf.root, "nodes");
+    const JsonValue node  = json_is_array(nodes) && visit.node < json_length(nodes) ? json_at(nodes, visit.node) : JsonValue{};
+    Mat4            local = zm::MAT4_IDENTITY;
+    if (!json_is_object(node) || !node_transform(node, local))
+    {
+        LOG_ERROR("Model: node %u does not exist or has a bad transform", visit.node);
+        return false;
+    }
+    if (visit.depth > W_GLTF_MAX_DEPTH || ++gltf.visits > W_GLTF_MAX_VISITS)
+    {
+        LOG_ERROR("Model: its nodes nest deeper than %u or form a cycle", W_GLTF_MAX_DEPTH);
+        return false;
+    }
+    if (json_is_valid(json_find(node, "skin")))
+    {
+        LOG_ERROR("Model: skins are not supported");
+        return false;
+    }
+    const Mat4 model_from_node = visit.model_from_node * local;
+    u32        mesh_index      = 0;
+    if (json_find_uint(node, "mesh", mesh_index))
+    {
+        const JsonValue meshes     = json_find(gltf.root, "meshes");
+        const JsonValue mesh       = json_is_array(meshes) && mesh_index < json_length(meshes) ? json_at(meshes, mesh_index) : JsonValue{};
+        const JsonValue primitives = json_find(mesh, "primitives");
+        if (!json_is_array(primitives))
+        {
+            LOG_ERROR("Model: mesh %u does not exist or has no primitives", mesh_index);
+            return false;
+        }
+        const b8 flip = determinant3(model_from_node) < 0.0f;
+        for (u32 p = 0; p < json_length(primitives); p++)
+        {
+            if (!json_is_object(json_at(primitives, p)) || !read_primitive(gltf, json_at(primitives, p), model_from_node, flip, source))
+            {
+                return false;
+            }
+        }
+    }
+    const JsonValue children = json_find(node, "children");
+    for (u32 c = 0; json_is_array(children) && c < json_length(children); c++)
+    {
+        u32 child = 0;
+        if (!json_as_uint(json_at(children, c), child))
+        {
+            return false;
+        }
+        stack.add({ .node = child, .model_from_node = model_from_node, .depth = visit.depth + 1 });
+    }
+    return true;
+}
+
+// Every mesh of the default scene placed by its nodes, depth first in document order
+static b8 read_gltf (const u8* data, usize size, const char* dir, W_ModelSource& out_source)
+{
+    Array<char> json     = {};
+    const u8*   bin      = nullptr;
+    usize       bin_size = 0;
+    defer { json.release(); };
+    if (!split_gltf(data, size, json, bin, bin_size))
+    {
+        return false;
+    }
+    JsonParser* parser = json_parse_from_string(json.data);
+    defer { json_release(parser); };
+    W_Gltf gltf = { .root = json_get_root(parser), .dir = dir, .default_material = W_NONE };
+    defer { release_gltf(gltf); };
+    char version[16] = {};
+    if (!parser || !json_is_object(gltf.root) || !json_find_string(json_find(gltf.root, "asset"), "version", version, nullptr, sizeof(version)) || version[0] != '2' || version[1] != '.')
+    {
+        LOG_ERROR("Model: not a glTF 2.0 file");
+        return false;
+    }
+    const JsonValue required = json_find(gltf.root, "extensionsRequired");
+    if (json_is_array(required) && json_length(required) > 0)
+    {
+        char name[64] = {};
+        json_as_string(json_at(required, 0), name, nullptr, sizeof(name));
+        LOG_ERROR("Model: it requires the extension %s, which puppetxr does not read", name);
+        return false;
+    }
+    if (json_is_array(json_find(gltf.root, "animations")) && json_length(json_find(gltf.root, "animations")) > 0)
+    {
+        LOG_WARNING("Model: its animations are ignored, it stays in its rest pose");
+    }
+    if (!read_buffers(gltf, bin, bin_size))
+    {
+        return false;
+    }
+
+    // Spec glTF 2.0 3.5.1: without a scene the roots are the nodes no node names as a child
+    Array<W_NodeVisit> stack = {};
+    defer { stack.release(); };
+    const JsonValue scenes = json_find(gltf.root, "scenes");
+    const JsonValue nodes  = json_find(gltf.root, "nodes");
+    u32             scene  = 0;
+    json_find_uint(gltf.root, "scene", scene, 0);
+    if (json_is_array(scenes) && json_length(scenes) > 0)
+    {
+        const JsonValue roots = json_find(json_at(scenes, scene), "nodes");
+        if (scene >= json_length(scenes) || !json_is_array(roots))
+        {
+            LOG_ERROR("Model: scene %u does not exist or has no nodes", scene);
+            return false;
+        }
+        for (u32 i = json_length(roots); i > 0; i--)
+        {
+            u32 node = 0;
+            if (!json_as_uint(json_at(roots, i - 1), node))
+            {
+                return false;
+            }
+            stack.add({ .node = node, .model_from_node = zm::MAT4_IDENTITY, .depth = 0 });
+        }
+    }
+    else if (json_is_array(nodes))
+    {
+        Array<b8> child = {};
+        defer { child.release(); };
+        child.resize(json_length(nodes));
+        for (u32 n = 0; n < json_length(nodes); n++)
+        {
+            const JsonValue children = json_find(json_at(nodes, n), "children");
+            for (u32 c = 0; json_is_array(children) && c < json_length(children); c++)
+            {
+                u32 index = 0;
+                if (json_as_uint(json_at(children, c), index) && index < child.length)
+                {
+                    child[index] = true;
+                }
+            }
+        }
+        for (u32 n = json_length(nodes); n > 0; n--)
+        {
+            if (!child[n - 1])
+            {
+                stack.add({ .node = n - 1, .model_from_node = zm::MAT4_IDENTITY, .depth = 0 });
+            }
+        }
+    }
+    while (stack.length > 0)
+    {
+        const W_NodeVisit visit = stack.last();
+        stack.remove(stack.length - 1);
+        const usize children_first = stack.length;
+        if (!read_node(gltf, visit, out_source, stack))
+        {
+            return false;
+        }
+        // Children were pushed in order; reversed, the first child is visited next
+        for (usize a = children_first, b = stack.length; a + 1 < b; a++, b--)
+        {
+            const W_NodeVisit swap = stack[a];
+            stack[a]               = stack[b - 1];
+            stack[b - 1]           = swap;
+        }
+    }
+    // Each material decodes its texture on its own, so one small file used by many materials
+    // would decode to gigabytes
+    u64 texels = 0;
+    for (const W_ModelMaterial& material : out_source.materials)
+    {
+        texels += material.image != W_NONE ? out_source.images[material.image].texels : 0;
+    }
+    if (texels > W_MODEL_MAX_TEXELS)
+    {
+        LOG_ERROR("Model: its materials' textures decode to more than %u texels", W_MODEL_MAX_TEXELS);
+        return false;
+    }
+    if (out_source.parts.length == 0)
+    {
+        LOG_ERROR("Model: its scene has no triangles");
+        return false;
+    }
+    return true;
+}
+
+static void append_json (Array<char>& out, const char* fmt, ...) PRINTF_LIKE(2, 3);
+static void append_json (Array<char>& out, const char* fmt, ...)
+{
+    char    text[512];
+    va_list args = {};
+    va_start(args, fmt);
+    const usize length = cstr_format_v(text, sizeof(text), fmt, args);
+    va_end(args);
+    ASSERT(length < sizeof(text));
+    out.add(text, zm::min(length, sizeof(text) - 1));
+}
+
+static void append_f32 (Array<char>& out, f32 value)
+{
+    char text[32];
+    out.add(text, json_format_f32(text, sizeof(text), value));
+}
+
+// The canonical GLB of a source: one node, one mesh, a primitive per part with its own vertices,
+// so reading it back gives the same source
+static void write_glb (const W_ModelSource& source, Array<u8>& out)
+{
+    usize vertices = 0;
+    for (const W_SourcePart& part : source.parts)
+    {
+        vertices += part.vertices_count;
+    }
+    const usize uvs_at    = vertices * sizeof(Vec3);
+    const usize index_at  = uvs_at + (source.has_uvs ? vertices * sizeof(Vec2) : 0);
+    const usize images_at = index_at + source.indices.length * sizeof(u32);
+    const u32   per_part  = source.has_uvs ? 3u : 2u; // accessors
+    const u32   index_view = source.has_uvs ? 2u : 1u;
+
+    Array<char> json = {};
+    defer { json.release(); };
+    append_json(json, "{\"asset\":{\"generator\":\"puppetxr\",\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[{\"mesh\":0}],\"meshes\":[{\"primitives\":[");
+    for (usize p = 0; p < source.parts.length; p++)
+    {
+        const u32 a = (u32)p * per_part;
+        if (source.has_uvs)
+        {
+            append_json(json, "%s{\"attributes\":{\"POSITION\":%u,\"TEXCOORD_0\":%u},\"indices\":%u,\"material\":%u}", p ? "," : "", a, a + 1, a + 2, source.parts[p].material);
+        }
+        else
+        {
+            append_json(json, "%s{\"attributes\":{\"POSITION\":%u},\"indices\":%u,\"material\":%u}", p ? "," : "", a, a + 1, source.parts[p].material);
+        }
+    }
+    append_json(json, "]}],\"materials\":[");
+    for (usize m = 0; m < source.materials.length; m++)
+    {
+        const W_ModelMaterial& material = source.materials[m];
+        append_json(json, "%s{\"pbrMetallicRoughness\":{\"baseColorFactor\":[", m ? "," : "");
+        for (u32 c = 0; c < 4; c++)
+        {
+            if (c)
+            {
+                json.add(',');
+            }
+            append_f32(json, material.factor[c]);
+        }
+        json.add(']');
+        if (material.image != W_NONE)
+        {
+            append_json(json, ",\"baseColorTexture\":{\"index\":%u}", material.image);
+        }
+        append_json(json, "}}");
+    }
+    append_json(json, "]");
+    const u32 image_view = index_view + 1;
+    if (source.images.length > 0)
+    {
+        append_json(json, ",\"textures\":[");
+        for (usize i = 0; i < source.images.length; i++)
+        {
+            append_json(json, "%s{\"source\":%u}", i ? "," : "", (u32)i);
+        }
+        append_json(json, "],\"images\":[");
+        for (usize i = 0; i < source.images.length; i++)
+        {
+            const u8* bytes = source.image_bytes.data + source.images[i].offset;
+            append_json(json, "%s{\"bufferView\":%u,\"mimeType\":\"%s\"}", i ? "," : "", image_view + (u32)i, bytes[0] == 0x89 ? "image/png" : "image/jpeg");
+        }
+        append_json(json, "]");
+    }
+    append_json(json, ",\"accessors\":[");
+    u32 vertex = 0;
+    for (usize p = 0; p < source.parts.length; p++)
+    {
+        const W_SourcePart& part = source.parts[p];
+        Vec3                lo   = source.positions[part.vertices_first];
+        Vec3                hi   = lo;
+        for (u32 v = part.vertices_first; v < part.vertices_first + part.vertices_count; v++)
+        {
+            lo = zm::min(lo, source.positions[v]);
+            hi = zm::max(hi, source.positions[v]);
+        }
+        append_json(json, "%s{\"bufferView\":0,\"byteOffset\":%u,\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\",\"min\":[", p ? "," : "", vertex * 12, part.vertices_count);
+        const f32 bounds[6] = { lo.x, lo.y, lo.z, hi.x, hi.y, hi.z };
+        for (u32 b = 0; b < 6; b++)
+        {
+            append_json(json, "%s", b == 0 ? "" : (b == 3 ? "],\"max\":[" : ","));
+            append_f32(json, bounds[b]);
+        }
+        append_json(json, "]}");
+        if (source.has_uvs)
+        {
+            append_json(json, ",{\"bufferView\":1,\"byteOffset\":%u,\"componentType\":5126,\"count\":%u,\"type\":\"VEC2\"}", vertex * 8, part.vertices_count);
+        }
+        append_json(json, ",{\"bufferView\":%u,\"byteOffset\":%u,\"componentType\":5125,\"count\":%u,\"type\":\"SCALAR\"}", index_view, part.indices_first * 4, part.indices_count);
+        vertex += part.vertices_count;
+    }
+    append_json(json, "],\"bufferViews\":[{\"buffer\":0,\"byteLength\":%u}", (u32)uvs_at);
+    if (source.has_uvs)
+    {
+        append_json(json, ",{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":%u}", (u32)uvs_at, (u32)(index_at - uvs_at));
+    }
+    append_json(json, ",{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":%u}", (u32)index_at, (u32)(images_at - index_at));
+    usize at = images_at;
+    for (const W_ModelImage& image : source.images)
+    {
+        append_json(json, ",{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":%u}", (u32)at, image.size);
+        at = (at + image.size + 3) & ~(usize)3;
+    }
+    const usize bin_size = at;
+    append_json(json, "],\"buffers\":[{\"byteLength\":%u}]}", (u32)bin_size);
+    while (json.length % 4 != 0)
+    {
+        json.add(' ');
+    }
+
+    out.clear();
+    out.reserve(28 + json.length + bin_size);
+    put_le32(out, W_GLB_MAGIC);
+    put_le32(out, 2);
+    put_le32(out, (u32)(28 + json.length + bin_size));
+    put_le32(out, (u32)json.length);
+    put_le32(out, W_GLB_JSON);
+    out.add((const u8*)json.data, json.length);
+    put_le32(out, (u32)bin_size);
+    put_le32(out, W_GLB_BIN);
+    for (const W_SourcePart& part : source.parts)
+    {
+        out.add((const u8*)(source.positions.data + part.vertices_first), (usize)part.vertices_count * sizeof(Vec3));
+    }
+    for (usize p = 0; source.has_uvs && p < source.parts.length; p++)
+    {
+        out.add((const u8*)(source.uvs.data + source.parts[p].vertices_first), (usize)source.parts[p].vertices_count * sizeof(Vec2));
+    }
+    // Parts are in index order, so the indices stay in place, local to their part's vertices
+    for (const W_SourcePart& part : source.parts)
+    {
+        for (u32 i = part.indices_first; i < part.indices_first + part.indices_count; i++)
+        {
+            const u32 local = source.indices[i] - part.vertices_first;
+            out.add((const u8*)&local, sizeof(local));
+        }
+    }
+    for (const W_ModelImage& image : source.images)
+    {
+        out.add(source.image_bytes.data + image.offset, image.size);
+        while ((out.length - 28 - json.length) % 4 != 0)
+        {
+            out.add(0);
+        }
+    }
+}
+
+static f32 srgb_to_linear (f32 c)
+{
+    return c <= 0.04045f ? c / 12.92f : zm::pow((c + 0.055f) / 1.055f, 2.4f);
+}
+
+static u8 linear_to_srgb (f32 c)
+{
+    c             = zm::clamp(c, 0.0f, 1.0f);
+    const f32 s   = c <= 0.0031308f ? c * 12.92f : 1.055f * zm::pow(c, 1.0f / 2.4f) - 0.055f;
+    return (u8)zm::round(zm::clamp(s, 0.0f, 1.0f) * 255.0f);
+}
+
+static void destroy_model_data (W_Model* model)
+{
+    model->vertices.release();
+    model->positions.release();
+    model->indices.release();
+    model->parts.release();
+    for (const W_ModelTexture& image : model->images)
+    {
+        os_memory_release(image.rgba);
+    }
+    model->images.release();
+    model->bvh.nodes.release();
+    model->bvh.triangles.release();
+}
+
+#define W_SRGB_ENCODE_STEPS 4096
+#define W_TRACE_INSTANCES   64 // instances w_trace_depth sees; props are at most SIM_MAX_PROPS
+
+// The base colour of every material as one image: the texture times the factor in linear light,
+// or a solid of the factor
+static b8 make_model_texture (const W_ModelSource& source, const W_ModelMaterial& material, const f32* decode, const u8* encode, W_ModelTexture& out)
+{
+    if (material.image == W_NONE)
+    {
+        out = { .rgba = (u8*)os_memory_alloc((usize)W_MODEL_SOLID_SIZE * W_MODEL_SOLID_SIZE * 4), .width = W_MODEL_SOLID_SIZE, .height = W_MODEL_SOLID_SIZE };
+        const u8 texel[4] = { linear_to_srgb(material.factor[0]), linear_to_srgb(material.factor[1]), linear_to_srgb(material.factor[2]), (u8)zm::round(material.factor[3] * 255.0f) };
+        for (u32 t = 0; t < W_MODEL_SOLID_SIZE * W_MODEL_SOLID_SIZE; t++)
+        {
+            memory_copy(out.rgba + (usize)t * 4, texel, 4);
+        }
+        return true;
+    }
+    const W_ModelImage& image    = source.images[material.image];
+    int                 width    = 0;
+    int                 height   = 0;
+    int                 channels = 0;
+    u8*                 pixels   = stbi_load_from_memory(source.image_bytes.data + image.offset, (int)image.size, &width, &height, &channels, 4);
+    if (!pixels || width <= 0 || height <= 0 || width > W_MODEL_MAX_IMAGE_SIZE || height > W_MODEL_MAX_IMAGE_SIZE)
+    {
+        LOG_ERROR("Model: a texture cannot be decoded: %s", pixels ? "too large" : stbi_failure_reason());
+        stbi_image_free(pixels);
+        return false;
+    }
+    const usize texels = (usize)width * (usize)height;
+    out                = { .rgba = (u8*)os_memory_alloc(texels * 4), .width = (u32)width, .height = (u32)height };
+    memory_copy(out.rgba, pixels, texels * 4);
+    stbi_image_free(pixels);
+    const f32* f = material.factor;
+    if (f[0] == 1.0f && f[1] == 1.0f && f[2] == 1.0f && f[3] == 1.0f)
+    {
+        return true;
+    }
+    for (usize t = 0; t < texels; t++)
+    {
+        u8* texel = out.rgba + t * 4;
+        for (u32 c = 0; c < 3; c++)
+        {
+            texel[c] = encode[(u32)zm::round(decode[texel[c]] * f[c] * (f32)(W_SRGB_ENCODE_STEPS - 1))];
+        }
+        texel[3] = (u8)zm::round((f32)texel[3] * f[3]);
+    }
+    return true;
+}
+
+static W_Model* model_from_source (const W_ModelSource& source)
+{
+    W_Model* model   = (W_Model*)os_memory_alloc(sizeof(W_Model));
+    b8       success = false;
+    defer {
+        if (!success)
+        {
+            destroy_model_data(model);
+            os_memory_release(model);
+        }
+    };
+    const usize vertices = source.positions.length;
+    model->vertices.resize(vertices);
+    model->positions.resize(vertices);
+    model->min = source.positions[0];
+    model->max = source.positions[0];
+    for (usize v = 0; v < vertices; v++)
+    {
+        model->vertices[v]  = { source.positions[v], source.uvs[v] };
+        model->positions[v] = source.positions[v];
+        model->min          = zm::min(model->min, source.positions[v]);
+        model->max          = zm::max(model->max, source.positions[v]);
+    }
+    model->indices.add(source.indices.data, source.indices.length);
+
+    f32* decode = (f32*)os_memory_alloc(256 * sizeof(f32));
+    u8*  encode = (u8*)os_memory_alloc(W_SRGB_ENCODE_STEPS);
+    defer {
+        os_memory_release(decode);
+        os_memory_release(encode);
+    };
+    for (u32 i = 0; i < 256; i++)
+    {
+        decode[i] = srgb_to_linear((f32)i / 255.0f);
+    }
+    for (u32 i = 0; i < W_SRGB_ENCODE_STEPS; i++)
+    {
+        encode[i] = linear_to_srgb((f32)i / (f32)(W_SRGB_ENCODE_STEPS - 1));
+    }
+    for (const W_ModelMaterial& material : source.materials)
+    {
+        W_ModelTexture texture = {};
+        if (!make_model_texture(source, material, decode, encode, texture))
+        {
+            return nullptr;
+        }
+        model->images.add(texture);
+    }
+    for (const W_SourcePart& part : source.parts)
+    {
+        model->parts.add({ .indices_first = part.indices_first, .indices_count = part.indices_count, .image = part.material });
+    }
+    build_bvh(model->bvh, model->positions.data, model->indices.data, (u32)(model->indices.length / 3));
+    success = true;
+    return model;
+}
+
+// The ray of a room space origin and direction in an instance's model space; false for an
+// instance that has no extent, whose model space has no inverse
+static b8 ray_into_instance (const W_Instance& instance, Vec3 origin, Vec3 direction, Vec3& out_origin, Vec3& out_direction)
+{
+    const Vec3 s = instance.scale;
+    if (!instance.model || !(s.x > 0.0f) || !(s.y > 0.0f) || !(s.z > 0.0f) || !zm::is_finite(s.x) || !zm::is_finite(s.y) || !zm::is_finite(s.z))
+    {
+        return false;
+    }
+    const Quat inverse = zm::conjugate(instance.pose.orientation);
+    const Vec3 o       = zm::rotate(inverse, origin - instance.pose.position);
+    const Vec3 d       = zm::rotate(inverse, direction);
+    out_origin         = { o.x / s.x, o.y / s.y, o.z / s.z };
+    out_direction      = { d.x / s.x, d.y / s.y, d.z / s.z };
+    return true;
+}
+
+// The instances that have an extent, prepared for rays from `origin`; returns how many
+static u32 prepare_instances (const W_Instance* instances, u32 count, Vec3 origin, W_TraceInstance* out)
+{
+    u32 prepared = 0;
+    for (u32 i = 0; instances && i < count && prepared < W_TRACE_INSTANCES; i++)
+    {
+        const W_Instance& instance = instances[i];
+        Vec3              o        = {};
+        Vec3              unused   = {};
+        if (!ray_into_instance(instance, origin, { 0.0f, 0.0f, -1.0f }, o, unused) || !zm::is_finite(o.x) || !zm::is_finite(o.y) || !zm::is_finite(o.z))
+        {
+            continue;
+        }
+        const Vec3 s        = instance.scale;
+        const Vec3 half     = (instance.model->max - instance.model->min) * 0.5f;
+        const Vec3 middle   = (instance.model->max + instance.model->min) * 0.5f;
+        const Vec3 center   = instance.pose.position + zm::rotate(instance.pose.orientation, { middle.x * s.x, middle.y * s.y, middle.z * s.z });
+        const f32  radius   = zm::length(Vec3{ half.x * s.x, half.y * s.y, half.z * s.z });
+        out[prepared++]     = {
+            .model     = instance.model,
+            .inverse   = zm::conjugate(instance.pose.orientation),
+            .inv_scale = { 1.0f / s.x, 1.0f / s.y, 1.0f / s.z },
+            .origin    = o,
+            .to_center = center - origin,
+            .radius    = radius * 1.001f + 1e-5f,
+        };
+    }
+    return prepared;
+}
+
+// The nearest hit of prepared instances within (0, inout_best] in units of `direction`; false for none
+static b8 trace_instances (const W_TraceInstance* instances, u32 count, Vec3 direction, f32& inout_best)
+{
+    const f32 dd     = zm::dot(direction, direction);
+    const f32 length = zm::sqrt(dd);
+    b8        hit    = false;
+    for (u32 i = 0; i < count; i++)
+    {
+        const W_TraceInstance& instance = instances[i];
+        const f32              along    = zm::dot(instance.to_center, direction) / dd;
+        const f32              reach    = instance.radius / length;
+        const f32              off      = zm::dot(instance.to_center, instance.to_center) - along * along * dd;
+        if (off > instance.radius * instance.radius || along + reach < 0.0f || along - reach > inout_best)
+        {
+            continue;
+        }
+        const Vec3 d = zm::rotate(instance.inverse, direction);
+        hit |= nearest_hit(instance.model->bvh, instance.origin, { d.x * instance.inv_scale.x, d.y * instance.inv_scale.y, d.z * instance.inv_scale.z }, inout_best) != W_NONE;
+    }
+    return hit;
+}
+
+// Nearest instance hit within (0, inout_best] in units of `direction`; W_NONE for none
+static u32 nearest_instance (const W_Instance* instances, u32 count, Vec3 origin, Vec3 direction, f32& inout_best, u32& out_triangle)
+{
+    u32 best = W_NONE;
+    for (u32 i = 0; i < count; i++)
+    {
+        Vec3 o = {};
+        Vec3 d = {};
+        if (!ray_into_instance(instances[i], origin, direction, o, d))
+        {
+            continue;
+        }
+        const u32 triangle = nearest_hit(instances[i].model->bvh, o, d, inout_best);
+        if (triangle != W_NONE)
+        {
+            best         = i;
+            out_triangle = triangle;
+        }
+    }
+    return best;
 }
 
 static i32 compare_names (const char* a, const char* b)
@@ -1998,9 +3388,9 @@ b8 w_raycast (const W_World* world, Vec3 origin, Vec3 direction, f32 max_distanc
     return true;
 }
 
-void w_trace_depth (const W_World* world, const Pose& view, const Fov& fov, f32 near, u32 width, u32 height, u32 row_first, u32 row_count, u16* out_image)
+void w_trace_depth (const W_World* world, const W_Instance* instances, u32 instances_count, const Pose& view, const Fov& fov, f32 near, u32 width, u32 height, u32 row_first, u32 row_count, u16* out_image)
 {
-    ASSERT(world && out_image && near > 0.0f);
+    ASSERT(out_image && near > 0.0f);
     const u32 row_end = (u32)zm::min((u64)row_first + row_count, (u64)height);
     const f32 tl      = zm::tan(fov.angle_left);
     const f32 tr      = zm::tan(fov.angle_right);
@@ -2008,6 +3398,8 @@ void w_trace_depth (const W_World* world, const Pose& view, const Fov& fov, f32 
     const f32 td      = zm::tan(fov.angle_down);
     const b8  valid   = zm::is_finite(view.position.x) && zm::is_finite(view.position.y) && zm::is_finite(view.position.z) && zm::is_finite(zm::length(view.orientation)) && zm::is_finite(tl) && zm::is_finite(tr) &&
                      zm::is_finite(tu) && zm::is_finite(td) && near > 0.0f;
+    W_TraceInstance prepared[W_TRACE_INSTANCES];
+    const u32       prepared_count = valid ? prepare_instances(instances, instances_count, view.position, prepared) : 0;
     for (u32 y = row_first; y < row_end; y++)
     {
         u16*      row = out_image + (usize)y * width;
@@ -2023,7 +3415,9 @@ void w_trace_depth (const W_World* world, const Pose& view, const Fov& fov, f32 
             const f32  tx        = tl + (tr - tl) * ((f32)x + 0.5f) / (f32)width;
             const Vec3 direction = zm::rotate(view.orientation, { tx, ty, -1.0f });
             f32        z         = zm::F32_MAX;
-            if (nearest_hit(world->visual_bvh, view.position, direction, z) == W_NONE)
+            const b8   room      = world && nearest_hit(world->visual_bvh, view.position, direction, z) != W_NONE;
+            const b8   instance  = trace_instances(prepared, prepared_count, direction, z);
+            if (!room && !instance)
             {
                 row[x] = 0xffff;
                 continue;
@@ -2031,6 +3425,37 @@ void w_trace_depth (const W_World* world, const Pose& view, const Fov& fov, f32 
             row[x] = z < near ? (u16)0 : (u16)zm::min(zm::round((1.0f - near / z) * 65535.0f), 65535.0f);
         }
     }
+}
+
+b8 w_raycast_instances (const W_Instance* instances, u32 instances_count, Vec3 origin, Vec3 direction, f32 max_distance, W_RaycastHit& out_hit, u32& out_index)
+{
+    const f32 length = zm::length(direction);
+    if (!instances || instances_count == 0 || !zm::is_finite(length) || length < zm::EPSILON || !(max_distance > 0.0f) || !zm::is_finite(origin.x) || !zm::is_finite(origin.y) || !zm::is_finite(origin.z))
+    {
+        return false;
+    }
+    const Vec3 d        = direction / length;
+    f32        best     = zm::is_finite(max_distance) ? max_distance : zm::F32_MAX;
+    u32        triangle = W_NONE;
+    const u32  index    = nearest_instance(instances, instances_count, origin, d, best, triangle);
+    if (index == W_NONE)
+    {
+        return false;
+    }
+    // Normals go through the inverse transpose: the inverse scale, then the rotation
+    const W_Instance& instance = instances[index];
+    const W_Model*    model    = instance.model;
+    const u32*        t        = model->indices.data + (usize)triangle * 3;
+    const Vec3        a        = model->positions[t[0]];
+    const Vec3        local    = zm::cross(model->positions[t[1]] - a, model->positions[t[2]] - a);
+    Vec3              normal   = zm::normalize(zm::rotate(instance.pose.orientation, { local.x / instance.scale.x, local.y / instance.scale.y, local.z / instance.scale.z }));
+    if (zm::dot(normal, d) > 0.0f)
+    {
+        normal = -normal;
+    }
+    out_hit   = { .distance = best, .point = origin + d * best, .normal = normal };
+    out_index = index;
+    return true;
 }
 
 const char* w_label_name (W_Label label)
@@ -2480,6 +3905,152 @@ Pose w_origin_offset_for_run (u64 seed, u64 run)
     const f32 angle    = (f32)((bits >> 24) & 0xffffffu) / 16777216.0f * zm::TAU;
     const f32 distance = zm::sqrt((f32)((bits >> 48) & 0xffffu) / 65536.0f) * W_ORIGIN_OFFSET_MAX_DISTANCE;
     return { { distance * zm::cos(angle), 0.0f, distance * zm::sin(angle) }, { 0.0f, zm::sin(yaw * 0.5f), 0.0f, zm::cos(yaw * 0.5f) } };
+}
+
+b8 w_pack_model (const u8* data, usize size, const char* dir, Array<u8>& out_glb)
+{
+    W_ModelSource source = {};
+    defer { release_source(source); };
+    if (!read_gltf(data, size, dir, source))
+    {
+        return false;
+    }
+    write_glb(source, out_glb);
+    if (out_glb.length > W_MODEL_MAX_FILE_SIZE)
+    {
+        LOG_ERROR("Model: packed it is larger than %u bytes", W_MODEL_MAX_FILE_SIZE);
+        return false;
+    }
+    return true;
+}
+
+b8 w_pack_model_file (const char* path, Array<u8>& out_glb)
+{
+    if (!path)
+    {
+        return false;
+    }
+    u8*   data = nullptr;
+    usize size = 0;
+    if (!os_read_file(path, &data, &size))
+    {
+        LOG_ERROR("Model: cannot read %s", path);
+        return false;
+    }
+    defer { os_memory_release(data); };
+    char        dir[OS_MAX_PATH];
+    const char* slash = nullptr;
+    for (const char* c = path; *c; c++)
+    {
+        slash = *c == '/' || *c == '\\' ? c : slash;
+    }
+    cstr_copy(dir, sizeof(dir), slash ? path : ".");
+    if (slash && (usize)(slash - path) < sizeof(dir))
+    {
+        dir[slash - path] = 0;
+    }
+    if (!w_pack_model(data, size, dir, out_glb))
+    {
+        LOG_ERROR("Model: %s is refused (docs/props.md, Models)", path);
+        return false;
+    }
+    return true;
+}
+
+W_Model* w_create_model (const u8* glb, usize size)
+{
+    W_ModelSource source = {};
+    defer { release_source(source); };
+    if (!read_gltf(glb, size, nullptr, source))
+    {
+        return nullptr;
+    }
+    return model_from_source(source);
+}
+
+W_Model* w_create_mesh_model (const Vec3* positions, u32 positions_count, const u32* indices, u32 indices_count)
+{
+    if (!positions || !indices || positions_count == 0 || indices_count == 0 || indices_count % 3 != 0 || !indices_valid(indices, indices_count, positions_count))
+    {
+        return nullptr;
+    }
+    for (u32 i = 0; i < positions_count; i++)
+    {
+        if (!coordinate_valid(positions[i].x) || !coordinate_valid(positions[i].y) || !coordinate_valid(positions[i].z))
+        {
+            return nullptr;
+        }
+    }
+    W_ModelSource source = {};
+    defer { release_source(source); };
+    source.positions.add(positions, positions_count);
+    source.uvs.resize(positions_count);
+    source.indices.add(indices, indices_count);
+    source.materials.add({ .factor = { 1.0f, 1.0f, 1.0f, 1.0f }, .image = W_NONE });
+    source.parts.add({ .vertices_first = 0, .vertices_count = positions_count, .indices_first = 0, .indices_count = indices_count, .material = 0 });
+    return model_from_source(source);
+}
+
+void w_destroy_model (W_Model* model)
+{
+    if (!model)
+    {
+        return;
+    }
+    destroy_model_data(model);
+    os_memory_release(model);
+}
+
+void w_model_mesh (const W_Model* model, const W_VisualVertex*& out_vertices, u32& out_vertices_count, const u32*& out_indices, u32& out_indices_count)
+{
+    ASSERT(model);
+    out_vertices       = model->vertices.data;
+    out_vertices_count = (u32)model->vertices.length;
+    out_indices        = model->indices.data;
+    out_indices_count  = (u32)model->indices.length;
+}
+
+u32 w_model_parts (const W_Model* model, const W_ModelPart*& out_parts)
+{
+    ASSERT(model);
+    out_parts = model->parts.data;
+    return (u32)model->parts.length;
+}
+
+u32 w_model_image_count (const W_Model* model)
+{
+    ASSERT(model);
+    return (u32)model->images.length;
+}
+
+void w_model_image (const W_Model* model, u32 index, const u8*& out_rgba, u32& out_width, u32& out_height)
+{
+    ASSERT(model && index < model->images.length);
+    const W_ModelTexture& image = model->images[index];
+    out_rgba                    = image.rgba;
+    out_width                   = image.width;
+    out_height                  = image.height;
+}
+
+void w_model_bounds (const W_Model* model, Vec3& out_min, Vec3& out_max)
+{
+    ASSERT(model);
+    out_min = model->min;
+    out_max = model->max;
+}
+
+b8 w_find_embedded_model (const char* name, const u8*& out_data, usize& out_size)
+{
+    for (u32 i = 0; name && i < w_embedded_models_count; i++)
+    {
+        if (w_embedded_models[i].name && cstr_equal(w_embedded_models[i].name, name))
+        {
+            out_data = w_embedded_models[i].data;
+            out_size = w_embedded_models[i].size;
+            return true;
+        }
+    }
+    return false;
 }
 
 u32 w_qr_size (const char* text)

@@ -7,6 +7,10 @@ config start with **Breaking:**.
 
 ## Unreleased
 
+- Mesh props: any glTF 2.0 model (`.glb` or `.gltf`) as a prop that stands still, moves back and forth or circles, to test how an app copes with things that move through the room, such as a chair pushed past. No extension tracks them; they show in passthrough, environment depth and environment raycasts like the room. Three are built in (`chair`, `pencil`, `case`); others load at run time (`load_model` in the C API, `puppetxrctl model load`, config `models`). Docs: docs/props.md.
+- Keyboard and QR code props show in environment depth and stop environment raycasts too.
+- **Breaking:** recordings are format 4: props may be meshes, and a recording keeps the models they show, so a replay needs none of their files. Formats 1 to 3 still read.
+- The C API is version 2: `load_model`, and `PUPPETXR_Prop` gains `scale` and `model` for `PUPPETXR_PROP_MESH`.
 - **Breaking:** environment depth (`XR_META_environment_depth`) behaves like a Quest 3's sensor by default: a new image every 40 ms that shows 45 ms after it was taken, from views where the head was 26 ms after the capture, 64.85 mm apart whatever the IPD, with noise and the band at the outer edges no camera sees; four images; the capture time through `XrEnvironmentDepthImageTimestampMETA`. Every parameter is configurable (`environment_depth`, docs/config.md); `"environment_depth": "eyes"` or `PUPPETXR_ENVIRONMENT_DEPTH=eyes` gives the depth from the eyes at every frame as before.
 - **Breaking:** recordings are format 3: the header holds the environment depth sensor. Formats 1 and 2 still read and replay depth from the eyes, as they were recorded.
 - Environment depth is traced into the room on the CPU, so it is the same on every GPU, and rooms load faster.
