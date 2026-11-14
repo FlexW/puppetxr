@@ -50,7 +50,11 @@ clears to 1 and pipelines with `depth_test` compare less-or-equal, or always wit
 is. Framebuffers take one layer of each attachment image. Pipelines bind up to
 `R_MAX_TEXTURES` combined image samplers at bindings 0.. (`textures_count`,
 `r_cmd_bind_textures`); `r_cmd_clear_depth` clears depth inside a pass to a given value.
-`r_read_image` reads depth formats too.
+`r_read_image` reads depth formats too. On Vulkan it copies into a staging buffer kept for the
+next read, in host cached memory where the device has it (invalidated when not coherent): the
+first host visible and coherent type is often the GPU's own memory, which the CPU reads uncached,
+60 ms for a frame of two 1680 x 1760 eyes on an AMD GPU against 1.5 ms
+(`RenderTest.reading_back_a_frame_takes_milliseconds`).
 
 Frames: `r_begin_frame` / `r_end_frame` record and submit one command buffer with a
 fence, two in flight. `r_begin_immediate` / `r_end_immediate` submit and wait, used for

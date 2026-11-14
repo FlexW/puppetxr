@@ -64,6 +64,11 @@ Release workflow (`.github/workflows/release.yml`, docs/building.md "Releasing")
 - [x] a manual run with `pin` on `main`: `tools/dist/windows-toolchain.json` committed (clang 23.1.3, MSVC 14.44, SDK 10.0.26100); `dist.ps1` keeps the installed clang before the one the VS developer shell puts first
 - [ ] a manual dry run on `main` passes all jobs; in particular on the hosted Windows runner, which runs elevated so the OpenXR loader ignores `XR_RUNTIME_JSON`: check `example_e2e` and `install_relocated`. Blocked on 2026-10-22: the account's artifact storage quota was full, so the first upload (`notes` of the `check` job) failed and every build job was skipped; the 3.3 GB of another repository's artifacts were deleted, GitHub recalculates usage every 6 to 12 hours. Run `gh workflow run release.yml --ref main` again; the Linux and source jobs passed locally (`dist.sh` with all tests, `dist-src.sh`, offline build of the full tarball), the Windows job has never run
 - [x] `tools/release.sh` checked in a clone with a local bare remote: refuses a bad, older or existing version, uncommitted changes and a no; releasing 0.1.0 and 0.1.1 commits, tags and pushes, and the workflow's notes extraction reads the new section
+- [ ] `release-macos` (ctest in parallel): `ApiControlTest.*` failed now and then with "Cannot write lock file
+  /tmp/puppetxr/<pid>.json: No such file or directory", the discovery file missing and every request unanswered.
+  Likely another simulator's sweep (`discovery_dir`'s stale lock files, `src/puppetxr_api.cpp`) deleting the temporary
+  file before its rename on macOS; `Platform.lock_file_creation_survives_a_concurrent_sweep` passes there. Done when
+  a test reproduces it and the sweep leaves files being written alone
 - [ ] the control API tests (`ApiControlPausedTest.*`) hang until the ctest timeout (25 min) when the control socket cannot connect (a network namespace without loopback) instead of failing fast
 - [ ] `tools/release.sh` on the first release: the draft has both Linux tarballs, both Windows zips, both macOS tarballs, both source tarballs, the four `.buildinfo`, `SHA256SUMS`
 
