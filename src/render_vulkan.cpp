@@ -33,6 +33,7 @@ struct R_VkBuffer
     VkDeviceMemory memory;
     void*          mapped;
     u64            size;
+    b8             coherent; // host visible memory that needs no flush or invalidate
 };
 
 struct R_VkRenderPass
@@ -113,6 +114,7 @@ struct R_VkDevice
 
     SparseArray<R_VkImage, R_Image>                     images = {};
     SparseArray<R_VkBuffer, R_Buffer>                   buffers = {};
+    R_BufferHandle                                      readback = {}; // vk_read_image's staging, kept for the next read
     SparseArray<R_VkRenderPass, R_RenderPass>           render_passes = {};
     SparseArray<R_VkFramebuffer, R_Framebuffer>         framebuffers = {};
     SparseArray<R_VkPipeline, R_Pipeline>               pipelines = {};
@@ -868,10 +870,30 @@ static R_Format vk_get_image_format (const R_Device* base_device, R_ImageHandle 
 // Buffers
 //
 
-static R_BufferHandle vk_create_buffer (R_Device* base_device, const R_CreateBufferInfo& info)
+// A readback buffer is host memory the CPU reads: cached where the device has it. The first host
+// visible and coherent type is often device local, memory the CPU reads uncached over the bus,
+// which made reading back a frame of two 1680 x 1760 eyes take 60 ms on an AMD GPU
+static u32 buffer_memory_type (const R_VkDevice* device, u32 type_bits, b8 host_visible, b8 readback)
 {
-    R_VkDevice* device = vk_device(base_device);
-    ASSERT(device);
+    const VkMemoryPropertyFlags visible  = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+    const VkMemoryPropertyFlags cached   = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    const VkMemoryPropertyFlags coherent = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    u32 type = 0xFFFFFFFFu;
+    if (readback)
+    {
+        type = find_memory_type(device, type_bits, visible | cached | coherent);
+        type = type == 0xFFFFFFFFu ? find_memory_type(device, type_bits, visible | cached) : type;
+    }
+    if (type == 0xFFFFFFFFu)
+    {
+        const VkMemoryPropertyFlags local = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+        type = find_memory_type(device, type_bits, host_visible ? visible | coherent : local);
+    }
+    return type;
+}
+
+static R_BufferHandle create_buffer (R_VkDevice* device, const R_CreateBufferInfo& info, b8 readback)
+{
     if (info.size == 0)
     {
         LOG_ERROR("Invalid buffer size 0");
@@ -910,8 +932,8 @@ static R_BufferHandle vk_create_buffer (R_Device* base_device, const R_CreateBuf
 
     VkMemoryRequirements requirements = {};
     device->vk.vkGetBufferMemoryRequirements(device->device, buffer.buffer, &requirements);
-    const VkMemoryPropertyFlags properties = info.host_visible ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-    const VkMemoryAllocateInfo alloc_info = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = requirements.size, .memoryTypeIndex = find_memory_type(device, requirements.memoryTypeBits, properties) };
+    const b8                   host_visible = info.host_visible || readback;
+    const VkMemoryAllocateInfo alloc_info   = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = requirements.size, .memoryTypeIndex = buffer_memory_type(device, requirements.memoryTypeBits, host_visible, readback) };
     if (alloc_info.memoryTypeIndex == 0xFFFFFFFFu || device->vk.vkAllocateMemory(device->device, &alloc_info, nullptr, &buffer.memory) != VK_SUCCESS)
     {
         LOG_ERROR("Failed to allocate %llu bytes of buffer memory", (unsigned long long)requirements.size);
@@ -919,14 +941,22 @@ static R_BufferHandle vk_create_buffer (R_Device* base_device, const R_CreateBuf
         return NULL_HANDLE;
     }
     VK_CHECK(device->vk.vkBindBufferMemory(device->device, buffer.buffer, buffer.memory, 0));
+    buffer.coherent = (device->memory_properties.memoryTypes[alloc_info.memoryTypeIndex].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
 
-    if (info.host_visible && device->vk.vkMapMemory(device->device, buffer.memory, 0, VK_WHOLE_SIZE, 0, &buffer.mapped) != VK_SUCCESS)
+    if (host_visible && device->vk.vkMapMemory(device->device, buffer.memory, 0, VK_WHOLE_SIZE, 0, &buffer.mapped) != VK_SUCCESS)
     {
         LOG_ERROR("vkMapMemory failed");
         destroy_buffer_resource(device, buffer);
         return NULL_HANDLE;
     }
     return device->buffers.add(buffer);
+}
+
+static R_BufferHandle vk_create_buffer (R_Device* base_device, const R_CreateBufferInfo& info)
+{
+    R_VkDevice* device = vk_device(base_device);
+    ASSERT(device);
+    return create_buffer(device, info, false);
 }
 
 static void vk_destroy_buffer (R_Device* base_device, R_BufferHandle handle)
@@ -1907,12 +1937,19 @@ static b8 vk_read_image (R_Device* base_device, R_ImageHandle handle, u32 layer,
         return false;
     }
 
-    const R_BufferHandle staging = r_create_buffer(&device->base, { .size = size, .usage_flags = (u32)R_BufferUsageFlags::TransferDst, .host_visible = true });
-    if (!staging)
+    // Kept between reads: frames are read back every frame while the control server is on
+    const R_VkBuffer* kept = device->buffers.try_get(device->readback);
+    if (!kept || kept->size < size)
+    {
+        r_destroy_buffer(&device->base, device->readback);
+        device->readback = create_buffer(device, { .size = size, .usage_flags = (u32)R_BufferUsageFlags::TransferDst }, true);
+    }
+    const R_BufferHandle staging = device->readback;
+    const R_VkBuffer*    buffer  = device->buffers.try_get(staging);
+    if (!buffer)
     {
         return false;
     }
-    defer { r_destroy_buffer(&device->base, staging); };
 
     const R_CmdBufferHandle cmd = r_begin_immediate(&device->base);
     if (layout != R_ImageLayout::TransferSrc)
@@ -1926,7 +1963,12 @@ static b8 vk_read_image (R_Device* base_device, R_ImageHandle handle, u32 layer,
     }
     r_end_immediate(&device->base, cmd);
 
-    memory_copy(out_pixels, r_get_buffer_mapped_data(&device->base, staging), size);
+    if (!buffer->coherent)
+    {
+        const VkMappedMemoryRange range = { .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE, .memory = buffer->memory, .offset = 0, .size = VK_WHOLE_SIZE };
+        VK_CHECK(device->vk.vkInvalidateMappedMemoryRanges(device->device, 1, &range));
+    }
+    memory_copy(out_pixels, buffer->mapped, size);
     return true;
 }
 

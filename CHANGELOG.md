@@ -12,6 +12,7 @@ config start with **Breaking:**.
 - **Breaking:** recordings are format 4: props may be meshes, and a recording keeps the models they show, so a replay needs none of their files. Formats 1 to 3 still read.
 - The C API is version 2: `load_model`, and `PUPPETXR_Prop` gains `scale` and `model` for `PUPPETXR_PROP_MESH`.
 - Passthrough dimmed through its style's opacity shows only the nearest surface; before, the room's surfaces behind showed through, its triangles plain to see.
+- With the control server on, Vulkan apps no longer drop to a few frames a second: reading each frame back took 60 ms on GPUs whose first host visible memory is their own; it now reads through cached host memory, about 1.5 ms.
 - **Breaking:** environment depth (`XR_META_environment_depth`) behaves like a Quest 3's sensor by default: a new image every 40 ms that shows 45 ms after it was taken, from views where the head was 26 ms after the capture, 64.85 mm apart whatever the IPD, with noise and the band at the outer edges no camera sees; four images; the capture time through `XrEnvironmentDepthImageTimestampMETA`. Every parameter is configurable (`environment_depth`, docs/config.md); `"environment_depth": "eyes"` or `PUPPETXR_ENVIRONMENT_DEPTH=eyes` gives the depth from the eyes at every frame as before.
 - **Breaking:** recordings are format 3: the header holds the environment depth sensor. Formats 1 and 2 still read and replay depth from the eyes, as they were recorded.
 - Environment depth is traced into the room on the CPU, so it is the same on every GPU, and rooms load faster.
