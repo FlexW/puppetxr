@@ -14,6 +14,8 @@
 #include "passthrough.frag.h"
 #include "environment_depth.vert.h"
 #include "environment_depth.frag.h"
+#include "environment_depth_upload.vert.h"
+#include "environment_depth_upload.frag.h"
 #include "blocks.h"
 
 namespace
@@ -864,6 +866,90 @@ TEST_P(RenderDepthTest, depth_only_pass_into_an_array_layer)
     r_destroy_pipeline(device, pipeline);
     r_destroy_framebuffer(device, fb);
     r_destroy_render_pass(device, pass);
+    r_destroy_image(device, depth);
+}
+
+// Environment depth is traced on the CPU and written into D16 through an RGBA8 image of high and
+// low bytes (environment_depth_upload.frag); every value must arrive exactly, in memory order
+TEST_P(RenderDepthTest, packed_depth_upload_writes_every_d16_value_exactly)
+{
+    const u32 size  = 256;
+    const R_ImageHandle depth = r_create_image(device, { .width = size, .height = size, .layers = 2, .format = R_Format::D16_UNORM, .usage_flags = (u32)R_ImageUsageFlags::DepthStencilAttachment | (u32)R_ImageUsageFlags::Sampled | (u32)R_ImageUsageFlags::TransferSrc, .initial_layout = R_ImageLayout::ShaderReadOnly });
+    const R_ImageHandle packed = r_create_image(device, { .width = size, .height = size, .layers = 2, .format = R_Format::R8G8B8A8_UNORM, .usage_flags = (u32)R_ImageUsageFlags::TransferDst | (u32)R_ImageUsageFlags::Sampled, .initial_layout = R_ImageLayout::TransferDst });
+    ASSERT_TRUE(r_is_valid(device, depth) && r_is_valid(device, packed));
+    const R_RenderPassHandle pass = r_create_render_pass(device, { .depth_format = R_Format::D16_UNORM, .depth_load_op = R_LoadOp::Clear, .depth_initial_layout = R_ImageLayout::ShaderReadOnly, .depth_final_layout = R_ImageLayout::ShaderReadOnly });
+    const R_PipelineHandle   pipeline = r_create_pipeline(device, {
+        .vertex = &environment_depth_upload_vert_shader, .fragment = &environment_depth_upload_frag_shader, .render_pass = pass, .textures_count = 1, .texture_type = R_TextureType::Type2DArray,
+        .push_constants_size = sizeof(COMP_DepthUploadPush), .depth_test = true, .depth_compare = R_CompareOp::Always, .depth_write = true,
+    });
+    ASSERT_TRUE(r_is_valid(device, pass) && r_is_valid(device, pipeline));
+
+    // Layer 0 counts every value up row by row, layer 1 the same with its bits flipped
+    R_BufferHandle staging[2] = {};
+    for (u32 v = 0; v < 2; v++)
+    {
+        staging[v] = r_create_buffer(device, { .size = (u64)size * size * 4, .usage_flags = (u32)R_BufferUsageFlags::TransferSrc, .host_visible = true });
+        u8* bytes  = (u8*)r_get_buffer_mapped_data(device, staging[v]);
+        for (u32 i = 0; i < size * size; i++)
+        {
+            const u16 value  = v == 0 ? (u16)i : (u16)~i;
+            bytes[i * 4 + 0] = (u8)(value >> 8);
+            bytes[i * 4 + 1] = (u8)value;
+            bytes[i * 4 + 2] = 0;
+            bytes[i * 4 + 3] = 255;
+        }
+        r_flush_buffer(device, staging[v], 0, (u64)size * size * 4);
+    }
+    R_FramebufferHandle fb[2] = {};
+    for (u32 v = 0; v < 2; v++)
+    {
+        fb[v] = r_create_framebuffer(device, { .render_pass = pass, .depth_image = depth, .depth_layer = v });
+        ASSERT_TRUE(r_is_valid(device, fb[v]));
+    }
+    const R_CmdBufferHandle cmd = r_begin_immediate(device);
+    r_cmd_copy_buffer_to_image(device, cmd, staging[0], packed, 0);
+    r_cmd_copy_buffer_to_image(device, cmd, staging[1], packed, 1);
+    r_cmd_transition_image(device, cmd, packed, R_ImageLayout::TransferDst, R_ImageLayout::ShaderReadOnly);
+    for (u32 v = 0; v < 2; v++)
+    {
+        const COMP_DepthUploadPush push = { .layer = (i32)v };
+        r_cmd_begin_render_pass(device, cmd, pass, fb[v], {});
+        r_cmd_bind_pipeline(device, cmd, pipeline);
+        r_cmd_set_viewport(device, cmd, { 0, 0, (f32)size, (f32)size });
+        r_cmd_set_scissor(device, cmd, { 0, 0, size, size });
+        r_cmd_bind_texture(device, cmd, pipeline, packed, R_Filter::Nearest);
+        r_cmd_push_constants(device, cmd, pipeline, &push, sizeof(push));
+        r_cmd_draw(device, cmd, 3, 0);
+        r_cmd_end_render_pass(device, cmd);
+    }
+    r_end_immediate(device, cmd);
+
+    if (GetParam() != R_Backend::OpenGLES) // OpenGL ES 3.0 reads colour only (4.3.2)
+    {
+        static u16 texels[256 * 256];
+        for (u32 v = 0; v < 2; v++)
+        {
+            ASSERT_TRUE(r_read_image(device, depth, v, R_ImageLayout::ShaderReadOnly, texels, sizeof(texels)));
+            u32 wrong = 0;
+            u32 first = 0;
+            for (u32 i = 0; i < size * size; i++)
+            {
+                const u16 expected = v == 0 ? (u16)i : (u16)~i;
+                first              = wrong == 0 && texels[i] != expected ? i : first;
+                wrong             += texels[i] != expected ? 1u : 0u;
+            }
+            EXPECT_EQ(wrong, 0u) << "layer " << v << ", first at " << first << ": " << texels[first];
+        }
+    }
+
+    for (u32 v = 0; v < 2; v++)
+    {
+        r_destroy_framebuffer(device, fb[v]);
+        r_destroy_buffer(device, staging[v]);
+    }
+    r_destroy_pipeline(device, pipeline);
+    r_destroy_render_pass(device, pass);
+    r_destroy_image(device, packed);
     r_destroy_image(device, depth);
 }
 

@@ -18,6 +18,13 @@ screenshots as the original run, on any platform. Everything below exists for th
 4. Build flags: `-ffp-contract=off` (no FMA), no `-ffast-math`, `-fno-math-errno`.
    `PUPPETXR_FAST_MATH=ON` relaxes this and is unsupported for recordings.
 5. Randomness, if ever needed, takes a seed from config and uses our own generator.
+   Environment depth noise (`sim_depth_sensor`) hashes `environment_depth.seed`, the capture
+   time and the view.
+6. Work spread over threads must not depend on their order. Environment depth is traced by
+   several threads (`OXR_DepthTracer`), each row from the capture alone, so the image is the
+   same however the rows are shared; `OxrDepthTest.the_image_is_the_traced_depth_texel_for_texel`
+   compares it with one thread's trace. The GPU only copies it: `comp_upload_depth` writes
+   exact D16 values (docs/compositor.md, Environment depth), so depth is the same on every GPU.
 
 ## zmath transcendentals
 

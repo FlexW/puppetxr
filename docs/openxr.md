@@ -672,21 +672,34 @@ Without a room nothing is drawn. `xrEnumerateEnvironmentBlendModes` reports `OPA
 
 `XR_META_environment_depth`: one provider per session, created stopped; start and stop
 of a provider already in that state return `XR_ERROR_UNEXPECTED_STATE_PASSTHROUGH_FB`.
-One swapchain per provider: `OXR_DEPTH_IMAGES` D16 images of two layers at
-`OXR_DEPTH_WIDTH` x `OXR_DEPTH_HEIGHT` (`comp_create_depth_target`; headless sessions get
-`XR_ERROR_FEATURE_UNSUPPORTED`). `xrAcquireEnvironmentDepthImageMETA` needs a begun frame
-and a running provider (`XR_ERROR_CALL_ORDER_INVALID`), once per frame
-(`XR_ERROR_LIMIT_REACHED`, counted by `OXR_Session::frames_begun`). Every `xrEndFrame` of a
-running provider renders the next image round robin from both eyes at the frame's display
-time (`render_depth`, `comp_render_depth`) and leaves it in `SHADER_READ_ONLY_OPTIMAL`. The acquire
-only hands out the newest one (`OXR_DepthProvider::rendered_index`, `rendered_time`) and uses no
-GPU: apps acquire on any thread, often not the one owning the queue (Queue access below).
-Until the first `xrEndFrame` after start it returns `XR_ENVIRONMENT_DEPTH_NOT_AVAILABLE_META`,
-like a camera warming up, so an image is a frame old, as the depth of a headset's cameras is.
-Depth uses an infinite projection with y up (`depth_projection`): `nearZ` 0.1, `farZ` infinity,
-value `1 - near / distance`, the last row looking up; views are the eye poses at the image's
-time in the acquire space and the eye fovs. Hand removal is accepted and changes nothing: there
-are no simulated hands.
+One swapchain per provider: `OXR_DEPTH_IMAGES` (4, like Quest 3) D16 images of two layers at
+the sensor's resolution (`environment_depth.width` x `height`, docs/config.md, Environment
+depth; `comp_create_depth_target`; headless sessions get `XR_ERROR_FEATURE_UNSUPPORTED`).
+`xrAcquireEnvironmentDepthImageMETA` needs a begun frame and a running provider
+(`XR_ERROR_CALL_ORDER_INVALID`), once per frame (`XR_ERROR_LIMIT_REACHED`, counted by
+`OXR_Session::frames_begun`, as on Quest 3).
+
+Captures (`render_depth`, in `xrEndFrame`): a running provider takes captures at multiples of
+the sensor's period on the simulator's clock, from its start on; each `xrEndFrame` traces the
+newest capture the next frame may show (capture + latency at most its display time + the frame
+interval), skipping any in between, from the views where the head was at capture + pose delay
+(`depth_views`: the eyes, or with a baseline two views that far apart centred between the eyes
+and turned like them, always with the eyes' fields of view). `w_trace_depth` traces both views
+into the visual mesh on `OXR_DEPTH_WORKERS` threads plus the calling one (`OXR_DepthTracer`, rows
+in chunks of `OXR_DEPTH_ROWS`), `sim_depth_sensor` adds noise and the uncovered band, and
+`comp_upload_depth` writes the image into the swapchain image of the oldest capture. With a
+period of 0 (`eyes`) every frame has a capture, the latency before its display time. No room traces 65535, no data,
+everywhere.
+
+The acquire hands out the newest capture whose capture + latency is at most the acquire's
+display time, else `XR_ENVIRONMENT_DEPTH_NOT_AVAILABLE_META` (after start, until the first),
+and uses no GPU: apps acquire on any thread, often not the one owning the queue (Queue access
+below). The views are the capture's, located in the acquire space as it is at the display
+time, so in VIEW space they lag the head as Quest 3's do; the fovs are the eyes'. Chaining
+`XrEnvironmentDepthImageTimestampMETA` (spec version 2) returns the capture time. Depth uses an
+infinite projection with y up: `nearZ` 0.1, `farZ` infinity, value `1 - near / distance`,
+texel row 0 at the bottom of the view. Hand removal is accepted and changes nothing: there are
+no simulated hands in the depth.
 
 `XR_META_environment_raycast` (needs `XR_EXT_future`, else instance creation fails with
 `XR_ERROR_EXTENSION_DEPENDENCY_NOT_ENABLED`): `xrCreateEnvironmentRaycasterAsyncMETA`

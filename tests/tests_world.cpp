@@ -633,6 +633,173 @@ TEST_F(WorldTest, raycast_along_an_axis_hits_vertices_and_edges)
 }
 
 //
+// Environment depth
+//
+
+#define DEPTH_NEAR 0.1f
+
+// The distance along the view's -Z to the box room's visual mesh (shell and table top) through
+// pixel (x, y), row 0 at the bottom; the ray starts inside the room
+static f32 box_room_depth (const Pose& view, const Fov& fov, u32 width, u32 height, u32 x, u32 y, b8& out_table)
+{
+    const f32  tl  = zm::tan(fov.angle_left);
+    const f32  tr  = zm::tan(fov.angle_right);
+    const f32  tu  = zm::tan(fov.angle_up);
+    const f32  td  = zm::tan(fov.angle_down);
+    const Vec3 dir = zm::rotate(view.orientation, { tl + (tr - tl) * ((f32)x + 0.5f) / (f32)width, td + (tu - td) * ((f32)y + 0.5f) / (f32)height, -1.0f });
+    const Vec3 o   = view.position;
+    f32        best = INFINITY;
+    out_table       = false;
+    const f32  lo[3] = { -TEST_ROOM_HALF_X, 0.0f, -TEST_ROOM_HALF_Z };
+    const f32  hi[3] = { TEST_ROOM_HALF_X, TEST_ROOM_HEIGHT, TEST_ROOM_HALF_Z };
+    const f32  oa[3] = { o.x, o.y, o.z };
+    const f32  da[3] = { dir.x, dir.y, dir.z };
+    for (u32 axis = 0; axis < 3; axis++)
+    {
+        if (da[axis] != 0.0f)
+        {
+            const f32 s = ((da[axis] > 0.0f ? hi[axis] : lo[axis]) - oa[axis]) / da[axis];
+            best        = s > 0.0f && s < best ? s : best;
+        }
+    }
+    if (dir.y != 0.0f)
+    {
+        const f32 s = (TEST_ROOM_TABLE_Y - o.y) / dir.y;
+        const f32 px = o.x + dir.x * s;
+        const f32 pz = o.z + dir.z * s;
+        if (s > 0.0f && s < best && px >= -0.1f && px <= 1.1f && pz >= -0.4f && pz <= 0.4f)
+        {
+            best      = s;
+            out_table = true;
+        }
+    }
+    return best;
+}
+
+static u16 depth_value (f32 z)
+{
+    return (u16)zm::round((1.0f - DEPTH_NEAR / z) * 65535.0f);
+}
+
+TEST_F(WorldTest, trace_depth_matches_the_box_room_analytically)
+{
+    W_World* world = parse(room);
+    ASSERT_NE(world, nullptr);
+    const Fov fov = { -0.9424778f, 0.6981317f, 0.7679449f, -0.9599311f }; // Quest 3's left eye
+    const Pose views[] = {
+        { .position = { 0.0f, 1.6f, 0.0f }, .orientation = zm::QUAT_IDENTITY },
+        { .position = { 0.5f, 1.6f, 1.2f }, .orientation = zm::quat_from_axis_angle({ 1.0f, 0.0f, 0.0f }, -0.7f) },
+        { .position = { 1.5f, 1.8f, -1.0f }, .orientation = zm::normalize(zm::quat_from_axis_angle({ 0.0f, 1.0f, 0.0f }, 2.2f) * zm::quat_from_axis_angle({ 1.0f, 0.0f, 0.0f }, -0.9f)) },
+    };
+    const u32 width  = 40;
+    const u32 height = 30;
+    u16       image[width * height];
+    for (u32 v = 0; v < sizeof(views) / sizeof(views[0]); v++)
+    {
+        w_trace_depth(world, views[v], fov, DEPTH_NEAR, width, height, 0, height, image);
+        u32 table = 0;
+        for (u32 y = 0; y < height; y++)
+        {
+            for (u32 x = 0; x < width; x++)
+            {
+                b8        on_table = false;
+                const f32 z        = box_room_depth(views[v], fov, width, height, x, y, on_table);
+                EXPECT_NEAR(image[y * width + x], depth_value(z), 1) << "view " << v << " pixel " << x << ", " << y;
+                table += on_table ? 1u : 0u;
+            }
+        }
+        EXPECT_TRUE(v != 1 || table > 0) << "the second view looks down at the table";
+    }
+
+    // Row 0 looks down: level at 1.6 m, the floor 1.6 m below is farther than the ceiling 0.9 m above
+    w_trace_depth(world, views[0], fov, DEPTH_NEAR, width, height, 0, height, image);
+    EXPECT_GT(image[width / 2], image[(height - 1) * width + width / 2]);
+    w_destroy(world);
+}
+
+TEST_F(WorldTest, trace_depth_sees_the_visual_mesh_not_the_global_mesh)
+{
+    // A global mesh floor at 1 m that the visual mesh does not have
+    Array<f32> positions = {};
+    Array<u32> indices   = {};
+    defer {
+        positions.release();
+        indices.release();
+    };
+    const f32 corners[4][3] = { { -2.0f, 1.0f, -1.5f }, { 2.0f, 1.0f, -1.5f }, { 2.0f, 1.0f, 1.5f }, { -2.0f, 1.0f, 1.5f } };
+    for (const auto& c : corners)
+    {
+        positions.add(c[0]);
+        positions.add(c[1]);
+        positions.add(c[2]);
+    }
+    for (u32 i : { 0u, 1u, 2u, 0u, 2u, 3u })
+    {
+        indices.add(i);
+    }
+    W_World* world = parse_with_global_mesh(room, positions, indices);
+    ASSERT_NE(world, nullptr);
+
+    // Straight down from 1.6 m over free floor: 1.6 m to the visual floor, not 0.6 m
+    const Pose view  = { .position = { -1.0f, 1.6f, 1.0f }, .orientation = zm::quat_from_axis_angle({ 1.0f, 0.0f, 0.0f }, -zm::PI / 2.0f) };
+    const Fov  fov   = { -0.1f, 0.1f, 0.1f, -0.1f };
+    u16        image = 0;
+    w_trace_depth(world, view, fov, DEPTH_NEAR, 1, 1, 0, 1, &image);
+    EXPECT_NEAR(image, depth_value(1.6f), 1);
+    W_RaycastHit hit = {};
+    ASSERT_TRUE(w_raycast(world, view.position, { 0.0f, -1.0f, 0.0f }, 10.0f, hit));
+    EXPECT_NEAR(hit.distance, 0.6f, 1e-5f);
+    w_destroy(world);
+}
+
+TEST_F(WorldTest, trace_depth_rows_split_the_image_and_near_and_empty_have_their_values)
+{
+    W_World* world = parse(room);
+    ASSERT_NE(world, nullptr);
+    const Fov  fov  = { -0.8f, 0.8f, 0.8f, -0.8f };
+    const Pose view = { .position = { 0.3f, 1.2f, 0.2f }, .orientation = zm::quat_from_axis_angle({ 0.0f, 1.0f, 0.0f }, 0.7f) };
+    const u32  size = 16;
+    u16        whole[size * size];
+    u16        split[size * size];
+    memset(split, 0xab, sizeof(split));
+    w_trace_depth(world, view, fov, DEPTH_NEAR, size, size, 0, size, whole);
+    w_trace_depth(world, view, fov, DEPTH_NEAR, size, size, 0, 5, split);
+    w_trace_depth(world, view, fov, DEPTH_NEAR, size, size, 5, 11, split);
+    EXPECT_EQ(memcmp(whole, split, sizeof(whole)), 0);
+
+    // Rows past the image are not written
+    u16 guard[size * size + 1];
+    guard[size * size] = 0x1234;
+    w_trace_depth(world, view, fov, DEPTH_NEAR, size, size, 10, 100, guard);
+    EXPECT_EQ(guard[size * size], 0x1234);
+
+    // 5 cm from the -z wall, nearer than the near plane: 0
+    const Pose close = { .position = { 0.0f, 1.2f, -TEST_ROOM_HALF_Z + 0.05f }, .orientation = zm::QUAT_IDENTITY };
+    w_trace_depth(world, close, fov, DEPTH_NEAR, size, size, 0, size, whole);
+    for (u16 value : whole)
+    {
+        ASSERT_EQ(value, 0);
+    }
+
+    // Outside the room looking away from it: nothing is hit, 65535
+    const Pose outside = { .position = { 0.0f, 1.2f, TEST_ROOM_HALF_Z + 1.0f }, .orientation = zm::quat_from_axis_angle({ 0.0f, 1.0f, 0.0f }, zm::PI) };
+    w_trace_depth(world, outside, fov, DEPTH_NEAR, size, size, 0, size, whole);
+    for (u16 value : whole)
+    {
+        ASSERT_EQ(value, 65535);
+    }
+
+    // A pose that is not finite sees nothing rather than crashing
+    const Pose broken = { .position = { NAN, 1.2f, 0.0f }, .orientation = zm::QUAT_IDENTITY };
+    w_trace_depth(world, broken, fov, DEPTH_NEAR, size, size, 0, size, whole);
+    for (u16 value : whole)
+    {
+        ASSERT_EQ(value, 65535);
+    }
+    w_destroy(world);
+}
+
+//
 // Names
 //
 

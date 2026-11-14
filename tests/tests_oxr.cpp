@@ -9530,6 +9530,7 @@ struct OxrPassthroughTest : OxrVulkanTest
         os_delete_tree(rooms);
         os_unset_env("PUPPETXR_ROOMS_DIR");
         os_unset_env("PUPPETXR_ROOM");
+        os_unset_env("PUPPETXR_ENVIRONMENT_DEPTH");
     }
 
     void start (XrPassthroughFlagsFB flags = XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB)
@@ -10427,8 +10428,10 @@ struct DepthXr
 #undef DECLARE
 };
 
+// The eye views at every frame unless a test asks for the Quest 3 sensor
 struct OxrDepthTest : OxrVulkanTest
 {
+    const char*                     depth_model = "eyes";
     DepthXr                         dx        = {};
     char                            rooms[OS_MAX_PATH] = {};
     XrEnvironmentDepthProviderMETA  provider  = XR_NULL_HANDLE;
@@ -10450,6 +10453,14 @@ struct OxrDepthTest : OxrVulkanTest
         ASSERT_TRUE(test_room_write(room, rooms, "test_box"));
         os_set_env("PUPPETXR_ROOMS_DIR", rooms);
         os_set_env("PUPPETXR_ROOM", "test_box");
+        if (depth_model)
+        {
+            os_set_env("PUPPETXR_ENVIRONMENT_DEPTH", depth_model);
+        }
+        else
+        {
+            os_unset_env("PUPPETXR_ENVIRONMENT_DEPTH");
+        }
         OxrVulkanTest::SetUp();
         if (IsSkipped())
         {
@@ -10480,7 +10491,7 @@ struct OxrDepthTest : OxrVulkanTest
     }
 
     // Frames in which the provider acquires; the frame stays begun so the image can be read
-    XrResult begin_and_acquire (XrSpace space, XrEnvironmentDepthImageMETA& out_image, XrTime& out_time)
+    XrResult begin_and_acquire (XrSpace space, XrEnvironmentDepthImageMETA& out_image, XrTime& out_time, XrEnvironmentDepthImageTimestampMETA* timestamp = nullptr)
     {
         XrFrameState           state      = { .type = XR_TYPE_FRAME_STATE };
         const XrFrameWaitInfo  wait_info  = { .type = XR_TYPE_FRAME_WAIT_INFO };
@@ -10488,7 +10499,11 @@ struct OxrDepthTest : OxrVulkanTest
         EXPECT_EQ(xr.xrWaitFrame(session, &wait_info, &state), XR_SUCCESS);
         EXPECT_EQ(xr.xrBeginFrame(session, &begin_info), XR_SUCCESS);
         out_time = state.predictedDisplayTime;
-        out_image = { .type = XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_META, .views = { { .type = XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_VIEW_META }, { .type = XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_VIEW_META } } };
+        out_image = { .type = XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_META, .next = timestamp, .views = { { .type = XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_VIEW_META }, { .type = XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_VIEW_META } } };
+        if (timestamp)
+        {
+            *timestamp = { .type = XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_TIMESTAMP_META };
+        }
         const XrEnvironmentDepthImageAcquireInfoMETA acquire = { .type = XR_TYPE_ENVIRONMENT_DEPTH_IMAGE_ACQUIRE_INFO_META, .space = space, .displayTime = out_time };
         return dx.xrAcquireEnvironmentDepthImageMETA(provider, &acquire, &out_image);
     }
@@ -10547,6 +10562,57 @@ struct OxrDepthTest : OxrVulkanTest
         vkFreeCommandBuffers(vk_device, pool, 1, &cmd);
         vkDestroyBuffer(vk_device, buffer, nullptr);
         vkFreeMemory(vk_device, device_memory, nullptr);
+    }
+
+    // The swapchain's VkImages and size
+    u32 depth_images (VkImage (&out_images)[8], u32& out_width, u32& out_height)
+    {
+        XrEnvironmentDepthSwapchainStateMETA state = { .type = XR_TYPE_ENVIRONMENT_DEPTH_SWAPCHAIN_STATE_META };
+        EXPECT_EQ(dx.xrGetEnvironmentDepthSwapchainStateMETA(depth, &state), XR_SUCCESS);
+        u32                        count      = 0;
+        XrSwapchainImageVulkan2KHR images[8] = {};
+        for (XrSwapchainImageVulkan2KHR& entry : images)
+        {
+            entry.type = XR_TYPE_SWAPCHAIN_IMAGE_VULKAN2_KHR;
+        }
+        EXPECT_EQ(dx.xrEnumerateEnvironmentDepthSwapchainImagesMETA(depth, 8, &count, (XrSwapchainImageBaseHeader*)images), XR_SUCCESS);
+        for (u32 i = 0; i < count; i++)
+        {
+            out_images[i] = images[i].image;
+        }
+        out_width  = state.width;
+        out_height = state.height;
+        return count;
+    }
+};
+
+// Quest 3's sensor, the default
+struct OxrQuestDepthTest : OxrDepthTest
+{
+    OxrQuestDepthTest () { depth_model = "quest3"; }
+};
+
+// A sensor capturing at every frame, yet late: the config's model, not the environment's
+struct OxrEveryFrameDepthTest : OxrDepthTest
+{
+    char config[OS_MAX_PATH] = {};
+
+    OxrEveryFrameDepthTest () { depth_model = nullptr; }
+
+    void SetUp () override
+    {
+        const char text[] = "{ \"environment_depth\": { \"model\": \"quest3\", \"rate_hz\": 0, \"latency_ms\": 45 } }";
+        cstr_format(config, sizeof(config), "%s/puppetxr_every_frame_depth.json", temp_dir());
+        ASSERT_TRUE(os_write_file(config, text, sizeof(text) - 1));
+        os_set_env("PUPPETXR_CONFIG", config);
+        OxrDepthTest::SetUp();
+    }
+
+    void TearDown () override
+    {
+        OxrDepthTest::TearDown();
+        os_unset_env("PUPPETXR_CONFIG");
+        os_delete_file(config);
     }
 };
 
@@ -10804,6 +10870,254 @@ TEST_F(OxrDepthTest, depth_stays_with_the_room_when_tracking_drifts)
     read_depth(images[image.swapchainIndex].image, 0, state.width, state.height, texels);
     EXPECT_NEAR(texels[(state.height / 2) * state.width + state.width / 2] / 65535.0f, 1.0f - 0.1f / 1.5f, 2e-3f);
     end(time);
+}
+
+// The image apps sample is the traced one, texel for texel, whatever the backend rounds
+TEST_F(OxrDepthTest, the_image_is_the_traced_depth_texel_for_texel)
+{
+    start();
+    ASSERT_EQ(dx.xrStartEnvironmentDepthProviderMETA(provider), XR_SUCCESS);
+    const XrSpace stage = reference_space(XR_REFERENCE_SPACE_TYPE_STAGE);
+    sim_set_device_pose(oxr_get_sim(), SIM_Device::Head, { { 0.4f, 1.4f, 0.2f }, zm::normalize(zm::quat_from_axis_angle({ 0.0f, 1.0f, 0.0f }, 0.5f) * zm::quat_from_axis_angle({ 1.0f, 0.0f, 0.0f }, -0.5f)) });
+
+    XrEnvironmentDepthImageMETA image = {};
+    XrTime                      time  = 0;
+    begin_and_acquire(stage, image, time);
+    end(time);
+    ASSERT_EQ(begin_and_acquire(stage, image, time), XR_SUCCESS);
+    VkImage    images[8] = {};
+    u32        w         = 0;
+    u32        h         = 0;
+    ASSERT_LT(image.swapchainIndex, depth_images(images, w, h));
+    Array<u16> texels = {};
+    Array<u16> traced = {};
+    defer {
+        texels.release();
+        traced.release();
+    };
+    traced.resize((usize)w * h);
+    for (u32 v = 0; v < 2; v++)
+    {
+        read_depth(images[image.swapchainIndex], v, w, h, texels);
+        const XrPosef& p    = image.views[v].pose;
+        const Pose     view = { { p.position.x, p.position.y, p.position.z }, { p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w } };
+        const Fov      fov  = { image.views[v].fov.angleLeft, image.views[v].fov.angleRight, image.views[v].fov.angleUp, image.views[v].fov.angleDown };
+        w_trace_depth(oxr_get_runtime()->world, view, fov, image.nearZ, w, h, 0, h, traced.data);
+        u32 differ = 0;
+        for (u32 i = 0; i < w * h; i++)
+        {
+            differ += texels[i] != traced[i] ? 1u : 0u;
+        }
+        EXPECT_EQ(differ, 0u) << "view " << v;
+    }
+    end(time);
+}
+
+// Regression: captures stamped at the display time never grew old enough for four images to hold
+TEST_F(OxrEveryFrameDepthTest, captures_come_every_frame_and_show_45_ms_later)
+{
+    start();
+    ASSERT_EQ(dx.xrStartEnvironmentDepthProviderMETA(provider), XR_SUCCESS);
+    const XrSpace stage = reference_space(XR_REFERENCE_SPACE_TYPE_STAGE);
+    XrTime last_capture = 0;
+    u32    captures     = 0;
+    for (u32 frame = 0; frame < 20; frame++)
+    {
+        XrEnvironmentDepthImageMETA          image     = {};
+        XrEnvironmentDepthImageTimestampMETA timestamp = {};
+        XrTime                               time      = 0;
+        const XrResult                       result    = begin_and_acquire(stage, image, time, &timestamp);
+        if (result == XR_SUCCESS)
+        {
+            EXPECT_GE(time - timestamp.captureTime, 45000000) << "frame " << frame;
+            EXPECT_LE(time - timestamp.captureTime, 45000000 + 11111112) << "frame " << frame;
+            EXPECT_TRUE(last_capture == 0 || timestamp.captureTime > last_capture) << "frame " << frame << ": a new capture every frame";
+            last_capture = timestamp.captureTime;
+            captures++;
+        }
+        else
+        {
+            EXPECT_EQ(result, XR_ENVIRONMENT_DEPTH_NOT_AVAILABLE_META) << "frame " << frame;
+        }
+        end(time);
+    }
+    EXPECT_GE(captures, 15u);
+}
+
+TEST_F(OxrQuestDepthTest, captures_come_at_25_hz_and_show_45_ms_later_in_four_images)
+{
+    start();
+    ASSERT_EQ(dx.xrStartEnvironmentDepthProviderMETA(provider), XR_SUCCESS);
+    const XrSpace stage = reference_space(XR_REFERENCE_SPACE_TYPE_STAGE);
+    VkImage       images[8] = {};
+    u32           w         = 0;
+    u32           h         = 0;
+    EXPECT_EQ(depth_images(images, w, h), 4u);
+    EXPECT_EQ(w, 320u);
+    EXPECT_EQ(h, 320u);
+
+    XrTime last_capture = 0;
+    u32    captures     = 0;
+    u32    indices_seen = 0;
+    for (u32 frame = 0; frame < 40; frame++)
+    {
+        XrEnvironmentDepthImageMETA          image     = {};
+        XrEnvironmentDepthImageTimestampMETA timestamp = {};
+        XrTime                               time      = 0;
+        const XrResult                       result    = begin_and_acquire(stage, image, time, &timestamp);
+        if (result == XR_SUCCESS)
+        {
+            const XrTime capture = timestamp.captureTime;
+            EXPECT_EQ(capture % 40000000, 0) << "frame " << frame << ": on the 25 Hz grid";
+            EXPECT_GE(time - capture, 45000000) << "frame " << frame;
+            EXPECT_LT(time - capture, 45000000 + 40000000 + 11111112) << "frame " << frame << ": the newest capture old enough";
+            if (capture != last_capture)
+            {
+                EXPECT_TRUE(last_capture == 0 || capture - last_capture == 40000000) << "frame " << frame << ": none skipped";
+                last_capture = capture;
+                captures++;
+            }
+            EXPECT_LT(image.swapchainIndex, 4u);
+            indices_seen |= 1u << image.swapchainIndex;
+        }
+        else
+        {
+            EXPECT_EQ(result, XR_ENVIRONMENT_DEPTH_NOT_AVAILABLE_META) << "frame " << frame;
+            EXPECT_EQ(captures, 0u) << "frame " << frame << ": once there is an image there always is";
+        }
+        end(time);
+    }
+    EXPECT_GE(captures, 9u);
+    EXPECT_EQ(indices_seen, 0xfu) << "every image is used";
+}
+
+// Quest 3 reports the views where the head was 26 ms after the capture, 64.85 mm apart whatever
+// the IPD, with the eyes' fields of view; an app that maps depth with the eyes' poses at its own
+// display time, or the views' poses without the offset, misplaces it
+TEST_F(OxrQuestDepthTest, views_are_where_the_head_was_26_ms_after_the_capture)
+{
+    start();
+    ASSERT_EQ(dx.xrStartEnvironmentDepthProviderMETA(provider), XR_SUCCESS);
+    const XrSpace stage = reference_space(XR_REFERENCE_SPACE_TYPE_STAGE);
+    SIM_Sim*      sim   = oxr_get_sim();
+    u32           seen  = 0;
+    for (u32 frame = 0; frame < 30; frame++)
+    {
+        // Turning at 1.5 rad/s
+        sim_set_device_pose(sim, SIM_Device::Head, { { 0.0f, 1.6f, 0.0f }, zm::quat_from_axis_angle({ 0.0f, 1.0f, 0.0f }, 1.5f * (f32)frame / 90.0f) });
+        XrEnvironmentDepthImageMETA          image     = {};
+        XrEnvironmentDepthImageTimestampMETA timestamp = {};
+        XrTime                               time      = 0;
+        if (begin_and_acquire(stage, image, time, &timestamp) == XR_SUCCESS)
+        {
+            SIM_Sample at = {};
+            sim_sample(sim, timestamp.captureTime + 26000000, at);
+            Pose eyes[2];
+            Fov  fovs[2];
+            sim_sample_view(sim, at, 0, eyes[0], fovs[0]);
+            sim_sample_view(sim, at, 1, eyes[1], fovs[1]);
+            const Vec3 center = (eyes[0].position + eyes[1].position) * 0.5f;
+            for (u32 v = 0; v < 2; v++)
+            {
+                const XrPosef& p        = image.views[v].pose;
+                const Vec3     expected = center + zm::rotate(eyes[v].orientation, { v == 0 ? -0.032425f : 0.032425f, 0.0f, 0.0f });
+                EXPECT_NEAR(p.position.x, expected.x, 1e-4f) << "frame " << frame << " view " << v;
+                EXPECT_NEAR(p.position.z, expected.z, 1e-4f) << "frame " << frame << " view " << v;
+                EXPECT_NEAR(zm::abs(zm::dot(Quat{ p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w }, eyes[v].orientation)), 1.0f, 1e-5f) << "frame " << frame;
+                EXPECT_FLOAT_EQ(image.views[v].fov.angleLeft, fovs[v].angle_left);
+            }
+            const XrVector3f a = image.views[0].pose.position;
+            const XrVector3f b = image.views[1].pose.position;
+            EXPECT_NEAR(zm::length(Vec3{ b.x - a.x, b.y - a.y, b.z - a.z }), 0.06485f, 1e-5f);
+
+            // At least 19 ms of turning behind the eyes at the display time
+            SIM_Sample now = {};
+            sim_sample(sim, time, now);
+            Pose eye_now;
+            Fov  fov_now;
+            sim_sample_view(sim, now, 0, eye_now, fov_now);
+            const XrQuaternionf& q = image.views[0].pose.orientation;
+            const f32 cos_half     = zm::abs(zm::dot(Quat{ q.x, q.y, q.z, q.w }, eye_now.orientation));
+            EXPECT_GT(2.0f * zm::acos(zm::min(cos_half, 1.0f)), 1.5f * 0.019f) << "frame " << frame;
+            seen++;
+        }
+        end(time);
+    }
+    EXPECT_GE(seen, 20u);
+}
+
+// The depth of a turning head lines up with the room through the views the image reports, and
+// does not through the eyes at the frame's display time
+TEST_F(OxrQuestDepthTest, depth_lines_up_through_the_reported_views_not_the_eyes)
+{
+    start();
+    ASSERT_EQ(dx.xrStartEnvironmentDepthProviderMETA(provider), XR_SUCCESS);
+    const XrSpace stage = reference_space(XR_REFERENCE_SPACE_TYPE_STAGE);
+    SIM_Sim*      sim   = oxr_get_sim();
+    VkImage       images[8] = {};
+    u32           w         = 0;
+    u32           h         = 0;
+    depth_images(images, w, h);
+    Array<u16> texels = {};
+    Array<u16> traced = {};
+    defer {
+        texels.release();
+        traced.release();
+    };
+    traced.resize((usize)w * h);
+    b8 checked = false;
+    for (u32 frame = 0; frame < 12 && !checked; frame++)
+    {
+        sim_set_device_pose(sim, SIM_Device::Head, { { -0.5f, 1.6f, 0.6f }, zm::normalize(zm::quat_from_axis_angle({ 0.0f, 1.0f, 0.0f }, -2.0f * (f32)frame / 90.0f) * zm::quat_from_axis_angle({ 1.0f, 0.0f, 0.0f }, -0.6f)) });
+        XrEnvironmentDepthImageMETA image = {};
+        XrTime                      time  = 0;
+        if (begin_and_acquire(stage, image, time) == XR_SUCCESS)
+        {
+            read_depth(images[image.swapchainIndex], 1, w, h, texels);
+            const Fov fov = { image.views[1].fov.angleLeft, image.views[1].fov.angleRight, image.views[1].fov.angleUp, image.views[1].fov.angleDown };
+
+            // The right view: its uncovered band is at the right edge
+            const XrPosef& p        = image.views[1].pose;
+            const Pose     reported = { { p.position.x, p.position.y, p.position.z }, { p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w } };
+            SIM_Sample now = {};
+            sim_sample(sim, time, now);
+            Pose eye;
+            Fov  eye_fov;
+            sim_sample_view(sim, now, 1, eye, eye_fov);
+            u32 off_reported = 0;
+            u32 off_eye      = 0;
+            u32 noisy        = 0;
+            u32 counted      = 0;
+            w_trace_depth(oxr_get_runtime()->world, reported, fov, image.nearZ, w, h, 0, h, traced.data);
+            for (u32 y = 0; y < h; y++)
+            {
+                for (u32 x = 0; x < w - w / 10; x++)
+                {
+                    const i32 d   = (i32)texels[y * w + x] - (i32)traced[y * w + x];
+                    off_reported += d > 100 || d < -100 ? 1u : 0u;
+                    noisy        += texels[y * w + x] != traced[y * w + x] ? 1u : 0u;
+                    counted++;
+                }
+            }
+            EXPECT_GT(noisy, counted / 2) << "the sensor's noise";
+            const u16 uncovered = (u16)zm::round((1.0f - image.nearZ / 29.0f) * 65535.0f);
+            EXPECT_EQ(texels[(u32)(0.69f * (f32)h) * w + w - 1], uncovered) << "the uncovered band at the right view's outer edge";
+            w_trace_depth(oxr_get_runtime()->world, eye, eye_fov, image.nearZ, w, h, 0, h, traced.data);
+            for (u32 y = 0; y < h; y++)
+            {
+                for (u32 x = 0; x < w - w / 10; x++)
+                {
+                    const i32 d = (i32)texels[y * w + x] - (i32)traced[y * w + x];
+                    off_eye    += d > 100 || d < -100 ? 1u : 0u;
+                }
+            }
+            EXPECT_LT(off_reported, counted / 1000) << "only the noise differs";
+            EXPECT_GT(off_eye, counted / 50) << "the eyes moved on since";
+            checked = true;
+        }
+        end(time);
+    }
+    EXPECT_TRUE(checked);
 }
 
 //
@@ -15361,7 +15675,8 @@ TEST_P(OxrD3DDepthTest, environment_depth_of_the_room_reads_as_apps_sample_it)
     const XrSpace               stage = reference_space(XR_REFERENCE_SPACE_TYPE_STAGE);
     XrEnvironmentDepthImageMETA image = {};
     XrResult                    acquired = XR_ERROR_RUNTIME_FAILURE;
-    for (u32 frame = 0; frame < 3 && acquired != XR_SUCCESS; frame++)
+    // Quest 3's sensor shows its first capture 45 ms after it was taken
+    for (u32 frame = 0; frame < 10 && acquired != XR_SUCCESS; frame++)
     {
         XrFrameState state_out = { .type = XR_TYPE_FRAME_STATE };
         ASSERT_EQ(xr.xrWaitFrame(session, nullptr, &state_out), XR_SUCCESS);

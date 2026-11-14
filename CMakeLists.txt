@@ -84,6 +84,8 @@ puppetxr_add_shaders(puppetxr_shaders
     shaders/passthrough.frag
     shaders/environment_depth.vert
     shaders/environment_depth.frag
+    shaders/environment_depth_upload.vert
+    shaders/environment_depth_upload.frag
 )
 
 #
