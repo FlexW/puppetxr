@@ -330,6 +330,10 @@ endif ()
 if (PUPPETXR_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+    # The tools no test runs, such as the Blender exporter, at least parse
+    file(GLOB_RECURSE puppetxr_python_tools CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/*.py)
+    add_test(NAME python_tools_parse
+        COMMAND ${Python3_EXECUTABLE} -c "import ast, sys; [ast.parse(open(f, encoding = 'utf-8').read(), f) for f in sys.argv[1:]]" ${puppetxr_python_tools})
     # The shipped binaries run on any distribution with PUPPETXR_MAX_GLIBC (tools/dist/dist.sh);
     # the second test proves the check catches a binary that does not
     if (PUPPETXR_DIST AND NOT WIN32 AND NOT APPLE)
