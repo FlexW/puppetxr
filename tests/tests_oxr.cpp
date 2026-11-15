@@ -5527,22 +5527,30 @@ TEST_F(OxrThreadWindowedTest, taking_the_mouse_never_waits_for_a_main_thread_blo
     begin_session();
     OXR_Runtime* rt = oxr_get_runtime();
     rt->show_welcome = false;
+    // The window thread clears the flag under the runtime's mutex
+    const auto relative_pending = [rt]
+    {
+        os_mutex_lock(rt->mutex);
+        const b8 pending = rt->window_relative_pending;
+        os_mutex_unlock(rt->mutex);
+        return pending;
+    };
     ticks();
     os_push_mouse_event(rt->window, 30.0f, 10.0f, OS_Key::MouseLeft, true);
     os_push_mouse_event(rt->window, 30.0f, 10.0f, OS_Key::MouseLeft, false);
     EXPECT_EQ(frames_on_a_thread(3), 0u);
     EXPECT_TRUE(rt->mouse_captured);
-    EXPECT_TRUE(rt->window_relative_pending || !os_is_window_thread()) << "the window thread of its own may have applied it";
+    EXPECT_TRUE(relative_pending() || !os_is_window_thread()) << "the window thread of its own may have applied it";
     ticks();
-    EXPECT_FALSE(rt->window_relative_pending) << "the tick applied it";
+    EXPECT_FALSE(relative_pending()) << "the tick applied it";
 
     os_push_key_event(rt->window, OS_Key::Escape, true, false);
     os_push_key_event(rt->window, OS_Key::Escape, false, false);
     EXPECT_EQ(frames_on_a_thread(3), 0u);
     EXPECT_FALSE(rt->mouse_captured);
-    EXPECT_TRUE(rt->window_relative_pending || !os_is_window_thread());
+    EXPECT_TRUE(relative_pending() || !os_is_window_thread());
     ticks();
-    EXPECT_FALSE(rt->window_relative_pending);
+    EXPECT_FALSE(relative_pending());
 }
 
 // Once the mouse is held, moves turn the head with and without the left button down
