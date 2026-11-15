@@ -5,8 +5,11 @@
 #include <stdio.h>
 #include <time.h>
 #if defined(_WIN32)
+#include <io.h>
 #include <sys/timeb.h>
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 #if defined(__APPLE__)
 #include <dlfcn.h>
@@ -1967,6 +1970,53 @@ TEST(Platform, app_output_is_captured_into_the_log)
     EXPECT_TRUE(saw_two);
     EXPECT_TRUE(saw_own);
     printf("stdout works again\n");
+}
+
+// fd 2 points at a file, so it stands in for the terminal capturing saves away
+TEST(Platform, runtime_lines_reach_the_terminal_whole_while_capturing)
+{
+#if defined(_WIN32)
+    const auto fd_dup   = _dup;
+    const auto fd_dup2  = _dup2;
+    const auto fd_close = _close;
+    const auto fd_of    = _fileno;
+#else
+    const auto fd_dup   = dup;
+    const auto fd_dup2  = dup2;
+    const auto fd_close = close;
+    const auto fd_of    = fileno;
+#endif
+    char path[OS_MAX_PATH];
+    cstr_format(path, sizeof(path), "%s/puppetxr_test_terminal_%u.log", temp_dir(), os_process_id());
+    FILE* file = fopen(path, "wb");
+    ASSERT_NE(file, nullptr);
+    (void)fflush(stderr);
+    const i32 terminal = fd_dup(2);
+    ASSERT_GE(terminal, 0);
+    (void)fd_dup2(fd_of(file), 2);
+
+    const b8 captured = os_capture_output_begin();
+    LOG_INFO("terminal line");
+    os_capture_output_end();
+
+    (void)fflush(stderr);
+    (void)fd_dup2(terminal, 2);
+    (void)fd_close(terminal);
+    (void)fclose(file);
+    if (!captured)
+    {
+        os_delete_file(path);
+        GTEST_SKIP() << "output capture not supported here";
+    }
+
+    u8*   data = nullptr;
+    usize size = 0;
+    ASSERT_TRUE(os_read_file(path, &data, &size));
+    char text[256] = {};
+    memory_copy(text, data, size < sizeof(text) - 1 ? size : sizeof(text) - 1);
+    os_memory_release(data);
+    os_delete_file(path);
+    EXPECT_NE(cstr_find(text, "puppetxr: terminal line\n"), nullptr) << text;
 }
 
 TEST(Platform, streaming_file_writes)

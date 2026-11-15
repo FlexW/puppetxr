@@ -1996,7 +1996,8 @@ void os_log_text (OS_LogLevel level, const char* text)
     // While capturing, stderr is our own pipe; write straight to the terminal instead
     if (os_state.capture_active)
     {
-        os_sys_fd_write(os_state.saved_stderr, "puppetxr: ", 7);
+        static const char prefix[] = "puppetxr: ";
+        os_sys_fd_write(os_state.saved_stderr, prefix, sizeof(prefix) - 1);
         os_sys_fd_write(os_state.saved_stderr, text, cstr_length(text));
         os_sys_fd_write(os_state.saved_stderr, "\n", 1);
         return;
