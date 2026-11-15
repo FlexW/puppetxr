@@ -11,8 +11,7 @@ RUN dnf -y install dnf-plugins-core \
         gcc-toolset-15-gcc gcc-toolset-15-gcc-c++ gcc-toolset-15-libstdc++-devel gcc-toolset-15-binutils \
         clang lld llvm \
         cmake ninja-build git python3 pkgconf-pkg-config tar gzip findutils \
-        libX11-devel libXext-devel libXcursor-devel libXi-devel libXfixes-devel libXrandr-devel \
-        libXScrnSaver-devel libXtst-devel wayland-devel wayland-protocols-devel libxkbcommon-devel \
+        libX11-devel libXcursor-devel libXi-devel libXrandr-devel libxkbcommon-devel \
         mesa-libGL-devel mesa-libEGL-devel \
         mesa-vulkan-drivers mesa-dri-drivers vulkan-loader \
  && dnf clean all
