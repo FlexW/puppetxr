@@ -38,6 +38,11 @@ Exception: `defer` is lowercase.
 
 ## Formatting
 
+- Every file in the repository has Unix line endings (LF), patches of upstream files with
+  CRLF included. `.gitattributes` (`* text=auto eol=lf`) normalizes text files on commit and
+  checks them out with LF on every platform; the test `files_have_unix_line_endings`
+  (`cmake/check_line_endings.cmake`) fails on a tracked file with a CRLF in the index or the
+  working tree, binary or not.
 - Allman braces everywhere, including single statements. An `if`, `else`, `for` or
   `while` body is never on the same line as its keyword and never without braces:
 
