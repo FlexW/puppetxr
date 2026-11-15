@@ -21,8 +21,8 @@ typedef size_t usize;
 
 typedef bool b8;
 
-// Formatting goes through the C runtime's vsnprintf, which is C99 on every platform (mingw builds
-// with __USE_MINGW_ANSI_STDIO); mingw's plain printf format means the Microsoft runtime's
+// Formatting goes through stb_sprintf on every platform, not the C runtime, and takes C99 formats;
+// mingw's plain printf format means the Microsoft runtime's
 #if defined(__MINGW32__)
 #define PRINTF_LIKE(fmt_idx, first_arg) __attribute__((format(gnu_printf, fmt_idx, first_arg)))
 #elif defined(__GNUC__) || defined(__clang__)
@@ -510,6 +510,9 @@ u32           os_log_history_count  ();                 // lines kept, at most O
 const OS_LogLine* os_log_history    (u32 index);        // 0 is the oldest kept line
 u64           os_log_sequence       ();                 // total lines ever logged, for change detection
 b8            os_claim_once         (u32* flag);        // true for the first caller only, on any thread; flag starts at 0
+
+void          os_print              (const char* fmt, ...) PRINTF_LIKE(1, 2); // to stdout, flushed
+void          os_print_error        (const char* fmt, ...) PRINTF_LIKE(1, 2); // to stderr, flushed
 
 // Routes the process's stdout and stderr through the runtime: lines land in the log history as
 // OS_LogSource::App and are still written to the original streams. Poll once per frame.

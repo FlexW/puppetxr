@@ -316,6 +316,30 @@ TEST(Base, cstr_helpers)
     EXPECT_TRUE(cstr_equal(fmt, "7-x"));
 }
 
+TEST(Base, formatting_is_the_same_on_every_platform)
+{
+    char text[64] = {};
+    EXPECT_EQ(cstr_format(text, sizeof(text), "%zu %lld %x %5.2f|%-4s|", (usize)7, -3ll, 255u, 3.14159, "ab"), 19u);
+    EXPECT_TRUE(cstr_equal(text, "7 -3 ff  3.14|ab  |"));
+    cstr_format(text, sizeof(text), "%.20f", 0.1);
+    EXPECT_TRUE(cstr_equal(text, "0.10000000000000000550"));
+    cstr_format(text, sizeof(text), "%.0f %.0f", 0.5, 2.5);
+    EXPECT_TRUE(cstr_equal(text, "1 3"));
+    const u64 nan_bits = 0x7ff8000000000000ull;
+    const u64 inf_bits = 0x7ff0000000000000ull;
+    f64       nan      = 0.0;
+    f64       inf      = 0.0;
+    memory_copy(&nan, &nan_bits, sizeof(nan));
+    memory_copy(&inf, &inf_bits, sizeof(inf));
+    cstr_format(text, sizeof(text), "%f %f %e", nan, inf, 1.5);
+    EXPECT_TRUE(cstr_equal(text, "NaN Inf 1.500000e+00"));
+
+    char small[4] = { 'x', 'x', 'x', 'x' };
+    EXPECT_EQ(cstr_format(small, sizeof(small), "hello"), 5u);
+    EXPECT_TRUE(cstr_equal(small, "hel"));
+    EXPECT_EQ(cstr_format(nullptr, 0, "%d", 12345), 5u);
+}
+
 TEST(Base, hashes_are_stable)
 {
     EXPECT_EQ(hash_cstr(""), 0xCBF29CE484222325ull);
@@ -2017,6 +2041,29 @@ TEST(Platform, runtime_lines_reach_the_terminal_whole_while_capturing)
     os_memory_release(data);
     os_delete_file(path);
     EXPECT_NE(cstr_find(text, "puppetxr: terminal line\n"), nullptr) << text;
+}
+
+TEST(Platform, print_reaches_stdout_and_stderr)
+{
+    if (!os_capture_output_begin())
+    {
+        GTEST_SKIP() << "output capture not supported here";
+    }
+    os_print("printed %u %s\n", 1u, "out");
+    os_print_error("printed %u %s\n", 2u, "err");
+    os_capture_output_poll();
+    os_capture_output_end();
+
+    b8 saw_out = false;
+    b8 saw_err = false;
+    for (u32 i = 0; i < os_log_history_count(); i++)
+    {
+        const OS_LogLine* line = os_log_history(i);
+        saw_out |= line->source == OS_LogSource::App && cstr_equal(line->text, "printed 1 out");
+        saw_err |= line->source == OS_LogSource::App && cstr_equal(line->text, "printed 2 err");
+    }
+    EXPECT_TRUE(saw_out);
+    EXPECT_TRUE(saw_err);
 }
 
 TEST(Platform, streaming_file_writes)

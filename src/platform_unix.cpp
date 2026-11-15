@@ -879,7 +879,12 @@ void os_sys_thread_name (char* out_name, usize size)
 void os_sys_log_write (OS_LogLevel level, const char* text)
 {
     static const char* const prefixes[] = { "DEBUG", "INFO", "WARN", "ERROR" };
-    (void)fprintf(stderr, "%s: %s\n", prefixes[(u32)level], text);
+    flockfile(stderr);
+    (void)fputs(prefixes[(u32)level], stderr);
+    (void)fputs(": ", stderr);
+    (void)fputs(text, stderr);
+    (void)fputc('\n', stderr);
+    funlockfile(stderr);
 }
 
 // Breaking without a debugger kills the host app with SIGTRAP, so only break when one is attached

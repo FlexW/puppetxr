@@ -87,8 +87,9 @@ if (NOT PUPPETXR_HEADLESS_ONLY)
         ${CMAKE_CURRENT_SOURCE_DIR}/imgui/imgui_widgets.cpp
     )
     target_include_directories(imgui SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
-    # The test engine hooks let ui.cpp record where items are, for tests that click them
-    target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS IMGUI_DISABLE_DEMO_WINDOWS IMGUI_ENABLE_TEST_ENGINE)
+    # The test engine hooks let ui.cpp record where items are, for tests that click them; ui.cpp
+    # also formats ImGui's text through stb_sprintf like the rest of the runtime
+    target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS IMGUI_DISABLE_DEMO_WINDOWS IMGUI_ENABLE_TEST_ENGINE IMGUI_DISABLE_DEFAULT_FORMAT_FUNCTIONS)
     set_target_properties(imgui PROPERTIES CXX_VISIBILITY_PRESET hidden)
 
     # ImPlot: the performance tab's frame time graph

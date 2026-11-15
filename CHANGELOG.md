@@ -8,6 +8,7 @@ config start with **Breaking:**.
 ## Unreleased
 
 - While the runtime captures an app's output, its own lines on the terminal start with `puppetxr: ` again, not `puppetx`.
+- Text the runtime and `puppetxrctl` format comes out the same on every platform, through stb_sprintf instead of the C runtime: not-a-number and infinity print as `NaN` and `Inf` everywhere.
 - Mesh props: any glTF 2.0 model (`.glb` or `.gltf`) as a prop that stands still, moves back and forth or circles, to test how an app copes with things that move through the room, such as a chair pushed past. No extension tracks them; they show in passthrough, environment depth and environment raycasts like the room. Three are built in (`chair`, `pencil`, `case`); others load at run time (`load_model` in the C API, `puppetxrctl model load`, config `models`). Docs: docs/props.md.
 - Keyboard and QR code props show in environment depth and stop environment raycasts too.
 - **Breaking:** recordings are format 4: props may be meshes, and a recording keeps the models they show, so a replay needs none of their files. Formats 1 to 3 still read.

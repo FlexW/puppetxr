@@ -221,7 +221,7 @@ static b8 resolve_target (const char* target, CTL_Simulator& out_simulator, b8 r
         {
             if (report)
             {
-                (void)fprintf(stderr, "puppetxrctl: target %s is not host:port\n", target);
+                os_print_error("puppetxrctl: target %s is not host:port\n", target);
             }
             return false;
         }
@@ -254,13 +254,13 @@ static b8 resolve_target (const char* target, CTL_Simulator& out_simulator, b8 r
     }
     if (matches == 0)
     {
-        (void)fprintf(stderr, discovery.count == 0 ? "puppetxrctl: no simulator is listening; start the app with PUPPETXR_CONTROL=1\n" : "puppetxrctl: no simulator matches %s; see puppetxrctl list\n", target ? target : "");
+        os_print_error(discovery.count == 0 ? "puppetxrctl: no simulator is listening; start the app with PUPPETXR_CONTROL=1\n" : "puppetxrctl: no simulator matches %s; see puppetxrctl list\n", target ? target : "");
         return false;
     }
-    (void)fprintf(stderr, "puppetxrctl: %u simulators match, pick one with --target:\n", matches);
+    os_print_error("puppetxrctl: %u simulators match, pick one with --target:\n", matches);
     for (u32 i = 0; i < discovery.count; i++)
     {
-        (void)fprintf(stderr, "  %u  %s\n", discovery.simulators[i].pid, discovery.simulators[i].app);
+        os_print_error("  %u  %s\n", discovery.simulators[i].pid, discovery.simulators[i].app);
     }
     return false;
 }
@@ -325,13 +325,13 @@ static b8 request (CTL_Connection& connection, const char* line, u32 timeout_ms,
 {
     if (!send_all(connection, line, cstr_length(line), timeout_ms) || !send_all(connection, "\n", 1, timeout_ms))
     {
-        (void)fprintf(stderr, "puppetxrctl: the connection to the simulator was lost\n");
+        os_print_error("puppetxrctl: the connection to the simulator was lost\n");
         return false;
     }
     char* reply = nullptr;
     if (!receive_line(connection, timeout_ms, reply))
     {
-        (void)fprintf(stderr, "puppetxrctl: no reply within %u ms; the app may not be running frames\n", timeout_ms);
+        os_print_error("puppetxrctl: no reply within %u ms; the app may not be running frames\n", timeout_ms);
         return false;
     }
     cstr_copy(out_reply, reply_size, reply);
@@ -357,7 +357,7 @@ static b8 connect (const CTL_Simulator& simulator, u32 timeout_ms, CTL_Connectio
     out_connection.socket = os_socket_connect(simulator.address, (u16)simulator.port, timeout_ms);
     if (!out_connection.socket)
     {
-        (void)fprintf(stderr, "puppetxrctl: cannot connect to %s:%u\n", simulator.address, simulator.port);
+        os_print_error("puppetxrctl: cannot connect to %s:%u\n", simulator.address, simulator.port);
         return false;
     }
     char version[32];
@@ -378,7 +378,7 @@ static b8 connect (const CTL_Simulator& simulator, u32 timeout_ms, CTL_Connectio
             json_find_string(json_get_root(parser), "message", message, nullptr, sizeof(message));
             json_release(parser);
         }
-        (void)fprintf(stderr, "puppetxrctl: %s\n", message[0] ? message : reply);
+        os_print_error("puppetxrctl: %s\n", message[0] ? message : reply);
         return false;
     }
     out_connection.next_id = 1;
@@ -636,14 +636,14 @@ static b8 append_body_file (char* out, usize size, const char* path)
     usize length = 0;
     if (!os_read_file(path, &data, &length))
     {
-        (void)fprintf(stderr, "puppetxrctl: cannot read %s\n", path);
+        os_print_error("puppetxrctl: cannot read %s\n", path);
         return false;
     }
     defer { os_memory_release(data); };
     const usize used = cstr_length(out);
     if (used + length + 2 >= size)
     {
-        (void)fprintf(stderr, "puppetxrctl: %s is too large\n", path);
+        os_print_error("puppetxrctl: %s is too large\n", path);
         return false;
     }
     for (usize i = 0; i < length; i++)
@@ -842,7 +842,7 @@ static b8 save_body (const char* reply, const char* key, const char* path)
     cstr_format(line, sizeof(line), "%.*s\n", (int)length, text);
     if (!os_write_file(path, line, cstr_length(line)))
     {
-        (void)fprintf(stderr, "puppetxrctl: cannot write %s\n", path);
+        os_print_error("puppetxrctl: cannot write %s\n", path);
         return false;
     }
     return true;
@@ -1237,13 +1237,13 @@ static void print_reply (const char* reply, b8 json)
 {
     if (json)
     {
-        printf("%s\n", reply);
+        os_print("%s\n", reply);
         return;
     }
     JsonParser* parser = json_parse_from_string(reply);
     if (!parser)
     {
-        printf("%s\n", reply);
+        os_print("%s\n", reply);
         return;
     }
     const JsonValue root    = json_get_root(parser);
@@ -1256,7 +1256,7 @@ static void print_reply (const char* reply, b8 json)
         char message[256] = {};
         json_find_string(root, "error", error, nullptr, sizeof(error));
         json_find_string(root, "message", message, nullptr, sizeof(message));
-        (void)fprintf(stderr, "puppetxrctl: %s (%s)\n", error, message);
+        os_print_error("puppetxrctl: %s (%s)\n", error, message);
     }
     for (const JsonMember member : json_members(root))
     {
@@ -1268,12 +1268,12 @@ static void print_reply (const char* reply, b8 json)
         {
             continue;
         }
-        printf("%s: %.*s\n", key, (int)length, text);
+        os_print("%s: %.*s\n", key, (int)length, text);
         printed++;
     }
     if (ok && printed == 0)
     {
-        printf("ok\n");
+        os_print("ok\n");
     }
     json_release(parser);
 }
@@ -1284,27 +1284,27 @@ static i32 run_list (b8 json)
     discover(discovery);
     if (json)
     {
-        printf("[");
+        os_print("[");
         for (u32 i = 0; i < discovery.count; i++)
         {
             const CTL_Simulator& s = discovery.simulators[i];
-            printf("%s{\"pid\":%u,\"address\":\"%s\",\"port\":%u,\"version\":\"%s\",\"app\":\"%s\"}", i ? "," : "", s.pid, s.address, s.port, s.version, s.app);
+            os_print("%s{\"pid\":%u,\"address\":\"%s\",\"port\":%u,\"version\":\"%s\",\"app\":\"%s\"}", i ? "," : "", s.pid, s.address, s.port, s.version, s.app);
         }
-        printf("]\n");
+        os_print("]\n");
         return CTL_EXIT_OK;
     }
     if (discovery.count == 0)
     {
-        printf("no simulator is listening; start the app with PUPPETXR_CONTROL=1\n");
+        os_print("no simulator is listening; start the app with PUPPETXR_CONTROL=1\n");
         return CTL_EXIT_OK;
     }
-    printf("%-8s %-21s %-10s %s\n", "PID", "ADDRESS", "VERSION", "APP");
+    os_print("%-8s %-21s %-10s %s\n", "PID", "ADDRESS", "VERSION", "APP");
     for (u32 i = 0; i < discovery.count; i++)
     {
         const CTL_Simulator& s = discovery.simulators[i];
         char address[96];
         cstr_format(address, sizeof(address), "%s:%u", s.address, s.port);
-        printf("%-8u %-21s %-10s %s\n", s.pid, address, s.version, s.app);
+        os_print("%-8u %-21s %-10s %s\n", s.pid, address, s.version, s.app);
     }
     return CTL_EXIT_OK;
 }
@@ -1322,7 +1322,7 @@ static b8 connect_when_listening (const CTL_Options& options, u32 skip_port, CTL
         // A crashed app's discovery file outlives it
         if (by_pid && !os_process_alive(pid))
         {
-            (void)fprintf(stderr, "puppetxrctl: process %u is not running\n", pid);
+            os_print_error("puppetxrctl: process %u is not running\n", pid);
             return false;
         }
         CTL_Simulator next = {};
@@ -1396,8 +1396,7 @@ static i32 run_shell (CTL_Connection& connection, CTL_Simulator& simulator, cons
             }
             if (!build_request(count, words, connection.next_id++, request_line, sizeof(request_line), timeout))
             {
-                printf("{\"id\":null,\"ok\":false,\"error\":\"usage\",\"message\":\"see puppetxrctl --help\"}\n");
-                (void)fflush(stdout);
+                os_print("{\"id\":null,\"ok\":false,\"error\":\"usage\",\"message\":\"see puppetxrctl --help\"}\n");
                 status = CTL_EXIT_FAILED;
                 continue;
             }
@@ -1408,8 +1407,7 @@ static i32 run_shell (CTL_Connection& connection, CTL_Simulator& simulator, cons
         {
             return CTL_EXIT_CONNECT;
         }
-        printf("%s\n", reply);
-        (void)fflush(stdout);
+        os_print("%s\n", reply);
         status = reply_ok(reply) ? status : CTL_EXIT_FAILED;
     }
     return status;
@@ -1440,25 +1438,25 @@ int main (int argc, char** argv) // NOLINT(misc-const-correctness): the signatur
         }
         else if (cstr_equal(flag, "--help") || cstr_equal(flag, "-h"))
         {
-            printf("%s", ctl_usage);
+            os_print("%s", ctl_usage);
             return CTL_EXIT_OK;
         }
         else if (cstr_equal(flag, "--version"))
         {
             char version[32];
             version_string(version, sizeof(version));
-            printf("puppetxrctl %s\n", version);
+            os_print("puppetxrctl %s\n", version);
             return CTL_EXIT_OK;
         }
         else
         {
-            (void)fprintf(stderr, "%s", ctl_usage);
+            os_print_error("%s", ctl_usage);
             return CTL_EXIT_USAGE;
         }
     }
     if (first >= argc)
     {
-        (void)fprintf(stderr, "%s", ctl_usage);
+        os_print_error("%s", ctl_usage);
         return CTL_EXIT_USAGE;
     }
     const char*        command = argv[first];
@@ -1477,7 +1475,7 @@ int main (int argc, char** argv) // NOLINT(misc-const-correctness): the signatur
     }
     else if (!cstr_equal(command, "shell") && !build_request(count, words, 1, request_line, sizeof(request_line), timeout))
     {
-        (void)fprintf(stderr, "%s", ctl_usage);
+        os_print_error("%s", ctl_usage);
         return CTL_EXIT_USAGE;
     }
 

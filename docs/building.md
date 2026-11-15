@@ -460,7 +460,7 @@ time. Built static and linked into `libpuppetxr` with hidden visibility so only
 | Dear ImGui | configuration UI |
 | ImPlot | the performance tab's frame time graph |
 | jsmn | JSON tokenizer under `json_*` |
-| stb_image, stb_image_write | room albedo atlases, PNG screenshots |
+| stb_image, stb_image_write, stb_truetype, stb_sprintf | room albedo atlases, PNG screenshots, the Wayland title bar's text, all formatted text |
 | googletest | tests |
 
 ## Shaders

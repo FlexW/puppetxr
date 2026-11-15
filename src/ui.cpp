@@ -7,6 +7,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <implot.h>
+#include <limits.h>
 
 //
 // Types
@@ -2286,6 +2287,28 @@ void ImGuiTestEngineHook_Log (ImGuiContext*, const char*, ...)
 const char* ImGuiTestEngine_FindItemDebugLabel (ImGuiContext*, ImGuiID)
 {
     return nullptr;
+}
+
+//
+// ImGui's formatting (IMGUI_DISABLE_DEFAULT_FORMAT_FUNCTIONS): through cstr_format_v, as the
+// rest of the runtime. Both return the length written; a null buffer asks for the full length.
+//
+
+int ImFormatStringV (char* buf, size_t buf_size, const char* fmt, va_list args)
+{
+    const usize length  = cstr_format_v(buf, buf_size, fmt, args);
+    const usize limit   = buf && buf_size > 0 ? buf_size - 1 : (usize)INT_MAX;
+    const usize written = length < limit ? length : limit;
+    return written < (usize)INT_MAX ? (int)written : INT_MAX;
+}
+
+int ImFormatString (char* buf, size_t buf_size, const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    const int length = ImFormatStringV(buf, buf_size, fmt, args);
+    va_end(args);
+    return length;
 }
 
 //
