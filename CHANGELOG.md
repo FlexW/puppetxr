@@ -7,6 +7,7 @@ config start with **Breaking:**.
 
 ## Unreleased
 
+- The Blender room exporter (`tools/blender/puppetxr_room_export.py`) loads again: three string literals were broken across lines, a syntax error.
 - While the runtime captures an app's output, its own lines on the terminal start with `puppetxr: ` again, not `puppetx`.
 - Text the runtime and `puppetxrctl` format comes out the same on every platform, through stb_sprintf instead of the C runtime: not-a-number and infinity print as `NaN` and `Inf` everywhere.
 - Mesh props: any glTF 2.0 model (`.glb` or `.gltf`) as a prop that stands still, moves back and forth or circles, to test how an app copes with things that move through the room, such as a chair pushed past. No extension tracks them; they show in passthrough, environment depth and environment raycasts like the room. Three are built in (`chair`, `pencil`, `case`); others load at run time (`load_model` in the C API, `puppetxrctl model load`, config `models`). Docs: docs/props.md.

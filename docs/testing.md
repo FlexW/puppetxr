@@ -17,6 +17,11 @@ when a suite gets slower:
 | core apps | `tools/sample_tests.py --apps openxr_sdk,openxr_simple_example,xrgears` | about 20 s |
 | macOS `samples` | `ctest --preset mac-debug -R '^samples$'` (8 Godot `_vk` tests, hello_xr Vulkan and Vulkan2, one at a time) | about 1 min |
 
+Repository checks in every preset (`CMakeLists.txt`): `files_have_unix_line_endings` (no CRLF
+in a tracked file, git checkouts only; `line_ending_check_rejects_crlf` proves it catches one)
+and `python_tools_parse` (every script under `tools/` parses, the Blender exporter included,
+which no test runs).
+
 ## CI
 
 Two tiers on hosted runners. Linux jobs run in the pinned image of `tools/samples/Dockerfile`

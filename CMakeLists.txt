@@ -330,6 +330,25 @@ endif ()
 if (PUPPETXR_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+    # Unix line endings everywhere (AGENTS.md, Style); the second test proves the check catches a
+    # CRLF file, staged in a repository of its own. Source tarballs have no git checkout to check.
+    find_package(Git QUIET)
+    if (Git_FOUND AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/.git)
+        add_test(NAME files_have_unix_line_endings
+            COMMAND ${CMAKE_COMMAND} -DGIT=${GIT_EXECUTABLE} -DREPO=${CMAKE_CURRENT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_line_endings.cmake)
+        set(puppetxr_crlf_repo ${CMAKE_CURRENT_BINARY_DIR}/crlf_repo)
+        # file(WRITE) writes text mode on Windows, which would turn a CR LF into CR CR LF
+        file(CONFIGURE OUTPUT ${puppetxr_crlf_repo}/crlf.txt CONTENT "a\nb\n" NEWLINE_STYLE CRLF)
+        execute_process(COMMAND ${GIT_EXECUTABLE} init --quiet ${puppetxr_crlf_repo} COMMAND_ERROR_IS_FATAL ANY)
+        execute_process(COMMAND ${GIT_EXECUTABLE} -c safe.directory=* -c core.autocrlf=false -C ${puppetxr_crlf_repo} add crlf.txt COMMAND_ERROR_IS_FATAL ANY)
+        add_test(NAME line_ending_check_rejects_crlf
+            COMMAND ${CMAKE_COMMAND} -DGIT=${GIT_EXECUTABLE} -DREPO=${puppetxr_crlf_repo} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_line_endings.cmake)
+        set_tests_properties(line_ending_check_rejects_crlf PROPERTIES PASS_REGULAR_EXPRESSION "crlf.txt has CRLF")
+    endif ()
+    # The tools no test runs, such as the Blender exporter, at least parse
+    file(GLOB_RECURSE puppetxr_python_tools CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/*.py)
+    add_test(NAME python_tools_parse
+        COMMAND ${Python3_EXECUTABLE} -c "import ast, sys; [ast.parse(open(f, encoding = 'utf-8').read(), f) for f in sys.argv[1:]]" ${puppetxr_python_tools})
     # The shipped binaries run on any distribution with PUPPETXR_MAX_GLIBC (tools/dist/dist.sh);
     # the second test proves the check catches a binary that does not
     if (PUPPETXR_DIST AND NOT WIN32 AND NOT APPLE)

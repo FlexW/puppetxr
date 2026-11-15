@@ -734,8 +734,7 @@ def export_room (out_dir, bake = True):
     document["visual"] = visual
     document["global_mesh"] = global_mesh
     document["entities"] = entities
-    with open(os.path.join(out_dir, "room.json"), "w", newline = "
-") as f:
+    with open(os.path.join(out_dir, "room.json"), "w", newline = "\n") as f:
         json.dump(document, f, indent = 1)
         f.write("\n")
     return len(entities)
@@ -759,8 +758,7 @@ def add_room_mesh (out_dir):
     document["version"] = FORMAT_VERSION
     with open(os.path.join(out_dir, "room.bin"), "wb") as f:
         f.write(binary)
-    with open(os.path.join(out_dir, "room.json"), "w", newline = "
-") as f:
+    with open(os.path.join(out_dir, "room.json"), "w", newline = "\n") as f:
         json.dump(document, f, indent = 1)
         f.write("\n")
     return len(faces)
@@ -828,8 +826,7 @@ def replace_global_mesh (out_dir):
 
     with open(os.path.join(out_dir, "room.bin"), "wb") as f:
         f.write(binary)
-    with open(os.path.join(out_dir, "room.json"), "w", newline = "
-") as f:
+    with open(os.path.join(out_dir, "room.json"), "w", newline = "\n") as f:
         json.dump(document, f, indent = 1)
         f.write("\n")
     return len(indices) // 3
@@ -868,12 +865,17 @@ class PUPPETXR_OT_export (bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def execute (self, context):
+        # A path typed into the file browser may be blend relative ("//"), which DIR_PATH keeps as is
+        directory = bpy.path.abspath(self.directory)
+        if not directory:
+            self.report({'ERROR'}, "no directory to export to")
+            return {'CANCELLED'}
         try:
-            count = export_room(self.directory)
-        except ExportError as e:
+            count = export_room(directory)
+        except (ExportError, OSError) as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
-        self.report({'INFO'}, "Exported %d entities to %s" % (count, self.directory))
+        self.report({'INFO'}, "Exported %d entities to %s" % (count, directory))
         return {'FINISHED'}
 
 

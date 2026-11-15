@@ -6,7 +6,7 @@ headset and two controllers driven by keyboard and mouse, composites the app's l
 into a mirror window (or offscreen in headless mode), and can record and replay
 sessions bit-identically for bug reproduction and end-to-end tests.
 
-Read `TODO.md` first: it says what is done and what is next. Keep it current. It is the
+Read `TODO.md` first: it says what is next, open items only; a finished item is deleted. Keep it current. It is the
 work list for agents and humans alike: each open item says what is missing, where to start
 (files, docs, the test to write) and how to tell it is done. State facts about the code and the
 targets, not about who worked on it or in which environment: no session history, tool
@@ -70,7 +70,7 @@ Full guide with examples: `docs/style.md`. Essentials: C-style C++20, `struct` o
 module prefixes (`R_Device`, `r_create_device`, `OXR_`, `SIM_`, `W_`, `COMP_`, `UI_`,
 `REC_`, `os_`), `u8..u64 i8..i64 f32 f64 b8 usize` typedefs, Allman braces always (no
 brace-less or same-line `if` bodies, `case` statements on their own line below the
-label), long lines over wrapped lines (pull out a local instead), no virtual functions
+label), Unix line endings in every file (`.gitattributes`, checked by `files_have_unix_line_endings`), long lines over wrapped lines (pull out a local instead), no virtual functions
 (tagged struct + `switch`, or function pointers), 4 spaces,
 column-aligned declaration blocks, designated initializers, `= {}` zeroing,
 opaque structs defined in the `.cpp`, `ASSERT`/`ASSERT_MSG`/`FAIL_MSG`/`LOG_*`, `defer`,

@@ -349,8 +349,7 @@ instance before it "MovementSample"). The tests run `DisableAllScreenMessages` f
 engine prints its shader progress and stereo mode into the frame. The build runs the game once
 after the editor target (`WARM`, on headless puppetxr): the tests compile shaders synchronously, and
 on global shaders not cached yet that fails an assert in the engine's shader compiler; Meta's
-movement module asserts without an XR system, so `-nohmd` does not do
-(`docs/meta-reports/unreal-samples.md`). The sample's twist component logs an invalid bone name
+movement module asserts without an XR system, so `-nohmd` does not do. The sample's twist component logs an invalid bone name
 every frame.
 
 | map | status | test | requested, missing in puppetxr | notes |
@@ -372,7 +371,7 @@ the scene menu needs, and leaves the package's Body Tracking and Face Tracking S
 only ones of the player. `<package>/.` in `PACKAGE_SAMPLES` imports the files at the root of the
 package's `Samples~` too, the menu's scripts and assembly. Once the menu ran, the player takes up to
 a minute to quit: the Interaction SDK's native telemetry thread sleeps out its interval before
-its join at exit (`docs/meta-reports/unity-movement.md`). The Windows player (D3D11) compares
+its join at exit. The Windows player (D3D11) compares
 against `references/`, the macOS one against `references_macos/`. In both desktop players the face
 scene's head shows dark patches on its skin, larger on Windows; they are the same with every face
 and eye tracking extension hidden (`PUPPETXR_DISABLE_EXTENSIONS`), so they come from the sample's skin
