@@ -200,11 +200,10 @@ struct R_ShaderCode
 {
     const void* spirv;
     usize       spirv_size;
-    const char* glsl;                     // without #version; the backend prepends it and its defines
+    const char* glsl;                     // the single-source text without #version; GL and Metal prepend their defines
     const void* dxbc;                     // shader model 5.0 bytecode for D3D11 and D3D12; null in builds without D3D
     usize       dxbc_size;
     const char* textures[R_MAX_TEXTURES]; // names by binding, for backends that bind by name
-    const char* msl;                      // Metal Shading Language 2.3 with entry point main0; null in builds without Metal
 };
 
 // What a window swapchain presents to

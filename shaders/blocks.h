@@ -101,7 +101,8 @@
 // C++ structs of the blocks
 //
 
-#ifdef __cplusplus
+// MSL is C++ as well; its shaders take the fields only
+#if defined(__cplusplus) && !defined(R_SHADER_METAL)
 
 #include "platform.h"
 

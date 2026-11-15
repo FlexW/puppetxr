@@ -267,11 +267,12 @@ CTS results (1.1.63, non-interactive, `-H -T`, 2026-10-20):
 - [x] CTS on Windows: D3D11, D3D12 and OpenGL graphics plugins in cmake/cts.cmake, the CTS built with MSVC (docs/testing.md)
 - [x] D3D: UAV swapchain usage (`R_ImageUsageFlags::UnorderedAccess`, test `OxrD3DTest.unordered_access_usage_makes_writable_images`)
 - [ ] Windows on ARM64
-- [x] Metal backend and `XR_KHR_metal_enable` (also as `XR_KHRX2_metal_enable`): `src/render_metal.mm` over the app's command queue, MSL from `spirv-cross` compiled at runtime, mirror window on a `CAMetalLayer`; render, UI and session tests on Metal (`docs/compositor.md`, `docs/shaders.md`)
+- [x] Metal backend and `XR_KHR_metal_enable` (also as `XR_KHRX2_metal_enable`): `src/render_metal.mm` over the app's command queue, the single-source shaders compiled as MSL at runtime, mirror window on a `CAMetalLayer`; render, UI and session tests on Metal (`docs/compositor.md`, `docs/shaders.md`)
 - [ ] Android binding of XR_KHR_opengl_es_enable
 
 OpenGL and OpenGL ES (native backend over the app's share group, GL 3.3 core and ES 3.0; Godot compatibility renderer):
-- [x] shader dialect: one source per stage for Vulkan, GL 330, ES 300 and HLSL (`shaders/shader.h`), push blocks shared with C++ (`shaders/blocks.h`), GL/GLES/HLSL variants validated at build time; Vulkan output bit-identical (`docs/shaders.md`)
+- [x] shader dialect: one source per stage for Vulkan, GL 330, ES 300, HLSL and MSL (`shaders/shader.h`), push blocks shared with C++ (`shaders/blocks.h`), GL/GLES/HLSL variants validated at build time; Vulkan output bit-identical (`docs/shaders.md`)
+- [ ] MSL validated at build time where Xcode's `metal` compiler is found (`xcrun -f metal`), as glslangValidator and dxc check the other variants: `cmake/shaders.cmake` writes the text with the prelude `render_metal.mm` prepends and runs `xcrun metal -std=metal2.3 -fsyntax-only` on it. Today a dialect mistake shows up only in `RenderTest.every_shader_makes_a_pipeline/Metal`. Done when a broken MSL macro fails a macOS build with Xcode
 - [x] backend-neutral render API: function table dispatch in `render.cpp`, `R_ShaderCode` with SPIR-V, GL text and sampler names, `r_native_format`, `r_flush_buffer`, `R_WindowTarget`, `SparseArray` handle tags
 - [x] `render_gl.cpp`: own context shared with the app's, fences on every context switch, GL 3.3 and GLES 3.0 offscreen over EGL; tests_render and tests_ui on every backend (`docs/compositor.md`)
 - [ ] GLES depth readback (ES 3.0 reads colour only); cube array swapchains on GL (samplerCubeArray variant)

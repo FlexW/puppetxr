@@ -23,12 +23,13 @@ float far_hit (vec3 origin, vec3 ray)
     return (-b + sqrt(disc)) / a;
 }
 
-// Texture coordinates of the point a pixel sees on a cylinder or sphere layer; the angle around
-// y is 0 at -Z and grows towards +X. Outside [0, 1] the layer is not drawn there. Every ray has a
-// view depth of one, so `distance` along it is the view depth of the point, 0 at infinity.
-vec2 curved_uv (out float distance)
+// Texture coordinates of the point a pixel sees on a cylinder or sphere layer, then the distance
+// along the ray to it; the angle around y is 0 at -Z and grows towards +X. Outside [0, 1] the
+// layer is not drawn there. Every ray has a view depth of one, so the distance is the view depth
+// of the point, 0 at infinity.
+vec3 curved_uv ()
 {
-    distance = 0.0;
+    float distance = 0.0;
     vec3 ray    = push.geometry[0].xyz * R_VAR(v_ndc).x + push.geometry[1].xyz * R_VAR(v_ndc).y + push.geometry[2].xyz;
     vec3 origin = vec3(push.geometry[0].w, push.geometry[1].w, push.geometry[2].w);
     vec3 p      = ray;
@@ -39,14 +40,14 @@ vec2 curved_uv (out float distance)
         float t    = far_hit(origin * mask, ray * mask);
         if (t <= 0.0)
         {
-            return r_splat2(-1.0);
+            return vec3(-1.0, -1.0, 0.0);
         }
         p        = origin + ray * t;
         distance = t;
     }
     float angle    = atan2(p.x, -p.z);
     float vertical = cylinder ? p.y / length(p.xz) : atan2(p.y, length(p.xz));
-    return vec2(angle, vertical) * push.geometry[3].xz + push.geometry[3].yw;
+    return vec3(vec2(angle, vertical) * push.geometry[3].xz + push.geometry[3].yw, distance);
 }
 
 // Face and texture coordinates as a samplerCube picks them (Vulkan 16.5.4, cube map face
@@ -95,7 +96,9 @@ R_FRAGMENT_MAIN_BEGIN
     float distance = 0.0;
     if ((push.flags & (COMP_FLAG_CYLINDER | COMP_FLAG_SPHERE)) != 0u)
     {
-        vec2 st = curved_uv(distance);
+        vec3 hit = curved_uv();
+        vec2 st  = hit.xy;
+        distance = hit.z;
         if (any(lessThan(st, r_splat2(0.0))) || any(greaterThan(st, r_splat2(1.0))))
         {
             discard;

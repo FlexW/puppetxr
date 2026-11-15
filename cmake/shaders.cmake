@@ -1,9 +1,5 @@
 find_program(GLSLC glslc REQUIRED)
 find_program(GLSLANG_VALIDATOR glslangValidator)
-# Metal takes MSL translated from the Vulkan SPIR-V (docs/shaders.md, Metal)
-if (APPLE)
-    find_program(SPIRV_CROSS spirv-cross REQUIRED)
-endif ()
 # The dxc of the Windows SDK lacks the SPIR-V back end the HLSL check uses; the Vulkan SDK's has it
 function(puppetxr_dxc_has_spirv result candidate)
     set(probe ${CMAKE_BINARY_DIR}/CMakeFiles/dxc_probe.hlsl)
@@ -87,25 +83,10 @@ function(puppetxr_add_shaders target)
                 COMMENT "Compiling ${source} to DXBC"
                 VERBATIM)
         endif ()
-        # Metal puts NDC y = +1 at the top row where Vulkan puts y = -1, so vertex shaders flip y
-        set(msl "")
-        if (SPIRV_CROSS)
-            set(msl ${out_dir}/${name}.metal)
-            set(flip "")
-            if (stage STREQUAL "VERTEX")
-                set(flip --flip-vert-y)
-            endif ()
-            add_custom_command(
-                OUTPUT ${msl}
-                COMMAND ${SPIRV_CROSS} --msl --msl-version 20300 --msl-decoration-binding ${flip} --output ${msl} ${spv}
-                DEPENDS ${spv}
-                COMMENT "Translating ${source} to MSL"
-                VERBATIM)
-        endif ()
         add_custom_command(
             OUTPUT ${header}
-            COMMAND ${CMAKE_COMMAND} -DSPIRV=${spv} -DTEXT=${glsl} -DDXBC=${dxbc} -DMSL=${msl} -DSOURCE=${input} -DNAME=${symbol} -DOUTPUT=${header} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed.cmake
-            DEPENDS ${spv} ${glsl} ${dxbc} ${msl} ${input} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed.cmake
+            COMMAND ${CMAKE_COMMAND} -DSPIRV=${spv} -DTEXT=${glsl} -DDXBC=${dxbc} -DSOURCE=${input} -DNAME=${symbol} -DOUTPUT=${header} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed.cmake
+            DEPENDS ${spv} ${glsl} ${dxbc} ${input} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed.cmake
             COMMENT "Embedding ${name}"
             VERBATIM)
         list(APPEND headers ${header})

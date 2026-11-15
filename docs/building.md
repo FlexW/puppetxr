@@ -250,7 +250,7 @@ set XR_RUNTIME_JSON=%CD%\build\msvc-debug\puppetxr-dev.json
 Requirements: macOS 11 or later, Xcode's command line tools (Apple clang), and from Homebrew:
 
 ```
-brew install cmake ninja shaderc spirv-cross vulkan-loader vulkan-headers molten-vk vulkan-validationlayers git-lfs
+brew install cmake ninja shaderc vulkan-loader vulkan-headers molten-vk vulkan-validationlayers git-lfs
 cmake --preset mac-debug && cmake --build --preset mac-debug && ctest --preset mac-debug
 ```
 
@@ -267,9 +267,8 @@ cmake --preset mac-debug && cmake --build --preset mac-debug && ctest --preset m
   path; the window's surface (`VK_EXT_metal_surface` over its `CAMetalLayer`) is made through it.
 - Metal apps (Unity's macOS players and editor) bind `XR_KHR_metal_enable`; the backend is
   `src/render_metal.mm` (`PUPPETXR_HAVE_METAL`, linked with the Metal, QuartzCore and Foundation
-  frameworks). Its shaders are MSL that `spirv-cross` (Homebrew) translates from the Vulkan
-  SPIR-V at build time and Metal compiles at runtime, so Xcode's `metal` compiler is not needed
-  (`docs/shaders.md`).
+  frameworks). Metal compiles the single-source shader text as MSL at runtime, so Xcode's
+  `metal` compiler is not needed (`docs/shaders.md`).
 - No OpenGL: macOS has no GLX, EGL or WGL to share the app's context through, so `PUPPETXR_HAVE_GL`
   is off, `r_backend_available(OpenGL)` is false and the GL binding extensions are not offered.
 - dyld does not search Homebrew's `lib`, and Homebrew's validation layer manifest names its
@@ -306,7 +305,7 @@ cmake --preset mac-debug && cmake --build --preset mac-debug && ctest --preset m
 tests (with `--no-tests` only the release checks below) and leaves in `build/mac-dist/out/`:
 `puppetxr-<version>-macos-universal.tar.gz` (`lib/libpuppetxr.dylib`, `bin/puppetxrctl`, the header, the
 manifest, LICENSE), `…-debug.tar.gz` (the `.dSYM` bundles) and `.buildinfo` (commit, toolchain
-versions including `spirv-cross`, sha256 sums).
+versions, sha256 sums).
 
 - Universal arm64 and x86_64, full LTO, `-dead_strip`, stack protector, `_FORTIFY_SOURCE`, paths
   mapped as on Linux; local symbols stripped, debug info in `.dSYM` bundles (`cmake/dist.cmake`).

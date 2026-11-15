@@ -16,6 +16,12 @@
 #include "environment_depth.frag.h"
 #include "environment_depth_upload.vert.h"
 #include "environment_depth_upload.frag.h"
+#include "composite_depth.frag.h"
+#include "composite_resolve.frag.h"
+#include "imgui.vert.h"
+#include "imgui.frag.h"
+#include "blit.vert.h"
+#include "blit.frag.h"
 #include "blocks.h"
 
 // Sanitizers make memory accesses several times slower, so upper bounds on wall-clock time scale
@@ -315,13 +321,44 @@ TEST(RenderBackendTest, shader_code_carries_every_backend)
     EXPECT_STREQ(passthrough_frag_shader.textures[0], "albedo");
     EXPECT_STREQ(passthrough_frag_shader.textures[1], "color_map");
     EXPECT_EQ(composite_vert_shader.textures[0], nullptr);
-    // Metal source translated from the SPIR-V where the build has Metal (docs/shaders.md)
-    EXPECT_EQ(composite_frag_shader.msl != nullptr, r_backend_available(R_Backend::Metal));
-    if (composite_frag_shader.msl)
+}
+
+// Every shader compiles for the backend: GL and Metal compile the single-source text when a
+// pipeline needs it, so a dialect mistake shows up only here
+TEST_P(RenderTest, every_shader_makes_a_pipeline)
+{
+    const R_RenderPassHandle color = r_create_render_pass(device, { .color_format = R_Format::R8G8B8A8_UNORM, .load_op = R_LoadOp::Clear, .initial_layout = R_ImageLayout::ColorAttachment, .final_layout = R_ImageLayout::ColorAttachment });
+    const R_RenderPassHandle depth = r_create_render_pass(device, {
+        .color_format = R_Format::R8G8B8A8_UNORM, .load_op = R_LoadOp::Clear, .initial_layout = R_ImageLayout::ColorAttachment, .final_layout = R_ImageLayout::ColorAttachment,
+        .depth_format = R_Format::D32_SFLOAT, .depth_load_op = R_LoadOp::Clear, .depth_initial_layout = R_ImageLayout::DepthStencilAttachment, .depth_final_layout = R_ImageLayout::DepthStencilAttachment,
+    });
+    const R_CreatePipelineInfo infos[] = {
+        { .vertex = &composite_vert_shader, .fragment = &composite_frag_shader, .render_pass = color, .textures_count = 1, .texture_type = R_TextureType::Type2DArray, .push_constants_size = sizeof(COMP_Push) },
+        { .vertex = &composite_vert_shader, .fragment = &composite_depth_frag_shader, .render_pass = depth, .textures_count = 2, .texture_type = R_TextureType::Type2DArray, .push_constants_size = sizeof(COMP_Push), .depth_test = true, .depth_write = true },
+        { .vertex = &composite_vert_shader, .fragment = &composite_resolve_frag_shader, .render_pass = color, .textures_count = 1, .texture_type = R_TextureType::Type2DArray, .push_constants_size = sizeof(COMP_Push) },
+        { .vertex = &blit_vert_shader, .fragment = &blit_frag_shader, .render_pass = color, .textures_count = 1, .texture_type = R_TextureType::Type2DArray, .push_constants_size = sizeof(R_BlitPush) },
+        {
+            .vertex = &passthrough_vert_shader, .fragment = &passthrough_frag_shader, .render_pass = depth, .textures_count = 2, .push_constants_size = sizeof(COMP_PassthroughPush), .depth_test = true, .depth_write = true,
+            .vertex_stride = 20, .vertex_attributes = { { 0, R_Format::R32G32B32_SFLOAT, 0 }, { 1, R_Format::R32G32_SFLOAT, 12 } }, .vertex_attributes_count = 2,
+        },
+        {
+            .vertex = &environment_depth_vert_shader, .fragment = &environment_depth_frag_shader, .render_pass = depth, .push_constants_size = sizeof(COMP_DepthPush), .depth_test = true, .depth_write = true, .no_color_write = true,
+            .vertex_stride = 12, .vertex_attributes = { { 0, R_Format::R32G32B32_SFLOAT, 0 } }, .vertex_attributes_count = 1,
+        },
+        { .vertex = &environment_depth_upload_vert_shader, .fragment = &environment_depth_upload_frag_shader, .render_pass = depth, .textures_count = 1, .texture_type = R_TextureType::Type2DArray, .push_constants_size = sizeof(COMP_DepthUploadPush), .depth_test = true, .depth_compare = R_CompareOp::Always, .depth_write = true, .no_color_write = true },
+        {
+            .vertex = &imgui_vert_shader, .fragment = &imgui_frag_shader, .render_pass = color, .textures_count = 1, .texture_type = R_TextureType::Type2D, .push_constants_size = sizeof(UI_Push), .blend_enable = true,
+            .vertex_stride = 20, .vertex_attributes = { { 0, R_Format::R32G32_SFLOAT, 0 }, { 1, R_Format::R32G32_SFLOAT, 8 }, { 2, R_Format::R8G8B8A8_UNORM, 16 } }, .vertex_attributes_count = 3,
+        },
+    };
+    for (u32 i = 0; i < sizeof(infos) / sizeof(infos[0]); i++)
     {
-        EXPECT_NE(strstr(composite_frag_shader.msl, "fragment main0_out main0("), nullptr);
-        EXPECT_NE(strstr(composite_vert_shader.msl, "vertex main0_out main0("), nullptr);
+        const R_PipelineHandle pipeline = r_create_pipeline(device, infos[i]);
+        EXPECT_TRUE(r_is_valid(device, pipeline)) << "pipeline " << i;
+        r_destroy_pipeline(device, pipeline);
     }
+    r_destroy_render_pass(device, depth);
+    r_destroy_render_pass(device, color);
 }
 
 TEST_P(RenderTest, pipeline_without_code_for_the_backend_is_rejected)
@@ -785,6 +822,80 @@ TEST_P(RenderDepthTest, depth_test_keeps_the_nearest_surface_in_any_draw_order)
     r_destroy_image(device, target);
     r_destroy_image(device, lut);
     r_destroy_image(device, albedo);
+}
+
+// XR_FB_composition_layer_depth_test: a cylinder's depth is 1 - COMP_DEPTH_NEAR / distance along
+// the ray, which has a view depth of one; radius 1 is 0.99 at the center, behind a layer at 0.9,
+// radius 0.05 is 0.8, in front of it
+TEST_P(RenderDepthTest, curved_layers_are_depth_tested_at_their_distance)
+{
+    const R_ImageHandle red    = make_target(4, 4, 2);
+    const R_ImageHandle blue   = make_target(4, 4, 2);
+    const R_ImageHandle target = make_target(16, 8, 1);
+    const R_ImageHandle depth  = r_create_image(device, { .width = 16, .height = 8, .format = R_Format::D32_SFLOAT, .usage_flags = (u32)R_ImageUsageFlags::DepthStencilAttachment, .initial_layout = R_ImageLayout::DepthStencilAttachment });
+    ASSERT_TRUE(r_is_valid(device, depth));
+    for (u32 layer = 0; layer < 2; layer++)
+    {
+        clear_layer(red, layer, { 1.0f, 0.0f, 0.0f, 1.0f });
+        clear_layer(blue, layer, { 0.0f, 0.0f, 1.0f, 1.0f });
+    }
+
+    const R_RenderPassHandle pass = r_create_render_pass(device, {
+        .color_format = R_Format::R8G8B8A8_UNORM, .load_op = R_LoadOp::Clear, .initial_layout = R_ImageLayout::ColorAttachment, .final_layout = R_ImageLayout::ColorAttachment,
+        .depth_format = R_Format::D32_SFLOAT, .depth_load_op = R_LoadOp::Clear, .depth_initial_layout = R_ImageLayout::DepthStencilAttachment, .depth_final_layout = R_ImageLayout::DepthStencilAttachment,
+    });
+    const R_FramebufferHandle fb       = r_create_framebuffer(device, { .render_pass = pass, .image = target, .layer = 0, .depth_image = depth, .depth_layer = 0 });
+    const R_PipelineHandle    pipeline = r_create_pipeline(device, {
+        .vertex = &composite_vert_shader, .fragment = &composite_depth_frag_shader, .render_pass = pass, .textures_count = 2,
+        .texture_type = R_TextureType::Type2DArray, .push_constants_size = sizeof(COMP_Push), .depth_test = true, .depth_compare = R_CompareOp::Less, .depth_write = true,
+    });
+    ASSERT_TRUE(r_is_valid(device, pipeline));
+
+    const COMP_Push flat = { { { -1.0f, -1.0f, 0.9f, 1.0f }, { 1.0f, -1.0f, 0.9f, 1.0f }, { -1.0f, 1.0f, 0.9f, 1.0f }, { 1.0f, 1.0f, 0.9f, 1.0f } }, { 0.0f, 0.0f, 1.0f, 1.0f }, {}, {}, 0, 0, 0.0f, 0 };
+    // Rays (ndc.x, ndc.y, -1) from the cylinder's axis; the image spans 4 radians around and 4 up
+    COMP_Push cylinder = { { { 1.0f, 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f, 0.0f }, { 0.25f, 0.5f, 0.25f, 0.5f } }, { 0.0f, 0.0f, 1.0f, 1.0f }, {}, {}, 0, COMP_FLAG_CYLINDER, 0.0f, 0 };
+    struct Case
+    {
+        f32 radius;
+        u8  red;
+        u8  blue;
+    };
+    for (const Case test : { Case { 1.0f, 255, 0 }, Case { 0.05f, 0, 255 } })
+    {
+        cylinder.radius = test.radius;
+        const R_ImageHandle     below[2] = { red, red };
+        const R_ImageHandle     above[2] = { blue, red };
+        const R_CmdBufferHandle cmd      = r_begin_immediate(device);
+        r_cmd_transition_image(device, cmd, red, R_ImageLayout::ColorAttachment, R_ImageLayout::ShaderReadOnly);
+        r_cmd_transition_image(device, cmd, blue, R_ImageLayout::ColorAttachment, R_ImageLayout::ShaderReadOnly);
+        r_cmd_begin_render_pass(device, cmd, pass, fb, { 0, 0, 0, 1 });
+        r_cmd_bind_pipeline(device, cmd, pipeline);
+        r_cmd_set_viewport(device, cmd, { 0, 0, 16, 8 });
+        r_cmd_set_scissor(device, cmd, { 0, 0, 16, 8 });
+        r_cmd_bind_textures(device, cmd, pipeline, below, 2, R_Filter::Nearest);
+        r_cmd_push_constants(device, cmd, pipeline, &flat, sizeof(flat));
+        r_cmd_draw(device, cmd, 6, 0);
+        r_cmd_bind_textures(device, cmd, pipeline, above, 2, R_Filter::Nearest);
+        r_cmd_push_constants(device, cmd, pipeline, &cylinder, sizeof(cylinder));
+        r_cmd_draw(device, cmd, 6, 0);
+        r_cmd_end_render_pass(device, cmd);
+        r_cmd_transition_image(device, cmd, red, R_ImageLayout::ShaderReadOnly, R_ImageLayout::ColorAttachment);
+        r_cmd_transition_image(device, cmd, blue, R_ImageLayout::ShaderReadOnly, R_ImageLayout::ColorAttachment);
+        r_end_immediate(device, cmd);
+
+        u8 pixels[16 * 8 * 4] = {};
+        ASSERT_TRUE(r_read_image(device, target, 0, R_ImageLayout::ColorAttachment, pixels, sizeof(pixels)));
+        expect_pixel(pixels, 16, 8, 4, test.red, 0, test.blue, 255);
+        expect_pixel(pixels, 16, 0, 0, test.red, 0, test.blue, 255);
+    }
+
+    r_destroy_pipeline(device, pipeline);
+    r_destroy_framebuffer(device, fb);
+    r_destroy_render_pass(device, pass);
+    r_destroy_image(device, depth);
+    r_destroy_image(device, target);
+    r_destroy_image(device, blue);
+    r_destroy_image(device, red);
 }
 
 // XR_META_passthrough_color_lut: an atlas of 3D LUT slices (shaders/blocks.h), interpolated

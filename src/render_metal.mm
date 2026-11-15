@@ -21,9 +21,9 @@
 //
 // Manual reference counting: every object kept in a struct is retained, and every call that
 // makes autoreleased objects runs in a pool of its own, since the app's thread may have none.
-// Shaders are MSL translated from the Vulkan SPIR-V by spirv-cross (docs/shaders.md, Metal):
-// push constants are buffer 0 of both stages, texture and sampler N binding N, the vertex
-// buffer goes to R_METAL_VERTEX_BUFFER. State is kept and applied at each draw, so commands may
+// Shaders are the single-source text compiled as MSL (docs/shaders.md, Metal): push constants
+// are buffer 0 of both stages, texture and sampler N binding N, the vertex buffer goes to
+// R_METAL_VERTEX_BUFFER. State is kept and applied at each draw, so commands may
 // come in any order within a render pass.
 
 #define R_METAL_CMDS          (R_MAX_FRAMES_IN_FLIGHT + 1) // the frames, then the immediate buffer
@@ -329,9 +329,9 @@ static void wait_slot (R_MetalSlot& slot)
 }
 
 // Compiled when a pipeline first needs it; the source is fixed, so each shader compiles once
-static id<MTLFunction> shader_function (R_MetalDevice* device, const R_ShaderCode* code)
+static id<MTLFunction> shader_function (R_MetalDevice* device, const R_ShaderCode* code, b8 vertex)
 {
-    if (!code || !code->msl)
+    if (!code || !code->glsl)
     {
         return nil;
     }
@@ -353,9 +353,10 @@ static id<MTLFunction> shader_function (R_MetalDevice* device, const R_ShaderCod
         MTLCompileOptions* const options = [[MTLCompileOptions new] autorelease];
         options.fastMathEnabled    = NO;
         options.languageVersion    = MTLLanguageVersion2_3;
-        NSString* const      source  = [NSString stringWithUTF8String:code->msl];
+        NSString* const      prelude = vertex ? @"#include <metal_stdlib>\nusing namespace metal;\n#define R_SHADER_METAL 1\n#define R_STAGE_VERTEX 1\n#line 1\n" : @"#include <metal_stdlib>\nusing namespace metal;\n#define R_SHADER_METAL 1\n#define R_STAGE_FRAGMENT 1\n#line 1\n";
+        NSString* const      text    = [NSString stringWithUTF8String:code->glsl];
         NSError*             error   = nil;
-        const id<MTLLibrary> library = source ? [device->device newLibraryWithSource:source options:options error:&error] : nil;
+        const id<MTLLibrary> library = text ? [device->device newLibraryWithSource:[prelude stringByAppendingString:text] options:options error:&error] : nil;
         if (!library)
         {
             LOG_ERROR("Cannot compile a Metal shader: %s", error ? error.localizedDescription.UTF8String : "unknown error");
@@ -417,8 +418,8 @@ static id<MTLRenderPipelineState> variant_state (R_MetalDevice* device, R_Format
         LOG_ERROR("More than %u internal Metal pipelines", R_METAL_MAX_VARIANTS);
         return nil;
     }
-    const id<MTLFunction> vertex   = shader_function(device, &blit_vert_shader);
-    const id<MTLFunction> fragment = depth_clear ? nil : shader_function(device, &blit_frag_shader);
+    const id<MTLFunction> vertex   = shader_function(device, &blit_vert_shader, true);
+    const id<MTLFunction> fragment = depth_clear ? nil : shader_function(device, &blit_frag_shader, false);
     if (!vertex || (!depth_clear && !fragment))
     {
         return nil;
@@ -815,8 +816,8 @@ static R_PipelineHandle metal_create_pipeline (R_Device* base_device, const R_Cr
         LOG_ERROR("Invalid Metal pipeline");
         return NULL_HANDLE;
     }
-    const id<MTLFunction> vertex   = shader_function(device, info.vertex);
-    const id<MTLFunction> fragment = shader_function(device, info.fragment);
+    const id<MTLFunction> vertex   = shader_function(device, info.vertex, true);
+    const id<MTLFunction> fragment = shader_function(device, info.fragment, false);
     if (!vertex || !fragment)
     {
         LOG_ERROR("The pipeline's shaders have no Metal code");

@@ -139,7 +139,7 @@ jobs:
       - name: Dependencies
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
-        run: brew install cmake ninja shaderc spirv-cross vulkan-loader vulkan-headers molten-vk vulkan-validationlayers git-lfs
+        run: brew install cmake ninja shaderc vulkan-loader vulkan-headers molten-vk vulkan-validationlayers git-lfs
       - uses: ./.github/actions/lfs
       - run: tools/dist/dist-macos.sh
       - uses: actions/upload-artifact@v4
