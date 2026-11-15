@@ -469,8 +469,8 @@ static W_World* parse_with_global_mesh (TestRoom& room, const Array<f32>& positi
     }
     const u32 old_positions = (u32)strtoul(positions_offset_key + 10, nullptr, 10);
     const u32 old_indices   = (u32)strtoul(indices_offset_key + 10, nullptr, 10);
-    (void)snprintf(from, sizeof(from), "\"positions\": { \"offset\": %u, \"count\": 12 }, \"indices\": { \"offset\": %u, \"count\": 42 }", old_positions, old_indices);
-    (void)snprintf(to, sizeof(to), "\"positions\": { \"offset\": %u, \"count\": %u }, \"indices\": { \"offset\": %u, \"count\": %u }", positions_offset, verts, indices_offset, tris * 3);
+    cstr_format(from, sizeof(from), "\"positions\": { \"offset\": %u, \"count\": 12 }, \"indices\": { \"offset\": %u, \"count\": 42 }", old_positions, old_indices);
+    cstr_format(to, sizeof(to), "\"positions\": { \"offset\": %u, \"count\": %u }, \"indices\": { \"offset\": %u, \"count\": %u }", positions_offset, verts, indices_offset, tris * 3);
     if (!test_room_replace(room, from, to))
     {
         return nullptr;
@@ -1451,10 +1451,10 @@ static const char* replaced (const char* json, const char* from, const char* to,
     EXPECT_NE(at, nullptr) << from;
     if (!at)
     {
-        snprintf(out, sizeof(out), "%s", json);
+        cstr_format(out, sizeof(out), "%s", json);
         return out;
     }
-    snprintf(out, sizeof(out), "%.*s%s%s", (int)(at - json), json, to, at + strlen(from));
+    cstr_format(out, sizeof(out), "%.*s%s%s", (int)(at - json), json, to, at + strlen(from));
     return out;
 }
 
@@ -1660,7 +1660,7 @@ TEST_F(ModelTest, a_gltf_with_files_or_data_uris_packs_like_its_glb)
     static char big[8192];
     const char* at = strstr(CUBE_JSON, "{\"byteLength\":308}");
     ASSERT_NE(at, nullptr);
-    snprintf(big, sizeof(big), "%.*s%s%s", (int)(at - CUBE_JSON), CUBE_JSON, uri.data, at + strlen("{\"byteLength\":308}"));
+    cstr_format(big, sizeof(big), "%.*s%s%s", (int)(at - CUBE_JSON), CUBE_JSON, uri.data, at + strlen("{\"byteLength\":308}"));
     ASSERT_TRUE(w_pack_model((const u8*)big, strlen(big), nullptr, other));
     ASSERT_EQ(other.length, packed.length);
     EXPECT_EQ(memcmp(other.data, packed.data, packed.length), 0);
@@ -2040,7 +2040,7 @@ static void textured_triangles (u32 materials, const Array<u8>& png, Array<u8>& 
     append("{\"asset\":{\"version\":\"2.0\"},\"scenes\":[{\"nodes\":[0]}],\"nodes\":[{\"mesh\":0}],\"meshes\":[{\"primitives\":[");
     for (u32 m = 0; m < materials; m++)
     {
-        snprintf(text, sizeof(text), "%s{\"attributes\":{\"POSITION\":0},\"material\":%u}", m ? "," : "", m);
+        cstr_format(text, sizeof(text), "%s{\"attributes\":{\"POSITION\":0},\"material\":%u}", m ? "," : "", m);
         append(text);
     }
     append("]}],\"materials\":[");
@@ -2048,10 +2048,10 @@ static void textured_triangles (u32 materials, const Array<u8>& png, Array<u8>& 
     {
         append(m ? ",{\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":0}}}" : "{\"pbrMetallicRoughness\":{\"baseColorTexture\":{\"index\":0}}}");
     }
-    snprintf(text, sizeof(text), "],\"textures\":[{\"source\":0}],\"images\":[{\"bufferView\":1,\"mimeType\":\"image/png\"}],"
+    cstr_format(text, sizeof(text), "],\"textures\":[{\"source\":0}],\"images\":[{\"bufferView\":1,\"mimeType\":\"image/png\"}],"
              "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}],");
     append(text);
-    snprintf(text, sizeof(text), "\"bufferViews\":[{\"buffer\":0,\"byteLength\":36},{\"buffer\":0,\"byteOffset\":36,\"byteLength\":%u}],\"buffers\":[{\"byteLength\":%u}]}", (u32)png.length, (u32)bin.length);
+    cstr_format(text, sizeof(text), "\"bufferViews\":[{\"buffer\":0,\"byteLength\":36},{\"buffer\":0,\"byteOffset\":36,\"byteLength\":%u}],\"buffers\":[{\"byteLength\":%u}]}", (u32)png.length, (u32)bin.length);
     append(text);
     json.add(0);
     make_glb(json.data, bin.data, bin.length, out);

@@ -114,7 +114,7 @@ inline void test_room_build (TestRoom& room)
     const u32 rm_wall3     = test_room_append(room, wall3_tris, sizeof(wall3_tris));
     const u32 rm_window    = test_room_append(room, window_tris, sizeof(window_tris));
 
-    (void)snprintf(room.json, sizeof(room.json),
+    cstr_format(room.json, sizeof(room.json),
         "{\n"
         "  \"format\": \"puppetxr_room\",\n"
         "  \"version\": 1,\n"

@@ -44,7 +44,7 @@ Third-party headers are confined: `vulkan.h` in `render_vulkan.cpp` and
 `oxr_vulkan.cpp`, `imgui.h` in `ui.cpp`, the X11 and xkbcommon headers in `platform_linux.cpp`,
 AppKit in `platform_macos.mm`, `windows.h` in `platform_win32.cpp`, the D3D and DXGI headers in
 `render_d3d11.cpp` and `render_d3d12.cpp` (and the test helper `tests/test_d3d.h`), `openxr.h` in `oxr*.cpp` and `puppetxr_api.cpp`, `jsmn.h` in `base.cpp`,
-`stb_image_write.h` in `comp.cpp`, `stb_image.h` in `world.cpp`, `stb_truetype.h` in `platform_linux.cpp`. Across layer boundaries native
+`stb_image_write.h` in `comp.cpp`, `stb_image.h` in `world.cpp`, `stb_truetype.h` in `platform_linux.cpp`, `stb_sprintf.h` in `platform.cpp`. Across layer boundaries native
 objects travel as `void*` or `u64`.
 
 ## Platform layer
@@ -97,6 +97,11 @@ is what they share and nothing else includes.
   on Wayland, which routes a text field's keys through the input method: a key it takes comes back
   as committed text, a key it leaves arrives as a key and types as usual. The candidates show where `os_window_text_input`
   says; the preedit string is not drawn.
+- Formatting: `cstr_format`, `os_log` and `os_print` (stdout, `os_print_error` stderr, for the
+  tools) go through `stb_sprintf`, never the C runtime's printf family, so text comes out the same
+  on every platform: C99 formats, ties rounded away from zero (`%.0f` of 2.5 is `3`), `NaN` and
+  `Inf`, `%p` as 16 hex digits. ImGui formats through `cstr_format_v` too
+  (`IMGUI_DISABLE_DEFAULT_FORMAT_FUNCTIONS`, `ui.cpp`).
 - Window thread (Linux, Windows): sleeps until the window system has events or
   `os_sys_wake_signal` (a pipe, an event) ends the wait; a call or post wakes it.
 

@@ -1,8 +1,14 @@
 #include "platform_internal.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define STB_SPRINTF_IMPLEMENTATION
+#define STB_SPRINTF_STATIC
+#define STB_SPRINTF_NOUNALIGNED
+#include <stb_sprintf.h>
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <intrin.h>
 #endif
@@ -1996,7 +2002,8 @@ void os_log_text (OS_LogLevel level, const char* text)
     // While capturing, stderr is our own pipe; write straight to the terminal instead
     if (os_state.capture_active)
     {
-        os_sys_fd_write(os_state.saved_stderr, "puppetxr: ", 7);
+        static const char prefix[] = "puppetxr: ";
+        os_sys_fd_write(os_state.saved_stderr, prefix, sizeof(prefix) - 1);
         os_sys_fd_write(os_state.saved_stderr, text, cstr_length(text));
         os_sys_fd_write(os_state.saved_stderr, "\n", 1);
         return;
@@ -2013,6 +2020,45 @@ void os_log_v (OS_LogLevel level, const char* fmt, va_list args)
     char text[OS_LOG_LINE_LENGTH];
     cstr_format_v(text, sizeof(text), fmt, args);
     os_log_text(level, text);
+}
+
+namespace
+{
+struct PrintStream
+{
+    FILE* file;
+    char  buffer[STB_SPRINTF_MIN];
+};
+} // namespace
+
+static char* print_flush (const char* text, void* user, i32 length)
+{
+    PrintStream* stream = (PrintStream*)user;
+    (void)fwrite(text, 1, (usize)length, stream->file);
+    return stream->buffer;
+}
+
+static void print_v (FILE* file, const char* fmt, va_list args)
+{
+    PrintStream stream = { .file = file };
+    stbsp_vsprintfcb(print_flush, &stream, stream.buffer, fmt, args);
+    (void)fflush(file);
+}
+
+void os_print (const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    print_v(stdout, fmt, args);
+    va_end(args);
+}
+
+void os_print_error (const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    print_v(stderr, fmt, args);
+    va_end(args);
 }
 
 b8 os_capture_output_begin ()
@@ -2351,12 +2397,12 @@ usize cstr_format (char* dest, usize dest_size, const char* fmt, ...)
 
 usize cstr_format_v (char* dest, usize dest_size, const char* fmt, va_list args)
 {
-    // vsnprintf leaves the buffer as it was when the format fails
-    if (dest && dest_size > 0)
+    if (!dest || dest_size == 0)
     {
-        dest[0] = 0;
+        dest      = nullptr;
+        dest_size = 0;
     }
-    const i32 length = vsnprintf(dest, dest_size, fmt, args);
+    const i32 length = stbsp_vsnprintf(dest, dest_size > INT_MAX ? INT_MAX : (i32)dest_size, fmt, args);
     return length < 0 ? 0 : (usize)length;
 }
 
