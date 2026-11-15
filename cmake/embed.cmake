@@ -1,8 +1,7 @@
-# Usage: cmake -DSPIRV=file.spv -DTEXT=file.glsl [-DDXBC=file.dxbc] [-DMSL=file.metal] -DSOURCE=file -DNAME=symbol -DOUTPUT=file.h -P embed.cmake
+# Usage: cmake -DSPIRV=file.spv -DTEXT=file.glsl [-DDXBC=file.dxbc] -DSOURCE=file -DNAME=symbol -DOUTPUT=file.h -P embed.cmake
 # Emits the SPIR-V as `NAME_spv` (32-bit little-endian words, so the array is aligned for Vulkan),
-# the GL text as `NAME_glsl`, the D3D bytecode as `NAME_dxbc` and the Metal source as `NAME_msl`
-# when there are, and
-# `NAME_shader`, the R_ShaderCode of them. Texture names come from
+# the single-source text of GL and Metal as `NAME_glsl`, the D3D bytecode as `NAME_dxbc` when
+# there is, and `NAME_shader`, the R_ShaderCode of them. Texture names come from
 # the R_TEXTURE_* declarations of SOURCE, by binding.
 file(READ ${SPIRV} hex HEX)
 string(LENGTH "${hex}" hex_length)
@@ -38,17 +37,7 @@ if (DXBC)
     set(dxbc_field "${NAME}_dxbc")
 endif ()
 
-set(msl_array "")
-set(msl_field "nullptr")
-if (MSL)
-    file(READ ${MSL} msl_hex HEX)
-    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," msl_chars "${msl_hex}")
-    set(msl_array "static const char ${NAME}_msl[] = {${msl_chars}0x00};\n")
-    set(msl_field "${NAME}_msl")
-endif ()
-
 file(WRITE ${OUTPUT} "static const unsigned int ${NAME}_spv[] = {${words}};\n"
     "static const char ${NAME}_glsl[] = {${chars}0x00};\n"
     "${dxbc_array}"
-    "${msl_array}"
-    "static const R_ShaderCode ${NAME}_shader = { .spirv = ${NAME}_spv, .spirv_size = ${size}, .glsl = ${NAME}_glsl, .dxbc = ${dxbc_field}, .dxbc_size = ${dxbc_size}, .textures = { ${texture0}, ${texture1} }, .msl = ${msl_field} };\n")
+    "static const R_ShaderCode ${NAME}_shader = { .spirv = ${NAME}_spv, .spirv_size = ${size}, .glsl = ${NAME}_glsl, .dxbc = ${dxbc_field}, .dxbc_size = ${dxbc_size}, .textures = { ${texture0}, ${texture1} } };\n")

@@ -2,9 +2,9 @@
 #define PUPPETXR_SHADER_H
 
 // Prelude of the shader dialect (docs/shaders.md): GLSL with macros for declarations and the
-// few constructs GLSL and HLSL spell differently. The build or the backend defines one of
-// R_SHADER_VULKAN, R_SHADER_GL, R_SHADER_GLES, R_SHADER_HLSL and one of R_STAGE_VERTEX,
-// R_STAGE_FRAGMENT. GL and GLES pick the sampler of R_TEXTURE_LAYERED with R_SAMPLER_2D or
+// few constructs GLSL, HLSL and MSL spell differently. The build or the backend defines one of
+// R_SHADER_VULKAN, R_SHADER_GL, R_SHADER_GLES, R_SHADER_HLSL, R_SHADER_METAL and one of
+// R_STAGE_VERTEX, R_STAGE_FRAGMENT. GL and GLES pick the sampler of R_TEXTURE_LAYERED with R_SAMPLER_2D or
 // R_SAMPLER_CUBE (default 2D array), because their swapchain textures have no array views.
 
 #if defined(R_SHADER_VULKAN) || defined(R_SHADER_GL) || defined(R_SHADER_GLES)
@@ -240,7 +240,120 @@ float r_atan2 (float y, float x)
 #endif
 
 //
-// Both dialects
+// MSL: Metal Shading Language 2.3; entry point main0. The backend prepends metal_stdlib.
+//
+
+#ifdef R_SHADER_METAL
+
+#define vec2  float2
+#define vec3  float3
+#define vec4  float4
+#define ivec2 int2
+#define ivec3 int3
+#define ivec4 int4
+#define uvec2 uint2
+#define uvec3 uint3
+#define uvec4 uint4
+#define bvec2 bool2
+#define bvec3 bool3
+#define bvec4 bool4
+#define mat3  float3x3
+#define mat4  float4x4
+
+#define dFdx              dfdx
+#define dFdy              dfdy
+#define inversesqrt       rsqrt
+#define lessThan(a, b)    ((a) < (b))
+#define greaterThan(a, b) ((a) > (b))
+#define discard           discard_fragment()
+
+#define mul(a, b)               ((a) * (b))
+#define r_mat3_cols(c0, c1, c2) float3x3(c0, c1, c2)
+#define r_splat2(x)             float2(x)
+#define r_splat3(x)             float3(x)
+#define r_splat4(x)             float4(x)
+
+// MSL has neither mutable globals nor resources outside the entry point's arguments, so the
+// shader is the struct R_Shader: helpers are member functions reaching the push block, textures
+// and varyings as members, and main0 after the struct fills them. A shader without push block or
+// texture N gets the defaults below, which unqualified lookup inside R_Shader falls back to.
+struct R_PushData
+{
+    float4 r_unused;
+};
+typedef texture2d<float> r_texture_type0;
+typedef texture2d<float> r_texture_type1;
+static void r_bind_push (constant R_PushData*) {}
+static void r_bind_texture0 (texture2d<float>, sampler) {}
+static void r_bind_texture1 (texture2d<float>, sampler) {}
+
+#define R_PUSH_BLOCK(FIELDS)                 struct R_PushData { FIELDS(R_FIELD, R_FIELD_ARRAY) }; constant R_PushData* r_push; void r_bind_push(constant R_PushData* p) { r_push = p; }
+#define push                                 (*r_push)
+#define R_METAL_TEXTURE(type, name, slot)    typedef type r_texture_type##slot; type name; sampler name##_sampler; void r_bind_texture##slot(type t, sampler s) { name = t; name##_sampler = s; }
+#define R_TEXTURE_2D(name, slot)             R_METAL_TEXTURE(texture2d<float>, name, slot)
+#define R_TEXTURE_LAYERED(name, slot)        R_METAL_TEXTURE(texture2d_array<float>, name, slot)
+#define R_TEXTURE_ARRAY(name, slot)          R_METAL_TEXTURE(texture2d_array<float>, name, slot)
+
+// Array layers round to nearest even as in Vulkan
+#define r_sample(t, uv)                       t.sample(t##_sampler, uv)
+#define r_sample_layer(t, uv, layer)          t.sample(t##_sampler, uv, uint(rint(layer)))
+#define r_sample_layer_lod(t, uv, layer, lod) t.sample(t##_sampler, uv, uint(rint(layer)), level(lod))
+#define r_fetch_array(t, xy, layer)           t.read(uint2(xy), uint(layer))
+
+#define R_ATTRIBUTE(type, name, loc)      type name [[attribute(loc)]];
+#define R_VARYING(type, name, loc)        type name [[user(locn##loc)]];
+#define R_VERTEX_INPUTS(FIELDS)           struct R_VertexIn { FIELDS(R_ATTRIBUTE) }; R_VertexIn r_vin; uint r_vertex_id;
+#ifdef R_STAGE_VERTEX
+#define R_VARYINGS(FIELDS)                struct R_VertexOut { float4 r_position [[position]]; FIELDS(R_VARYING) }; R_VertexOut r_vout;
+#define R_VAR(name)                       r_vout.name
+#else
+#define R_VARYINGS(FIELDS)                struct R_FragmentIn { float4 r_position [[position]]; FIELDS(R_VARYING) }; R_FragmentIn r_fin;
+#define R_VAR(name)                       r_fin.name
+#endif
+#define R_IN(name)                        r_vin.name
+#define R_VERTEX_ID                       int(r_vertex_id)
+#define R_POSITION                        r_vout.r_position
+#define R_COLOR                           r_color
+#define R_DEPTH                           r_depth
+#define R_FRAG_COORD                      r_fin.r_position
+
+// The resource types main0 takes, and binding them, resolved inside R_Shader where the defaults apply
+#define R_METAL_BIND                typedef R_PushData r_entry_push; typedef r_texture_type0 r_entry_texture0; typedef r_texture_type1 r_entry_texture1; \
+                                    void r_bind (constant r_entry_push* p, r_entry_texture0 t0, sampler s0, r_entry_texture1 t1, sampler s1) { r_bind_push(p); r_bind_texture0(t0, s0); r_bind_texture1(t1, s1); } \
+                                    void r_bind_vertex (constant r_entry_push* p) { r_bind_push(p); }
+#define R_METAL_FRAGMENT_ARGUMENTS  R_Shader::R_FragmentIn r_in [[stage_in]], constant R_Shader::r_entry_push* r_push_in [[buffer(0)]], \
+                                    R_Shader::r_entry_texture0 r_t0 [[texture(0)]], sampler r_s0 [[sampler(0)]], R_Shader::r_entry_texture1 r_t1 [[texture(1)]], sampler r_s1 [[sampler(1)]]
+#define R_METAL_FRAGMENT_PROLOGUE   R_Shader r_shader; r_shader.r_fin = r_in; r_shader.r_bind(r_push_in, r_t0, r_s0, r_t1, r_s1);
+
+// Metal puts NDC y = +1 at row 0 where Vulkan puts y = -1 (docs/shaders.md, Clip space)
+#define R_VERTEX_MAIN_BEGIN         void r_main() {
+#define R_VERTEX_RETURN             return
+#define R_VERTEX_MAIN_END           } R_METAL_BIND }; \
+                                    vertex R_Shader::R_VertexOut main0(R_Shader::R_VertexIn r_in [[stage_in]], uint r_vertex_id_in [[vertex_id]], constant R_Shader::r_entry_push* r_push_in [[buffer(0)]]) \
+                                    { R_Shader r_shader; r_shader.r_vin = r_in; r_shader.r_vertex_id = r_vertex_id_in; r_shader.r_vout = R_Shader::R_VertexOut(); r_shader.r_bind_vertex(r_push_in); \
+                                      r_shader.r_main(); r_shader.r_vout.r_position.y = -r_shader.r_vout.r_position.y; return r_shader.r_vout; }
+#define R_FRAGMENT_MAIN_BEGIN       float4 r_color; void r_main() {
+#define R_FRAGMENT_MAIN_END         } R_METAL_BIND }; \
+                                    fragment float4 main0(R_METAL_FRAGMENT_ARGUMENTS) { R_METAL_FRAGMENT_PROLOGUE r_shader.r_color = float4(0.0); r_shader.r_main(); return r_shader.r_color; }
+#define R_FRAGMENT_COLOR_DEPTH_MAIN_BEGIN float4 r_color; float r_depth; void r_main() {
+#define R_FRAGMENT_COLOR_DEPTH_MAIN_END   } R_METAL_BIND struct R_FragmentOut { float4 color [[color(0)]]; float depth [[depth(any)]]; }; }; \
+                                    fragment R_Shader::R_FragmentOut main0(R_METAL_FRAGMENT_ARGUMENTS) \
+                                    { R_METAL_FRAGMENT_PROLOGUE r_shader.r_color = float4(0.0); r_shader.r_depth = 0.0; r_shader.r_main(); \
+                                      R_Shader::R_FragmentOut r_out = { r_shader.r_color, r_shader.r_depth }; return r_out; }
+#define R_FRAGMENT_DEPTH_MAIN_BEGIN void r_main() {
+#define R_FRAGMENT_DEPTH_MAIN_END   } }; fragment void main0() { R_Shader r_shader; r_shader.r_main(); }
+#define R_FRAGMENT_DEPTH_WRITE_MAIN_BEGIN float r_depth; void r_main() {
+#define R_FRAGMENT_DEPTH_WRITE_MAIN_END   } R_METAL_BIND struct R_FragmentOut { float depth [[depth(any)]]; }; }; \
+                                    fragment R_Shader::R_FragmentOut main0(R_METAL_FRAGMENT_ARGUMENTS) \
+                                    { R_METAL_FRAGMENT_PROLOGUE r_shader.r_depth = 0.0; r_shader.r_main(); R_Shader::R_FragmentOut r_out = { r_shader.r_depth }; return r_out; }
+
+struct R_Shader
+{
+
+#endif
+
+//
+// Every dialect
 //
 
 // A value in [0, 1] as 24 bits in the rgb of an RGBA8 UNORM target, which stores them exactly:

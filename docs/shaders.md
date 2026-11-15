@@ -2,7 +2,7 @@
 
 One source per stage in `shaders/`, written in GLSL with the macros of `shaders/shader.h`, so that
 the same file builds for every render backend. The approach is bgfx's: GLSL is the base
-language, the HLSL prelude maps GLSL names, and declarations go through macros.
+language, the HLSL and MSL preludes map GLSL names, and declarations go through macros.
 
 | Backend | Define | Compiled | Status |
 |---|---|---|---|
@@ -10,10 +10,11 @@ language, the HLSL prelude maps GLSL names, and declarations go through macros.
 | OpenGL 3.3 core | `R_SHADER_GL` | by the driver at pipeline creation (`render_gl.cpp`) | used |
 | OpenGL ES 3.0 | `R_SHADER_GLES` | by the driver at pipeline creation (`render_gl.cpp`) | used |
 | D3D11, D3D12 | `R_SHADER_HLSL` | shader model 5.0 DXBC at build time on Windows (`puppetxr_hlsl`, `D3DCompile`), embedded | used |
-| Metal | none | `spirv-cross --msl` from the Vulkan SPIR-V at build time on macOS, MSL source embedded, compiled at the first pipeline that needs it | used |
+| Metal | `R_SHADER_METAL` | MSL 2.3 by the driver at the first pipeline that needs it (`render_metal.mm`) | used |
 
 The stage is `R_STAGE_VERTEX` or `R_STAGE_FRAGMENT`, from the file extension. Files have no
-`#version`: glslc gets `-std`, and GL backends prepend `#version` and the defines.
+`#version`: glslc gets `-std`, GL backends prepend `#version` and the defines, Metal
+`metal_stdlib` and the defines. GL and Metal compile the same embedded text, `R_ShaderCode::glsl`.
 
 ## D3D bytecode
 
@@ -33,13 +34,22 @@ they are built for every backend like the others.
 
 ## Metal source
 
-On macOS `cmake/shaders.cmake` translates each SPIR-V file with `spirv-cross --msl --msl-version
-20300 --msl-decoration-binding`, vertex shaders with `--flip-vert-y` as well: Metal puts NDC
-y = +1 at row 0, where Vulkan puts y = -1. The MSL lands in `R_ShaderCode::msl` (entry point
-`main0`; null elsewhere). Only Xcode has the `metal` compiler, so `render_metal.mm` compiles the
-source with `newLibraryWithSource` when a pipeline first needs it, once per shader, with fast
-math off (determinism). The translation fixes the interface: the push block is buffer 0 of both
-stages, texture and sampler N binding N, and the backend puts the vertex buffer at index 30.
+Only Xcode has the `metal` compiler, so `render_metal.mm` compiles the single-source text with
+`newLibraryWithSource` when a pipeline first needs it, once per shader, with fast math off
+(determinism). Nothing checks it at build time; `RenderTest.every_shader_makes_a_pipeline` compiles
+every shader on every backend the machine has.
+
+MSL has neither mutable globals nor resources outside the entry point's arguments, so the prelude
+turns the whole shader into `struct R_Shader`: it opens the struct at its end, helpers become
+member functions that reach `push` (a pointer, `#define push (*r_push)`), textures and varyings as
+members, and `R_*_MAIN_END` closes it and emits the entry point `main0`. `main0` takes the push
+block at buffer 0 of both stages, texture and sampler N at binding N for N < `R_MAX_TEXTURES`, and
+the attributes as `[[stage_in]]`; the backend puts the vertex buffer at index 30. A shader without
+push block or texture N gets the global defaults of the prelude (`R_PushData`, `r_texture_typeN`,
+`r_bind_textureN`), which unqualified lookup inside the struct falls back to; MSL has no
+inheritance. The defaults never read their arguments, so the backend need not bind them.
+Varyings match by `[[user(locnN)]]`. Metal puts NDC y = +1 at row 0, so `main0` negates y after
+the body as HLSL does.
 
 ## Files
 
@@ -59,7 +69,7 @@ stages, texture and sampler N binding N, and the backend puts the vertex buffer 
 
 | Macro | Meaning |
 |---|---|
-| `R_PUSH_BLOCK(FIELDS)` | the push block `push`; Vulkan push constants, GL std140 block `R_Push` (bound by name), HLSL `cbuffer R_Push : register(b0)` |
+| `R_PUSH_BLOCK(FIELDS)` | the push block `push`; Vulkan push constants, GL std140 block `R_Push` (bound by name), HLSL `cbuffer R_Push : register(b0)`, MSL `constant` buffer 0 |
 | `R_TEXTURE_2D(name, slot)` | a 2D texture with sampler at binding `slot` |
 | `R_TEXTURE_LAYERED(name, slot)` | a texture of any swapchain: 2D array on Vulkan and HLSL; on GL `sampler2D`, `sampler2DArray` or `samplerCube` by `R_SAMPLER_2D`, default, `R_SAMPLER_CUBE` |
 | `R_TEXTURE_ARRAY(name, slot)` | a 2D array texture on every backend, whatever the variant; for images of two or more layers made by the renderer (GL makes one layer a 2D texture) |
@@ -90,7 +100,10 @@ where Vulkan clamps.
 - No global constants; a value shared with C++ is a `#define` in `blocks.h` (`16u` is valid in both).
 - GLSL names that HLSL lacks are mapped in the prelude (`mix`, `fract`, `dFdx`, `lessThan`, ...);
   anything else needs a macro there first.
-- Helpers may read `push`, textures and varyings: HLSL keeps inputs and outputs in statics.
+- Helpers may read `push`, textures and varyings: HLSL keeps inputs and outputs in statics, MSL in
+  members of `R_Shader`.
+- No `out` or `inout` parameters (MSL needs `thread T&`); return a vector instead.
+- `push`, `R_Shader` and names starting with `r_` or `R_` are the prelude's.
 - Avoid identifiers that are keywords in HLSL or MSL (`sample`, `point`, `line`, `vertex`,
   `fragment`, `texture`, `linear`).
 - Comments inside macros are `/* */`; a `//` would swallow the line continuation.
@@ -99,8 +112,8 @@ where Vulkan clamps.
 
 Fields are `F(type, name)` or `A(type, name, count)`. Arrays are of `vec4` or `mat4`, no field
 crosses a 16-byte boundary and every block is a multiple of 16 bytes (`static_assert` in
-`blocks.h`). Then Vulkan's push constant layout, std140 and HLSL constant buffer packing all
-equal the C layout; `RenderBlockTest.push_blocks_have_the_std140_layout` pins the offsets. At most
+`blocks.h`). Then Vulkan's push constant layout, std140, HLSL constant buffer packing and MSL's
+natural alignment all equal the C layout (no `vec3`: MSL's `float3` takes 16 bytes); `RenderBlockTest.push_blocks_have_the_std140_layout` pins the offsets. At most
 `R_MAX_PUSH_CONSTANTS` (128) bytes.
 
 ## Clip space
