@@ -6,7 +6,7 @@ headset and two controllers driven by keyboard and mouse, composites the app's l
 into a mirror window (or offscreen in headless mode), and can record and replay
 sessions bit-identically for bug reproduction and end-to-end tests.
 
-Read `TODO.md` first: it says what is done and what is next. Keep it current. It is the
+Read `TODO.md` first: it says what is next, open items only; a finished item is deleted. Keep it current. It is the
 work list for agents and humans alike: each open item says what is missing, where to start
 (files, docs, the test to write) and how to tell it is done. State facts about the code and the
 targets, not about who worked on it or in which environment: no session history, tool
