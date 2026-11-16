@@ -7,6 +7,7 @@ config start with **Breaking:**.
 
 ## Unreleased
 
+- macOS: an app that destroys its last instance on another thread while the main thread is busy no longer leaves the mirror window open; it closes once the main thread comes by.
 - The Blender room exporter (`tools/blender/puppetxr_room_export.py`) loads again: three string literals were broken across lines, a syntax error.
 - While the runtime captures an app's output, its own lines on the terminal start with `puppetxr: ` again, not `puppetx`.
 - Text the runtime and `puppetxrctl` format comes out the same on every platform, through stb_sprintf instead of the C runtime: not-a-number and infinity print as `NaN` and `Inf` everywhere.

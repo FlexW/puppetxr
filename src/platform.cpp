@@ -575,9 +575,18 @@ void os_shutdown ()
         stop_window_thread();
     }
 #elif HAVE_MACOS
+    // AppKit traps off the main thread; a main thread that does not take the call in time closes
+    // the windows when it next comes by, or they go with the process
     if (!os_state.headless)
     {
-        os_run_on_window_thread(stop_video_now, nullptr);
+        if (os_mac_on_main_thread())
+        {
+            stop_video_now(nullptr);
+        }
+        else if (!os_mac_run_on_main(stop_video_now, nullptr, OS_MAIN_THREAD_TIMEOUT_MS))
+        {
+            os_mac_post_to_main(stop_video_now, nullptr);
+        }
     }
 #endif
     os_mutex_destroy(os_state.queue_mutex);
