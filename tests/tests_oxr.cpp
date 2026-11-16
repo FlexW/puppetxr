@@ -16692,6 +16692,26 @@ TEST_F(OxrMetalRealWindowTest, the_last_instance_ends_on_a_thread_while_the_main
     EXPECT_TRUE(oxr_get_runtime()->window_shown);
 }
 
+// Regression: the stop posted by an instance that ended elsewhere ran after the main thread had
+// started video for its next instance and closed that instance's window
+TEST_F(OxrMetalRealWindowTest, a_new_instance_on_the_main_thread_keeps_its_window_after_one_ended_elsewhere)
+{
+    if (os_is_headless())
+    {
+        GTEST_SKIP() << "no display";
+    }
+    metal_quad_frames(*this);
+    os_thread_join(os_thread_create("ender", end_instance_elsewhere, this));
+    const char* extensions[] = { metal_extension };
+    ASSERT_EQ(create_instance(extensions, 1), XR_SUCCESS);
+    const XrSystemGetInfo system_info = { .type = XR_TYPE_SYSTEM_GET_INFO, .formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY };
+    ASSERT_EQ(xr.xrGetSystem(instance, &system_info, &system), XR_SUCCESS);
+    metal_quad_frames(*this);
+    os_serve_posted(0);
+    EXPECT_FALSE(os_is_headless());
+    EXPECT_TRUE(os_window_shown(oxr_get_runtime()->window)) << "the old instance's stop closed the new window";
+}
+
 //
 // Face and eye tracking: XR_FB_face_tracking2, XR_FB_face_tracking, XR_META_face_tracking_visemes,
 // XR_FB_eye_tracking_social

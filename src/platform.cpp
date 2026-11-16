@@ -543,6 +543,8 @@ b8 os_initialize (b8 headless)
         VideoInitCall call = {};
         if (os_mac_on_main_thread())
         {
+            // A stop posted by an instance that ended on another thread runs first, not on this video
+            os_mac_serve(0);
             init_video_now(&call);
         }
         else if (!os_mac_run_on_main(init_video_now, &call, 2000))
