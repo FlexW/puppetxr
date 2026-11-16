@@ -16657,6 +16657,41 @@ TEST_F(OxrMetalRealWindowTest, frames_composite_and_present_to_the_mirror_window
     EXPECT_GT(oxr_get_runtime()->frame_times.mirror_presents, 0u) << "the performance tab counts the presents";
 }
 
+static i32 end_instance_elsewhere (void* user)
+{
+    OxrMetalTest& test = *(OxrMetalTest*)user;
+    EXPECT_EQ(test.xr.xrDestroySession(test.session), XR_SUCCESS);
+    test.session = XR_NULL_HANDLE;
+    EXPECT_EQ(test.xr.xrDestroyInstance(test.instance), XR_SUCCESS);
+    test.instance = XR_NULL_HANDLE;
+    return 0;
+}
+
+// Regression: an app that ends its last instance on its game thread while the main thread is busy
+// had the windows closed on the game thread, where AppKit traps, or never once the main thread did
+// not take the call in time. They close on the main thread when it comes by, and a later instance
+// gets a window again
+TEST_F(OxrMetalRealWindowTest, the_last_instance_ends_on_a_thread_while_the_main_thread_is_blocked)
+{
+    if (os_is_headless())
+    {
+        GTEST_SKIP() << "no display";
+    }
+    metal_quad_frames(*this);
+    OS_Window* window = oxr_get_runtime()->window;
+    ASSERT_TRUE(os_window_shown(window));
+    os_thread_join(os_thread_create("ender", end_instance_elsewhere, this));
+    os_serve_posted(0);
+    EXPECT_FALSE(os_window_shown(window)) << "the window outlives its instance";
+    const char* extensions[] = { metal_extension };
+    ASSERT_EQ(create_instance(extensions, 1), XR_SUCCESS);
+    const XrSystemGetInfo system_info = { .type = XR_TYPE_SYSTEM_GET_INFO, .formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY };
+    ASSERT_EQ(xr.xrGetSystem(instance, &system_info, &system), XR_SUCCESS);
+    metal_quad_frames(*this);
+    EXPECT_FALSE(os_is_headless());
+    EXPECT_TRUE(oxr_get_runtime()->window_shown);
+}
+
 //
 // Face and eye tracking: XR_FB_face_tracking2, XR_FB_face_tracking, XR_META_face_tracking_visemes,
 // XR_FB_eye_tracking_social

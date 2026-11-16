@@ -287,7 +287,10 @@ cmake --preset mac-debug && cmake --build --preset mac-debug && ctest --preset m
   unlock signals, after a spin of `OS_MUTEX_SPIN_NS`) or pumps events. A call it does not start
   within `OS_MAIN_THREAD_TIMEOUT_MS` (250 ms) is withdrawn without running and logs one warning;
   later calls fail at once until the main thread comes by again. Video starts on the main thread
-  with a 2 s timeout, else the runtime runs headless with a warning. Inside NSApp's running event
+  with a 2 s timeout, else the runtime runs headless with a warning. It stops there too when the
+  last instance goes; when the main thread does not take that in time, the stop is posted and the
+  windows close when it next comes by, never on the calling thread, where AppKit traps (test
+  `OxrMetalRealWindowTest.the_last_instance_ends_on_a_thread_while_the_main_thread_is_blocked`). Inside NSApp's running event
   loop the app dispatches the events, so the pump leaves them (`app_runs_event_loop`).
 - Keys and mouse in apps that own NSApp (Unity's editor, Godot): NSApp routes keys and moves to the
   key window alone, whoever dispatches them. A local NSEvent monitor, which fires inside
