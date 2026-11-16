@@ -290,7 +290,9 @@ cmake --preset mac-debug && cmake --build --preset mac-debug && ctest --preset m
   with a 2 s timeout, else the runtime runs headless with a warning. It stops there too when the
   last instance goes; when the main thread does not take that in time, the stop is posted and the
   windows close when it next comes by, never on the calling thread, where AppKit traps (test
-  `OxrMetalRealWindowTest.the_last_instance_ends_on_a_thread_while_the_main_thread_is_blocked`). Inside NSApp's running event
+  `OxrMetalRealWindowTest.the_last_instance_ends_on_a_thread_while_the_main_thread_is_blocked`). A
+  later start on the main thread runs that stop first, so it never closes the new windows (test
+  `OxrMetalRealWindowTest.a_new_instance_on_the_main_thread_keeps_its_window_after_one_ended_elsewhere`). Inside NSApp's running event
   loop the app dispatches the events, so the pump leaves them (`app_runs_event_loop`).
 - Keys and mouse in apps that own NSApp (Unity's editor, Godot): NSApp routes keys and moves to the
   key window alone, whoever dispatches them. A local NSEvent monitor, which fires inside
