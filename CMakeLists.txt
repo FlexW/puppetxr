@@ -156,7 +156,7 @@ endif ()
 
 # The rooms of data/rooms/ are compiled in, so the library ships as one file (docs/world.md). The
 # generated source is tens of megabytes of bytes, so it is a library of its own that clang-tidy skips.
-file(GLOB puppetxr_room_files ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room.json ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room.bin ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room_albedo.png)
+file(GLOB puppetxr_room_files ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room.json ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room.bin ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room_albedo.jpg ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room_albedo.png)
 set(puppetxr_rooms_source ${CMAKE_BINARY_DIR}/rooms/rooms_embedded.cpp)
 add_custom_command(
     OUTPUT ${puppetxr_rooms_source}

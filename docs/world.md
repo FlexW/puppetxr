@@ -83,7 +83,7 @@ safe as path components and as recording Names.
 `living_room` is the default (`docs/config.md`).
 
 Every room of `data/rooms/` is compiled into the library, so puppetxr ships as one file:
-`cmake/embed_rooms.cmake` writes `room.json`, `room.bin` and `room_albedo.png` of each into
+`cmake/embed_rooms.cmake` writes `room.json`, `room.bin` and the albedo image of each into
 `<build>/rooms/rooms_embedded.cpp` as byte arrays (`w_embedded_rooms`), built as the static
 library `puppetxr_rooms`, which clang-tidy skips. It reruns only when a room file changes
 (about 15 s, plus 10 s to compile). `World.compiled_in_rooms_are_the_source_rooms` checks the
@@ -125,20 +125,29 @@ ceiling region without holes, vertical walls that are rectangles spanning floor 
 ceiling (Scene v1), coplanar connected faces of one label merge into one entity. Walls
 are listed in the order the floor boundary meets them, counter-clockwise from above.
 
-The visual mesh (all visible meshes, joined, triangulated, smart-projected UVs) is baked
-with Cycles into a 2048 x 2048 PNG atlas:
+Furniture is scanned models and surfaces of Poly Haven (CC0) and shapes modelled around them,
+fitted to the boxes of their entities; the `.blend`s hold what they use, packed. Budget: 30000
+triangles and 4 MB exported a room.
+
+The visual mesh (all visible meshes, joined, triangulated) is baked with Cycles into a 3072 x 3072
+JPEG atlas. Meshes with a UV map named `UVMap` keep its islands, everything else is smart-projected
+(`unwrap_atlas`). Texels go where one looks: the floor gets more than walls and ceiling
+(`SHELL_DENSITY`), and faces no ray leaves by 25 cm (undersides, backs to a wall; `hidden_faces`)
+nearly none.
+
 
 | Step | Detail |
 |---|---|
-| lighting | diffuse direct, indirect and colour, 2048 samples, float buffer so lit surfaces never clip |
+| lighting | diffuse direct, indirect and colour, 256 samples, float buffer so lit surfaces never clip |
 | albedo | diffuse colour only, 16 samples, the denoiser's guide |
 | denoise | OIDN (compositor Denoise node, HDR, high quality) in a scratch scene without render layers |
-| save | the scene's view transform, look, exposure and gamma (as in Blender's rendered view), 8-bit sRGB PNG |
+| save | the scene's view transform, look, exposure and gamma (as in Blender's rendered view), 8-bit sRGB, to a lossless `room_albedo.master.png` (not in the repository) and from it a JPEG of quality 95 |
 
-Tune lights in the rendered viewport: the atlas looks like it. PNG, not JPEG: the 8 x 8
-blocks and chroma subsampling of JPEG show as a pattern in dark gradients such as
-contact shadows. A GPU bake takes about two minutes per room. The global
-mesh is the same surfaces, welded, decimated to at most 8000 triangles (`GLOBAL_MESH_TRIANGLES`) and cut until no edge
+Tune lights in the rendered viewport: the atlas looks like it. The JPEG has no chroma
+subsampling (`write_jpeg`): its blocks show as a pattern in dark gradients such as contact
+shadows, and Blender's own writer always subsamples. A CPU bake takes about ten minutes per room
+on 16 threads. The global
+mesh is the same surfaces, welded, decimated to at most 6000 triangles (`GLOBAL_MESH_TRIANGLES`) and cut until no edge
 is longer than 0.2 m (`GLOBAL_MESH_EDGE`), as a headset's scan has no wall-sized triangles; its entity is turned like
 the floor, local +Z up, as on Meta's headsets, whose scans keep the mesh's vertical along that axis (MRUK reserves the
 bottom of the mesh for DestructibleMesh along it). `--global-mesh-only` replaces the global mesh of an exported room

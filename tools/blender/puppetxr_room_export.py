@@ -47,11 +47,19 @@ TOP_PLANE_LABELS = {"table", "couch", "bed", "storage"}
 ENTITY_LABELS = {"other", "floor", "ceiling", "wall_face", "invisible_wall_face", "inner_wall_face", "door_frame", "window_frame", "opening",
                  "wall_art", "table", "couch", "bed", "storage", "screen", "lamp", "plant", "global_mesh"}
 
-ATLAS_SIZE = 2048
+ATLAS_SIZE = 3072
 ATLAS_MARGIN = 16
-BAKE_SAMPLES = 2048
+ATLAS_QUALITY = 95      # JPEG without chroma subsampling, whose blocks show in dark gradients; a PNG is three times the size
+ISLAND_MARGIN = 0.0026  # of the atlas, about 8 texels
+# Texels go where one looks: relative density of the shell's floor, ceiling and walls; everything else
+# is 1, and what no ray leaves by HIDDEN_DISTANCE (undersides, backs to a wall) nearly nothing
+SHELL_DENSITY = {1: 1.5, 2: 0.3, 3: 0.75, 4: 0.75, 5: 0.75}
+HIDDEN_DENSITY = 0.08
+HIDDEN_DISTANCE = 0.25
+HIDDEN_RAYS = 64
+BAKE_SAMPLES = 256
 ALBEDO_SAMPLES = 16
-GLOBAL_MESH_TRIANGLES = 8000
+GLOBAL_MESH_TRIANGLES = 6000
 GLOBAL_MESH_EDGE = 0.2
 EPSILON_EDGE = 1e-3 # slivers of decimated furniture keep an edge just past GLOBAL_MESH_EDGE
 EPSILON = 1e-4
@@ -510,6 +518,19 @@ def bake_pass (image, nodes, samples, lighting):
     bpy.ops.object.bake(type = 'DIFFUSE', uv_layer = "puppetxr_bake", margin = ATLAS_MARGIN)
 
 
+def write_jpeg (master, path):
+    # Blender's own writer always subsamples chroma. The lossless master stays next to the atlas, not
+    # in the repository, so another quality needs no bake
+    import OpenImageIO as oiio
+    source = oiio.ImageBuf(master)
+    spec = oiio.ImageSpec(source.spec().width, source.spec().height, 3, oiio.UINT8)
+    spec.attribute("Compression", "jpeg:%d" % ATLAS_QUALITY)
+    spec.attribute("jpeg:subsampling", "4:4:4")
+    out = oiio.ImageOutput.create(path)
+    if not out or not out.open(path, spec) or not out.write_image(source.get_pixels(oiio.UINT8)[:, :, :3]) or not out.close():
+        raise ExportError("cannot write %s: %s" % (path, oiio.geterror()))
+
+
 def denoise_and_save (lit, albedo, path, size):
     # OIDN through the compositor of a scratch scene without render layers, so nothing is
     # rendered. The source scene's view transform maps the unclipped bake to display values,
@@ -528,7 +549,7 @@ def denoise_and_save (lit, albedo, path, size):
         settings.file_format = 'PNG'
         settings.color_mode = 'RGB'
         settings.color_depth = '8'
-        settings.compression = 100
+        settings.compression = 15
         # No render metadata in the atlas: it would carry the .blend path, host name and date
         for key in ("date", "time", "render_time", "frame", "frame_range", "memory", "hostname", "camera", "lens", "scene", "marker", "filename", "sequencer_strip", "note"):
             if hasattr(scene.render, "use_stamp_" + key):
@@ -547,10 +568,92 @@ def denoise_and_save (lit, albedo, path, size):
         tree.links.new(albedo_node.outputs["Image"], denoise.inputs["Albedo"])
         tree.links.new(denoise.outputs["Image"], output.inputs[0])
         bpy.ops.render.render(scene = scene.name)
-        bpy.data.images["Render Result"].save_render(path, scene = scene)
+        master = os.path.splitext(path)[0] + ".master.png"
+        bpy.data.images["Render Result"].save_render(master, scene = scene)
+        write_jpeg(master, path)
     finally:
         bpy.data.scenes.remove(scene)
         bpy.data.node_groups.remove(tree)
+
+
+def hidden_faces (obj):
+    # Faces whose surroundings are closer than HIDDEN_DISTANCE whichever way one looks from them
+    from mathutils.bvhtree import BVHTree
+    mesh = obj.data
+    tree = BVHTree.FromPolygons([v.co for v in mesh.vertices], [tuple(p.vertices) for p in mesh.polygons])
+    rays = []
+    for i in range(HIDDEN_RAYS):
+        z = (i + 0.5) / HIDDEN_RAYS
+        a = i * 2.399963
+        rays.append(Vector((math.sqrt(1 - z * z) * math.cos(a), math.sqrt(1 - z * z) * math.sin(a), z)))
+    hidden = set()
+    for p in mesh.polygons:
+        turn = p.normal.to_track_quat('Z', 'Y')
+        corners = [mesh.vertices[v].co for v in p.vertices]
+        points = [p.center] + [p.center.lerp(c, 0.8) for c in corners]
+        seen = any(tree.ray_cast(point + p.normal * 0.001, turn @ ray, HIDDEN_DISTANCE)[0] is None for point in points for ray in rays)
+        if not seen:
+            hidden.add(p.index)
+    return hidden
+
+
+def uv_islands (mesh, data):
+    # Faces that share an edge in texture space, by union-find
+    parent = list(range(len(mesh.polygons)))
+    def root (a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+    edges = {}
+    for p in mesh.polygons:
+        loops = list(p.loop_indices)
+        for i, loop in enumerate(loops):
+            following = loops[(i + 1) % len(loops)]
+            ends = sorted((mesh.loops[l].vertex_index, round(data[l].uv.x, 5), round(data[l].uv.y, 5)) for l in (loop, following))
+            other = edges.setdefault(tuple(ends), p.index)
+            parent[root(p.index)] = root(other)
+    islands = {}
+    for p in mesh.polygons:
+        islands.setdefault(root(p.index), []).append(p.index)
+    return islands.values()
+
+
+def unwrap_atlas (obj):
+    # Meshes with texture coordinates of their own (scanned models) keep those islands, as projecting
+    # their many small faces would leave thousands; everything else is projected
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    uv = bm.loops.layers.uv["puppetxr_bake"]
+    own = bm.loops.layers.uv.get("UVMap")
+    for f in bm.faces:
+        kept = own is not None and len({tuple(loop[own].uv) for loop in f.loops}) > 2
+        f.select = not kept
+        for loop in f.loops:
+            loop[uv].uv = loop[own].uv if kept else (0.0, 0.0)
+    bm.to_mesh(obj.data)
+    bm.free()
+    bpy.ops.object.mode_set(mode = 'EDIT')
+    bpy.ops.uv.smart_project(angle_limit = math.radians(66), island_margin = 0.0, area_weight = 1.0)
+    bpy.ops.mesh.select_all(action = 'SELECT')
+    bpy.ops.uv.select_all(action = 'SELECT')
+    bpy.ops.uv.average_islands_scale()
+    bpy.ops.object.mode_set(mode = 'OBJECT')
+    hidden = hidden_faces(obj)
+    labels = obj.data.attributes["puppetxr_label"].data if "puppetxr_label" in obj.data.attributes else None
+    data = obj.data.uv_layers["puppetxr_bake"].data
+    # A whole island keeps one density, the highest of its faces, or it would tear
+    density = {p.index: HIDDEN_DENSITY if p.index in hidden else SHELL_DENSITY.get(labels[p.index].value if labels else 0, 1.0) for p in obj.data.polygons}
+    for island in uv_islands(obj.data, data):
+        scale = max(density[p] for p in island)
+        for p in island:
+            for loop in obj.data.polygons[p].loop_indices:
+                data[loop].uv = data[loop].uv * scale
+    bpy.ops.object.mode_set(mode = 'EDIT')
+    bpy.ops.mesh.select_all(action = 'SELECT')
+    bpy.ops.uv.select_all(action = 'SELECT')
+    bpy.ops.uv.pack_islands(margin = ISLAND_MARGIN, rotate = True, scale = True)
+    bpy.ops.object.mode_set(mode = 'OBJECT')
 
 
 def bake_atlas (obj, path, size):
@@ -560,11 +663,7 @@ def bake_atlas (obj, path, size):
     obj.select_set(True)
     uv = obj.data.uv_layers.new(name = "puppetxr_bake")
     obj.data.uv_layers.active = uv
-    bpy.ops.object.mode_set(mode = 'EDIT')
-    bpy.ops.mesh.select_all(action = 'SELECT')
-    bpy.ops.uv.smart_project(angle_limit = math.radians(66), island_margin = 0.006, area_weight = 1.0)
-    bpy.ops.uv.pack_islands(margin = 0.006, rotate = True)
-    bpy.ops.object.mode_set(mode = 'OBJECT')
+    unwrap_atlas(obj)
 
     # Float buffers: a byte bake clips lit surfaces before the view transform sees them
     lit = bpy.data.images.new("puppetxr_atlas", size, size, alpha = False, float_buffer = True)
@@ -588,6 +687,51 @@ def bake_atlas (obj, path, size):
         bpy.data.images.remove(lit)
         bpy.data.images.remove(albedo)
     return uv
+
+
+def split_long_edges (points, triangles):
+    # Cuts edges in half until none is longer than GLOBAL_MESH_EDGE; both triangles of an edge share
+    # its midpoint, so the surface stays closed. Two cut edges leave a quad, split by its shorter diagonal
+    for _ in range(16):
+        middle = {}
+        def cut (a, b):
+            key = (min(a, b), max(a, b))
+            if key not in middle:
+                if (points[a] - points[b]).length <= GLOBAL_MESH_EDGE + EPSILON_EDGE:
+                    middle[key] = None
+                else:
+                    middle[key] = len(points)
+                    points.append((points[a] + points[b]) / 2)
+            return middle[key]
+        result = []
+        changed = False
+        for a, b, c in triangles:
+            m = [cut(a, b), cut(b, c), cut(c, a)]
+            count = sum(x is not None for x in m)
+            changed |= count > 0
+            if count == 0:
+                result.append((a, b, c))
+                continue
+            # Turned so that the first edge is cut, and with two cuts the third is not
+            corners = [a, b, c]
+            while m[0] is None or (count == 2 and m[2] is not None):
+                corners = corners[1:] + corners[:1]
+                m = m[1:] + m[:1]
+            a, b, c = corners
+            if count == 3:
+                result += [(a, m[0], m[2]), (m[0], b, m[1]), (m[2], m[1], c), (m[0], m[1], m[2])]
+            elif count == 2:
+                result.append((m[0], b, m[1]))
+                if (points[a] - points[m[1]]).length < (points[m[0]] - points[c]).length:
+                    result += [(a, m[0], m[1]), (a, m[1], c)]
+                else:
+                    result += [(a, m[0], c), (m[0], m[1], c)]
+            else:
+                result += [(a, m[0], c), (m[0], b, c)]
+        triangles = result
+        if not changed:
+            return triangles
+    raise ExportError("the global mesh keeps an edge longer than %g m" % GLOBAL_MESH_EDGE)
 
 
 def global_mesh_of (work):
@@ -615,21 +759,14 @@ def global_mesh_of (work):
     # Edges and vertices of no face are no surface, and subdividing never shortens them
     bmesh.ops.delete(bm, geom = [e for e in bm.edges if not e.link_faces], context = 'EDGES')
     bmesh.ops.delete(bm, geom = [v for v in bm.verts if not v.link_faces], context = 'VERTS')
-    longest = math.inf
-    while True:
-        long_edges = [e for e in bm.edges if e.calc_length() > GLOBAL_MESH_EDGE + EPSILON_EDGE]
-        if not long_edges:
-            break
-        length = max(e.calc_length() for e in long_edges)
-        if length >= longest:
-            raise ExportError("the global mesh keeps an edge of %g m: subdividing does not shorten it" % length)
-        longest = length
-        bmesh.ops.subdivide_edges(bm, edges = long_edges, cuts = 1, use_grid_fill = True)
-        bmesh.ops.triangulate(bm, faces = bm.faces[:])
-    positions = [xr(v.co) for v in bm.verts]
+    bmesh.ops.triangulate(bm, faces = bm.faces[:])
     bm.verts.index_update()
-    indices = [v.index for f in bm.faces for v in f.verts]
+    points = [v.co.copy() for v in bm.verts]
+    triangles = [tuple(v.index for v in f.verts) for f in bm.faces if f.calc_area() > 1e-9]
     bm.free()
+    triangles = split_long_edges(points, triangles)
+    positions = [xr(p) for p in points]
+    indices = [v for triangle in triangles for v in triangle]
     bpy.data.meshes.remove(scan)
     return positions, indices
 
@@ -642,7 +779,7 @@ def write_room (out_dir, objects, shell, invisible, bake):
     for o in hidden:
         o.hide_render = True
     try:
-        albedo = os.path.join(out_dir, "room_albedo.png")
+        albedo = os.path.join(out_dir, "room_albedo.jpg")
         if bake:
             bake_atlas(work, albedo, ATLAS_SIZE)
         mesh = work.data

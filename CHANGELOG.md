@@ -13,6 +13,7 @@ config start with **Breaking:**.
 - Fixed: on Vulkan, swapchains with `XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT` are storage images; compute shaders writing to them were undefined behaviour and crashed some drivers.
 - `XR_EXT_uuid`.
 - Fixed: recording with a model over 64 KB loaded, or a large anchor store, wrote past the recorder's buffer.
+- The four rooms are furnished with scanned models and surfaces and baked at 3072 x 3072; their entities stand where they did, seats and couches now down to the floor.
 - The chair, case and pencil props have more shape and baked light.
 - Recording format 6: the shape a gesture gives a tracked hand, per frame; format 1 to 5 recordings still read.
 - As Meta's runtime a tracked hand outside the hand tracking cone stays active with the controller data source and zero joints, as a Quest 3 reports a lost hand; under puppetxr's own name it is inactive, as the spec says.

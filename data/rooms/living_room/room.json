@@ -3,30 +3,30 @@
  "version": 1,
  "name": "living_room",
  "binary": "room.bin",
- "albedo": "room_albedo.png",
+ "albedo": "room_albedo.jpg",
  "visual": {
   "vertices": {
    "offset": 0,
-   "count": 4062
+   "count": 27297
   },
   "indices": {
-   "offset": 81240,
-   "count": 9348
+   "offset": 545940,
+   "count": 77802
   }
  },
  "global_mesh": {
   "positions": {
-   "offset": 118632,
-   "count": 24044
+   "offset": 857148,
+   "count": 31513
   },
   "indices": {
-   "offset": 407160,
-   "count": 144564
+   "offset": 1235304,
+   "count": 175305
   }
  },
  "entities": [
   {
-   "uuid": "ba1096c72c4c368fbffb5c92ad0b7fcc",
+   "uuid": "d3097d51d3e5dedcc6d3be08d55e17cd",
    "label": "other",
    "position": [
     0.0,
@@ -71,82 +71,82 @@
    },
    "room_mesh": {
     "positions": {
-     "offset": 985416,
+     "offset": 1936524,
      "count": 36
     },
     "faces": [
      {
-      "uuid": "f7c9e483b40f12cd0500359b54d91f18",
+      "uuid": "0bbb6a047160d39304febefbf4f9ead1",
       "label": "floor",
       "indices": {
-       "offset": 985848,
+       "offset": 1936956,
        "count": 24
       }
      },
      {
-      "uuid": "6e077d11ea9fd8929d4e82c1379bf7a1",
+      "uuid": "5c7c975f470c8e64334b57e8784b650f",
       "label": "ceiling",
       "indices": {
-       "offset": 985944,
+       "offset": 1937052,
        "count": 24
       }
      },
      {
-      "uuid": "ea1c48e390b8f2181292c99904faf93d",
+      "uuid": "c6e2a8abdc0a64e7ab85c6a4c6b6e254",
       "label": "wall_face",
       "indices": {
-       "offset": 986040,
+       "offset": 1937148,
        "count": 15
       }
      },
      {
-      "uuid": "d710e09b86f329dc1361cdd5c1941f08",
+      "uuid": "db2bcfee0feb11118d02f94a74782d13",
       "label": "wall_face",
       "indices": {
-       "offset": 986100,
+       "offset": 1937208,
        "count": 30
       }
      },
      {
-      "uuid": "cad58deb2dade150497229b8ba85b9cd",
+      "uuid": "ff7ca53ccd99df8a0b322c4776fd2738",
       "label": "wall_face",
       "indices": {
-       "offset": 986220,
+       "offset": 1937328,
        "count": 15
       }
      },
      {
-      "uuid": "85e44863686f7d7cc8ff90756b277076",
+      "uuid": "16795c49d358348c68f02b2053d203da",
       "label": "wall_face",
       "indices": {
-       "offset": 986280,
+       "offset": 1937388,
        "count": 78
       }
      },
      {
-      "uuid": "da524f062b93560e73d8013eaf2b0644",
+      "uuid": "b0c41cf0e46d580c5738613f33cefccd",
       "label": "door_frame",
-      "parent": "d710e09b86f329dc1361cdd5c1941f08",
+      "parent": "db2bcfee0feb11118d02f94a74782d13",
       "indices": {
-       "offset": 986592,
+       "offset": 1937700,
        "count": 6
       }
      },
      {
-      "uuid": "e58933f71395dffdeaa0b0257e615fcf",
+      "uuid": "ac80219b0f1e282123415e6d091d91ca",
       "label": "window_frame",
-      "parent": "85e44863686f7d7cc8ff90756b277076",
+      "parent": "16795c49d358348c68f02b2053d203da",
       "indices": {
-       "offset": 986616,
+       "offset": 1937724,
        "count": 6
       }
      },
      {
-      "uuid": "3a4453f8704d27d804ad8d5424c3d04f",
+      "uuid": "23071b4a3ce0fd5d6f978708c20f7dc2",
       "label": "window_frame",
-      "parent": "85e44863686f7d7cc8ff90756b277076",
+      "parent": "16795c49d358348c68f02b2053d203da",
       "indices": {
-       "offset": 986640,
+       "offset": 1937748,
        "count": 6
       }
      }
@@ -154,7 +154,7 @@
    }
   },
   {
-   "uuid": "44acbda2d3dbfe43104501c974a30d69",
+   "uuid": "c04d00416b947cc8869770a731893075",
    "label": "floor",
    "position": [
     0.0,
@@ -197,7 +197,7 @@
    }
   },
   {
-   "uuid": "e3dca1958c93e5e9b8e5cfca265ee742",
+   "uuid": "9ed0c97ca3d9c988c7ddb746e0cf08b8",
    "label": "ceiling",
    "position": [
     0.0,
@@ -240,7 +240,7 @@
    }
   },
   {
-   "uuid": "6f664cc471ef97b9252ebb5f17af0b40",
+   "uuid": "aa6ffe032e38e78f2e1fea18d697f158",
    "label": "wall_face",
    "position": [
     0.0,
@@ -265,7 +265,7 @@
    }
   },
   {
-   "uuid": "aff8e01ef8d2f1cb85e49389dc9bda4c",
+   "uuid": "a55d610227f2b5935e625aa08f3dadd6",
    "label": "wall_face",
    "position": [
     2.8,
@@ -290,7 +290,7 @@
    }
   },
   {
-   "uuid": "379cb9ff930bd69e4101913c18c86072",
+   "uuid": "948fa3436f3098b985528463b5ecc56d",
    "label": "wall_face",
    "position": [
     0.0,
@@ -315,7 +315,7 @@
    }
   },
   {
-   "uuid": "174069cfec28f46ffcd863e33577e752",
+   "uuid": "b2224094bd9b5931b8d6b2677bd1a404",
    "label": "wall_face",
    "position": [
     -2.8,
@@ -340,7 +340,7 @@
    }
   },
   {
-   "uuid": "123955b3dfa29683fa03a33182ad508f",
+   "uuid": "36b00e07757a1a46608b096ffb45904e",
    "label": "couch",
    "position": [
     2.045,
@@ -367,7 +367,7 @@
     "min": [
      -0.43,
      -0.435,
-     -0.86
+     -0.93
     ],
     "max": [
      0.43,
@@ -377,7 +377,7 @@
    }
   },
   {
-   "uuid": "cee81b243fe50e7a7f67b7900bf8f3a1",
+   "uuid": "0d5a2291557323e59999d62f1cd0fa02",
    "label": "table",
    "position": [
     0.0,
@@ -414,7 +414,7 @@
    }
   },
   {
-   "uuid": "57f2c2e903d687231543e6be635449b5",
+   "uuid": "711e0289eaf9ecb4c03d13bbeb31af36",
    "label": "couch",
    "position": [
     0.0,
@@ -441,7 +441,7 @@
     "min": [
      -1.16,
      -0.4725,
-     -0.81
+     -0.88
     ],
     "max": [
      1.16,
@@ -451,7 +451,7 @@
    }
   },
   {
-   "uuid": "5fc13ab91a41ed716b15eb5e2faa8142",
+   "uuid": "16dc52238eee8c2f7b6c0d8ca1c0edee",
    "label": "lamp",
    "position": [
     -2.4,
@@ -478,7 +478,7 @@
    }
   },
   {
-   "uuid": "f2c52120ee6e175cf7bad768e7569e94",
+   "uuid": "91f2e38231c5153e9ba66cbcf081d3c3",
    "label": "plant",
    "position": [
     2.425,
@@ -505,7 +505,7 @@
    }
   },
   {
-   "uuid": "891d2699d3fb31acdadb220cf4fce8ed",
+   "uuid": "fbe07d72445d7848de1b6f736bdf930a",
    "label": "screen",
    "position": [
     0.0,
@@ -532,7 +532,7 @@
    }
   },
   {
-   "uuid": "c64b612ac7e48a8f33f5281240544e28",
+   "uuid": "6df051f8b6fc6b88b141831a9c6f7c8c",
    "label": "storage",
    "position": [
     0.0,
@@ -569,7 +569,7 @@
    }
   },
   {
-   "uuid": "6e4a335eef194bacccc6f286e0c5cf32",
+   "uuid": "51ea117c3963f0b835b694467b243ea1",
    "label": "wall_art",
    "position": [
     0.0,
@@ -594,7 +594,7 @@
    }
   },
   {
-   "uuid": "da2a9332e054325601f731ccdaccbb55",
+   "uuid": "1fa96e0416a08ac8e4496cabd81a48ea",
    "label": "door_frame",
    "position": [
     2.79,
@@ -619,7 +619,7 @@
    }
   },
   {
-   "uuid": "6fb45864e3170ed805f31f691793455f",
+   "uuid": "0a769ebff424ffb7494632f5a8b86f33",
    "label": "window_frame",
    "position": [
     -2.79,
@@ -644,7 +644,7 @@
    }
   },
   {
-   "uuid": "8950533edc0c5cabb9572c66c521c6c1",
+   "uuid": "76520af2a097834f18eefaac3c713e44",
    "label": "window_frame",
    "position": [
     -2.79,
@@ -669,7 +669,7 @@
    }
   },
   {
-   "uuid": "48973c492fc397ec5b47505f333a7f65",
+   "uuid": "ce92f66b9d9a137847460f3307a1741f",
    "label": "global_mesh",
    "position": [
     0.0,

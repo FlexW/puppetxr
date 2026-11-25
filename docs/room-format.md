@@ -7,7 +7,7 @@
 |---|---|
 | `room.json` | metadata, semantic entities, buffer views into the binary |
 | `room.bin` | little-endian raw arrays, 4-byte aligned views |
-| `room_albedo.png` / `.jpg` | baked lighting atlas for the visual mesh, sRGB, optional; the exporter writes PNG |
+| `room_albedo.png` / `.jpg` | baked lighting atlas for the visual mesh, sRGB, optional; the exporter writes JPEG |
 
 Written by `tools/blender/puppetxr_room_export.py` (`docs/world.md`, Authoring rooms); the
 `.blend` source sits next to the exported files (LFS). The runtime never needs Blender.
@@ -26,7 +26,7 @@ stage origin. Poses are `position [x, y, z]` and `orientation [x, y, z, w]`
   "version": 2,
   "name": "bedroom",
   "binary": "room.bin",
-  "albedo": "room_albedo.png",
+  "albedo": "room_albedo.jpg",
   "visual":      { "vertices": { "offset": 0, "count": 1200 }, "indices": { "offset": 24000, "count": 3600 } },
   "global_mesh": { "positions": { "offset": 38400, "count": 800 }, "indices": { "offset": 48000, "count": 2400 } },
   "entities": [

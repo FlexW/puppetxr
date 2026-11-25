@@ -1,5 +1,5 @@
 # Usage: cmake -DROOMS_DIR=<dir> -DOUTPUT=<file.cpp> -P embed_rooms.cmake
-# Emits w_embedded_rooms (src/world.h): room.json (terminated), room.bin and room_albedo.png of
+# Emits w_embedded_rooms (src/world.h): room.json (terminated), room.bin and room_albedo.jpg or .png of
 # every <ROOMS_DIR>/<name>/ with a room.json, sorted by name, so the library carries its rooms.
 
 # 32 bytes a line keeps the file readable for compilers and editors
@@ -31,9 +31,11 @@ foreach (json ${jsons})
 
     set(image "nullptr")
     set(image_size 0)
-    if (EXISTS ${dir}/room_albedo.png)
-        append_bytes(image_bytes ${dir}/room_albedo.png)
-        file(SIZE ${dir}/room_albedo.png image_size)
+    file(GLOB albedo LIST_DIRECTORIES false ${dir}/room_albedo.jpg ${dir}/room_albedo.png)
+    if (albedo)
+        list(GET albedo 0 albedo)
+        append_bytes(image_bytes ${albedo})
+        file(SIZE ${albedo} image_size)
         string(APPEND arrays "static const u8 room_${symbol}_albedo[] = {\n${image_bytes}};\n")
         set(image "room_${symbol}_albedo")
     endif ()
