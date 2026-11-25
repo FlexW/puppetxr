@@ -17717,9 +17717,9 @@ struct OxrHandOculusTest : OxrHandTest
 };
 } // namespace
 
-// A Quest 3 reports no pinch in the aim state to OpenXR apps, only through XR_EXT_hand_interaction
-// (docs/recorder.md, On a Quest 3); as Meta's runtime puppetxr does the same
-TEST_F(OxrHandOculusTest, the_aim_state_reports_no_pinch_as_meta_s_runtime)
+// OVRPlugin, which makes puppetxr Meta's runtime, reads a tracked hand's pinch from the aim state:
+// without it no pinch reached Unity and Unreal apps
+TEST_F(OxrHandOculusTest, the_aim_state_reports_the_pinch_as_meta_s_runtime)
 {
     const XrAction                 pinch   = make_action("pinch", XR_ACTION_TYPE_FLOAT_INPUT);
     const XrActionSuggestedBinding binding = { pinch, path("/user/hand/right/input/pinch_ext/value") };
@@ -17740,9 +17740,15 @@ TEST_F(OxrHandOculusTest, the_aim_state_reports_no_pinch_as_meta_s_runtime)
     ASSERT_EQ(locate(tracker(XR_HAND_RIGHT_EXT), joints, active, &aim), XR_SUCCESS);
     ASSERT_TRUE(active);
     EXPECT_TRUE(aim.status & XR_HAND_TRACKING_AIM_VALID_BIT_FB);
+    EXPECT_TRUE(aim.status & XR_HAND_TRACKING_AIM_INDEX_PINCHING_BIT_FB);
+    EXPECT_NEAR(aim.pinchStrengthIndex, 1.0f, 1e-3f);
+    EXPECT_NEAR(float_state(pinch, hands[1]).currentState, 1.0f, 1e-3f);
+
+    sim_set_input(sim, SIM_Device::RightHand, SIM_Input::TriggerValue, { .value = { 0.0f, 0.0f } });
+    frame();
+    ASSERT_EQ(locate(tracker(XR_HAND_RIGHT_EXT), joints, active, &aim), XR_SUCCESS);
     EXPECT_FALSE(aim.status & XR_HAND_TRACKING_AIM_INDEX_PINCHING_BIT_FB);
-    EXPECT_EQ(aim.pinchStrengthIndex, 0.0f);
-    EXPECT_NEAR(float_state(pinch, hands[1]).currentState, 1.0f, 1e-3f) << "the pinch comes through the interaction profile";
+    EXPECT_LT(aim.pinchStrengthIndex, 0.9f);
 }
 
 // A Quest 3 keeps a hand its cameras lost active, with the controller data source and every joint

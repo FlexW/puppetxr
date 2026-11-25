@@ -376,7 +376,7 @@ the frequency hint and unextrapolated poses need `XR_EXT_hand_tracking`; microge
   Quest 3: data source `CONTROLLER`, every joint zero with flags 0, the aim state computed and
   valid (docs/recorder.md, On a Quest 3).
 - A tracked hand's float sources (`pinch_ext`, `grasp_ext`, `aim_activate_ext`, `select`) read `sim_reported_input`: the strengths its joints give (docs/hand-motion.md, Hand model, Strengths).
-- FB aim: the sim's aim pose, `pinchStrengthIndex` from the joints' pinch strength (0, and no pinching bit, while the runtime name is `Oculus`, as a Quest 3 reports to OpenXR apps: docs/recorder.md, On a Quest 3), `INDEX_PINCHING` from 0.9,
+- FB aim: the sim's aim pose, `pinchStrengthIndex` from the joints' pinch strength (under the runtime name `Oculus` too: OVRPlugin reads a hand's pinch from it, though a Quest 3 reported 0 to the recorder: docs/recorder.md, On a Quest 3), `INDEX_PINCHING` from 0.9,
   `DOMINANT_HAND` for the configured primary hand, `menu/click` is `MENU_PRESSED` on the left
   and `SYSTEM_GESTURE` on the right. Capsules: one per bone from a joint to the next, the
   joint's radius. Scale: 1, or the override the app asks for (joints are not scaled).

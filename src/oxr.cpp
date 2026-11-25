@@ -15293,9 +15293,9 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrLocateHandJointsEXT (XrHandTrackerEX
     }
     if (out.aim)
     {
-        // A Quest 3 leaves the aim state's pinch at 0 for OpenXR apps, the pinch comes through
-        // XR_EXT_hand_interaction (docs/recorder.md, On a Quest 3); as Meta's runtime so does this
-        const f32 pinch = meta ? 0.0f : sim_reported_input(sim, hand, SIM_Input::TriggerValue).value.x;
+        // Under every runtime name, though a Quest 3 left it at 0 for the recorder (docs/recorder.md,
+        // On a Quest 3): OVRPlugin has no other pinch
+        const f32 pinch = sim_reported_input(sim, hand, SIM_Input::TriggerValue).value.x;
         const b8  menu  = sim_get_input(sim, hand, SIM_Input::MenuClick).value.x > 0.5f;
         XrHandTrackingAimFlagsFB status = XR_HAND_TRACKING_AIM_COMPUTED_BIT_FB | XR_HAND_TRACKING_AIM_VALID_BIT_FB;
         status |= pinch >= OXR_PINCHING ? XR_HAND_TRACKING_AIM_INDEX_PINCHING_BIT_FB : 0;

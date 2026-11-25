@@ -47,7 +47,7 @@ Release workflow (`.github/workflows/release.yml`, docs/building.md "Releasing")
 - [ ] `tools/release.sh` on the first release: the draft has both Linux tarballs, both Windows zips, both macOS tarballs, both source tarballs, the four `.buildinfo`, `SHA256SUMS`
 
 Motion recorder APK (`tools/recorder/build_apk.sh`, docs/recorder.md):
-- [ ] apps on OVRPlugin get no pinch from tracked hands: OVRPlugin reads it from `XR_FB_hand_tracking_aim`, where puppetxr as Meta's runtime (`Oculus`) reports 0 since a Quest 3 does so to an OpenXR app (`oxr_xrLocateHandJointsEXT`, `tests_oxr.cpp` `OxrHandOculusTest`). `unity_movement_gaze` on macOS shows it: the pinch no longer loads the face scene (`face_scene`), with the strength reported it does. Report the pinch to apps on OVRPlugin, and measure what a Quest 3 reports to one. Done when `face_scene` shows the face scene; before the Windows references are re-recorded, or they keep the missing pinch
+- [ ] measure the pinch in `XR_FB_hand_tracking_aim` that a Quest 3 reports to an app on OVRPlugin: it left it at 0 for the recorder, a plain OpenXR app (docs/recorder.md, On a Quest 3), and puppetxr reports it to every app as OVRPlugin has no other (`oxr_xrLocateHandJointsEXT`)
 - [ ] on a Quest 3: `build_apk.sh --run` starts it in the headset with passthrough, the panel ahead; poking RECORD with the index tip records a step and `pull.sh` fetches takes that parse, with both hands, the aim state and the data source; a `push_protocol.sh` protocol replaces the built-in one at the next start. The recorder has only run on puppetxr so far
 
 GPUs:
