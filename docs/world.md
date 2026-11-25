@@ -63,7 +63,7 @@ texture coordinates (`W_VisualVertex`, model space), indices, a part per primiti
 image of its base colour (the texture times the factor in linear light, or a 4 x 4 solid), the
 bounds and a BVH like the rooms'. `w_create_mesh_model` makes a white model of a triangle mesh,
 for the shapes of keyboards and QR plates. Built-in models are `w_embedded_models`, compiled in
-from `models/` like the rooms (`World.compiled_in_models_are_the_source_models_and_load`).
+from `data/models/` like the rooms (`World.compiled_in_models_are_the_source_models_and_load`).
 
 ## Rooms on disk
 
@@ -71,7 +71,7 @@ from `models/` like the rooms (`World.compiled_in_models_are_the_source_models_a
 Room names are `[a-z0-9_-]`, 1 to 63 characters (`w_room_name_valid`), so they are
 safe as path components and as recording Names.
 
-## Starter rooms (`rooms/`)
+## Starter rooms (`data/rooms/`)
 
 | Room | Size | Contents |
 |---|---|---|
@@ -82,7 +82,7 @@ safe as path components and as recording Names.
 
 `living_room` is the default (`docs/config.md`).
 
-Every room of `rooms/` is compiled into the library, so puppetxr ships as one file:
+Every room of `data/rooms/` is compiled into the library, so puppetxr ships as one file:
 `cmake/embed_rooms.cmake` writes `room.json`, `room.bin` and `room_albedo.png` of each into
 `<build>/rooms/rooms_embedded.cpp` as byte arrays (`w_embedded_rooms`), built as the static
 library `puppetxr_rooms`, which clang-tidy skips. It reruns only when a room file changes
@@ -99,12 +99,12 @@ The stage origin is free floor in every room (`World.starter_rooms_load_and_make
 
 ## Authoring rooms
 
-Each room is `rooms/<name>/<name>.blend` (Git LFS) next to its export. The exporter is
+Each room is `data/rooms/<name>/<name>.blend` (Git LFS) next to its export. The exporter is
 `tools/blender/puppetxr_room_export.py`, an add-on (sidebar tab "puppetxr": tag shell faces,
 export) and a command line tool that never modifies the `.blend`:
 
 ```
-blender -b rooms/<name>/<name>.blend --python tools/blender/puppetxr_room_export.py -- rooms/<name> [--no-bake] [--room-mesh-only] [--global-mesh-only]
+blender -b data/rooms/<name>/<name>.blend --python tools/blender/puppetxr_room_export.py -- data/rooms/<name> [--no-bake] [--room-mesh-only] [--global-mesh-only]
 ```
 
 Blender as a Python module works too (`pip install bpy` of the Blender version that saved the

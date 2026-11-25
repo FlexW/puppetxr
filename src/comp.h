@@ -91,7 +91,7 @@ struct COMP_Geometry
 };
 
 // XR_KHR_composition_layer_depth: the app's depth of a projection view; its values become the
-// compositor's depth (COMP_DEPTH_NEAR in shaders/blocks.h) as map[0] + map[1] * value
+// compositor's depth (COMP_DEPTH_NEAR in data/shaders/blocks.h) as map[0] + map[1] * value
 struct COMP_DepthView
 {
     R_ImageHandle image;

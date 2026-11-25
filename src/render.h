@@ -195,7 +195,7 @@ struct R_DeviceCreateInfo
     R_MetalDeviceInfo  metal;  // R_Backend::Metal
 };
 
-// One stage of a shader for every backend, generated per file of shaders/ as `<file>_shader` (docs/shaders.md)
+// One stage of a shader for every backend, generated per file of data/shaders/ as `<file>_shader` (docs/shaders.md)
 struct R_ShaderCode
 {
     const void* spirv;

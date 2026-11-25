@@ -360,7 +360,7 @@ the frequency hint and unextrapolated poses need `XR_EXT_hand_tracking`; microge
   `puppetxrctl hand`, the C API, recorded per frame). A tracked hand has only
   `trigger/value` (pinch), `squeeze/value` (grab) and `menu/click` (menu gesture).
 - `sim_hand_joints` (`src/sim.cpp`, "Hand model") builds the 26 joints by forward kinematics
-  from the grip pose with the skeleton and key poses of a Quest 3 (`motion/hand_model.json`,
+  from the grip pose with the skeleton and key poses of a Quest 3 (`data/motion/hand_model.json`,
   docs/hand-motion.md, Hand model), mirrored for the left; the palm joint sits where a held
   handle is, so joints and controller agree. At rest the hand is relaxed; pinch blends toward the
   recorded pinch, grab toward the recorded fist, grab alone points. Joint axes follow the spec,

@@ -476,7 +476,7 @@ time. Built static and linked into `libpuppetxr` with hidden visibility so only
 
 ## Shaders
 
-Shaders in `shaders/` are written once for every backend (`docs/shaders.md`). `glslc` compiles
+Shaders in `data/shaders/` are written once for every backend (`docs/shaders.md`). `glslc` compiles
 them to SPIR-V at build time, embedded as `const u32[]` arrays by `cmake/embed.cmake`, so the
 shipped library is a single file. Optional: `glslangValidator` (glslang) and `dxc`
 (DirectXShaderCompiler) validate the GL, GLES and HLSL variants during the build.

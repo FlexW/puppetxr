@@ -1,7 +1,7 @@
 # Room format
 
 `src/world.h`, `src/world.cpp` (`w_parse_room`, `w_load_room`). Format version 1
-(`W_FORMAT_VERSION`). A room is a directory `rooms/<name>/` with three files:
+(`W_FORMAT_VERSION`). A room is a directory `data/rooms/<name>/` with three files:
 
 | File | Content |
 |---|---|

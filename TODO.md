@@ -77,7 +77,7 @@ GPUs:
 
 Ordered: real takes first, then the model fitted to them, then gestures.
 
-- [ ] trim and resample the takes the tests need into `motion/takes/`. The full protocol was recorded once on a Quest 3 (39 takes, 122 MB raw, kept outside the repository); a second person's session would show which fitted values are personal
+- [ ] trim and resample the takes the tests need into `data/motion/takes/`. The full protocol was recorded once on a Quest 3 (39 takes, 122 MB raw, kept outside the repository); a second person's session would show which fitted values are personal
 - [ ] fingers that lose tracking while the wrist stays tracked, as measured (docs/recorder.md, On a Quest 3): part of the noise model's dropouts (docs/hand-motion.md, Noise)
 - [ ] re-record on Windows the sample references that show tracked hands, which the fitted hand model changed (relaxed at rest, the measured pinch and skeleton): `unity_starter_hands`, `unity_starter_microgestures`, `unity_starter_simultaneous`, `unity_starter_controller_hands`, `unity_starter_handsinteractiontrainscene`, `unity_depthapi_hands` (`tools/sample_tests.py --update`, then review; the Linux ones were re-recorded with the model)
 - [ ] the pinch pose mixes two habits: in the takes the right hand pinches with the other fingers open (tips 93 mm from the palm), the left curls them (49 mm); `pinch`, one medoid of both, sits between (65 mm; `tools/hand_fit.py`). Fitting it to one hand changes the grasp a pinching hand reports, which is derived from the curl: a Quest 3 reported a grasp of 1.0 in the right hand's pinch takes but 0.48 at the median for pinches with open fingers across all takes, so `grasp_ext` is no function of curl and pinch alone. Record pinches with the other fingers open and curled, both hands, and fit the grasp to the finger joints' angles before choosing; done when `SimGesture.built_in_gestures_look_like_their_recordings` holds pinch_tap to the right hand's pinch within 2 cm and the grasp test still matches the headset
@@ -87,7 +87,7 @@ Ordered: real takes first, then the model fitted to them, then gestures.
 - [ ] noise: jitter, tremor, sloppiness, dropouts, fitted to the takes, seeded
 - [ ] recording format 6: per tracked hand the joint rotations and strengths; versions 1 to 5 still read
 - [ ] gesture events for observed edges (a pinch strength crossing 0.5 up and down, tracking lost and found) and a UI Gestures panel (docs/hand-motion.md, Control API and CLI)
-- [ ] the rest of the gesture library (docs/hand-motion.md, Library, Planned), each checked against its takes (`motion/takes/`), and an app test that `idle` and `talking_hands` trigger nothing
+- [ ] the rest of the gesture library (docs/hand-motion.md, Library, Planned), each checked against its takes (`data/motion/takes/`), and an app test that `idle` and `talking_hands` trigger nothing
 - [ ] clip steps: a user's take plays as a gesture, inside one or alone
 - [ ] body: the recorder's `body` track, body clips through the same step
 - [ ] after the above: README screenshots showing the new hand gestures

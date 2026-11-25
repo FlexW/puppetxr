@@ -898,7 +898,7 @@ TEST_P(RenderDepthTest, curved_layers_are_depth_tested_at_their_distance)
     r_destroy_image(device, red);
 }
 
-// XR_META_passthrough_color_lut: an atlas of 3D LUT slices (shaders/blocks.h), interpolated
+// XR_META_passthrough_color_lut: an atlas of 3D LUT slices (data/shaders/blocks.h), interpolated
 // trilinearly between elements in sRGB
 TEST_P(RenderDepthTest, passthrough_color_luts_interpolate_trilinearly)
 {

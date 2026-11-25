@@ -7,7 +7,7 @@
 // uniform blocks and HLSL constant buffers share the C layout (docs/shaders.md).
 
 //
-// Compositor (shaders/composite.*)
+// Compositor (data/shaders/composite.*)
 //
 
 #define COMP_FLAG_SOURCE_ALPHA    1u
@@ -73,7 +73,7 @@
     F(int, padding2)
 
 //
-// ImGui (shaders/imgui.*)
+// ImGui (data/shaders/imgui.*)
 //
 
 /* srgb_target: decode the sRGB vertex colours so that an sRGB target does not encode them twice */
@@ -86,7 +86,7 @@
     F(uint, padding2)
 
 //
-// Blits of backends without a blit command (shaders/blit.*)
+// Blits of backends without a blit command (data/shaders/blit.*)
 //
 
 /* src_rect: u, v, width, height of the source in texture coordinates */

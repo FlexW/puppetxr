@@ -30,7 +30,7 @@ struct SIM_DeviceData
     SIM_Haptic     haptics[(u32)SIM_HapticOutput::Count];
 };
 
-// The hand poses of motion/hand_model.json, each joint's rotation relative to its parent
+// The hand poses of data/motion/hand_model.json, each joint's rotation relative to its parent
 enum class SIM_HandKey : u8
 {
     Open,
@@ -140,7 +140,7 @@ struct SIM_GesturePlay
     u32             steps_count;
 };
 
-// A gesture from motion/ or a user's file, kept as its text and compiled when it plays
+// A gesture from data/motion/ or a user's file, kept as its text and compiled when it plays
 struct SIM_GestureFile
 {
     char  name[SIM_GESTURE_NAME];
@@ -1081,7 +1081,7 @@ static b8 hand_curve_json (const JsonValue& array, Vec2 (&out)[SIM_HAND_CURVE_MA
     return true;
 }
 
-// motion/hand_model.json, embedded; its joints are in XrHandJointEXT order
+// data/motion/hand_model.json, embedded; its joints are in XrHandJointEXT order
 static b8 load_hand_model (const char* json, SIM_HandModel& out)
 {
     out                = {};
@@ -5250,7 +5250,7 @@ SIM_Sim* sim_create (const SIM_Config& config)
     }
     if (!hand_model || !load_hand_model(hand_model->json, sim->hand_model))
     {
-        FAIL_MSG("motion/hand_model.json is missing from the build or invalid");
+        FAIL_MSG("data/motion/hand_model.json is missing from the build or invalid");
     }
     // The built-in gestures, then the users', which replace a built-in of their name
     for (u32 i = 0; i < sim_embedded_motion_count; i++)

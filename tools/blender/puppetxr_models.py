@@ -1,7 +1,7 @@
 # Builds the built-in mesh prop models (docs/props.md, Models) and exports each as
-# models/<name>/<name>.glb next to its models/<name>/<name>.blend:
+# data/models/<name>/<name>.glb next to its data/models/<name>/<name>.blend:
 #
-#   blender -b --factory-startup --python tools/blender/puppetxr_models.py -- models [name ...]
+#   blender -b --factory-startup --python tools/blender/puppetxr_models.py -- data/models [name ...]
 #
 # Conventions: metres, the origin on the floor under the bounding box centre, the front towards
 # Blender's -Y (glTF's +Z), materials of a base colour only, no textures, so the files stay small.

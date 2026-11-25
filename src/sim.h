@@ -336,7 +336,7 @@ struct SIM_GestureEvent
 };
 
 // The hand poses of recorded gestures a shape can go toward, in this order: thumbs_up, point,
-// poke, grasp, wave (motion/hand_model.json)
+// poke, grasp, wave (data/motion/hand_model.json)
 #define SIM_HAND_RECORDED_POSES 5
 
 // A hand shape by finger, thumb to little: 0 the base pose, 1 the recorded fist; neighbours follow
@@ -575,8 +575,8 @@ struct SIM_FaceFrame
 #define SIM_HAND_MESH_MAX_VERTICES 512
 #define SIM_HAND_MESH_MAX_INDICES  2048
 
-// A file of motion/ compiled into the library (cmake/embed_motion.cmake): the hand model, later
-// the built-in gestures; name is its path below motion/ without .json
+// A file of data/motion/ compiled into the library (cmake/embed_motion.cmake): the hand model and
+// the built-in gestures; name is its path below data/motion/ without .json
 struct SIM_EmbeddedMotion
 {
     const char* name;

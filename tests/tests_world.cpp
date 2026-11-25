@@ -938,7 +938,7 @@ TEST_F(WorldTest, rooms_dir_adds_to_and_overrides_compiled_in_rooms)
 // The rooms that ship with puppetxr
 //
 
-// The library carries every room of rooms/, byte for byte, so it ships as one file
+// The library carries every room of data/rooms/, byte for byte, so it ships as one file
 TEST(World, compiled_in_rooms_are_the_source_rooms)
 {
     char names[16][W_MAX_NAME] = {};

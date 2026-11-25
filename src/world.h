@@ -123,7 +123,7 @@ struct W_ModelPart
     u32 image; // index for w_model_image
 };
 
-// A model compiled into the library from models/ (cmake/embed_files.cmake)
+// A model compiled into the library from data/models/ (cmake/embed_models.cmake)
 struct W_EmbeddedModel
 {
     const char* name;
@@ -141,7 +141,7 @@ struct W_RoomSource
     usize       image_size;
 };
 
-// A room compiled into the library from rooms/ (cmake/embed_rooms.cmake)
+// A room compiled into the library from data/rooms/ (cmake/embed_rooms.cmake)
 struct W_EmbeddedRoom
 {
     const char*  name;

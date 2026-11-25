@@ -72,20 +72,20 @@ if (WIN32)
 endif ()
 
 puppetxr_add_shaders(puppetxr_shaders
-    shaders/blit.vert
-    shaders/blit.frag
-    shaders/composite.vert
-    shaders/composite.frag
-    shaders/composite_depth.frag
-    shaders/composite_resolve.frag
-    shaders/imgui.vert
-    shaders/imgui.frag
-    shaders/passthrough.vert
-    shaders/passthrough.frag
-    shaders/environment_depth.vert
-    shaders/environment_depth.frag
-    shaders/environment_depth_upload.vert
-    shaders/environment_depth_upload.frag
+    data/shaders/blit.vert
+    data/shaders/blit.frag
+    data/shaders/composite.vert
+    data/shaders/composite.frag
+    data/shaders/composite_depth.frag
+    data/shaders/composite_resolve.frag
+    data/shaders/imgui.vert
+    data/shaders/imgui.frag
+    data/shaders/passthrough.vert
+    data/shaders/passthrough.frag
+    data/shaders/environment_depth.vert
+    data/shaders/environment_depth.frag
+    data/shaders/environment_depth_upload.vert
+    data/shaders/environment_depth_upload.frag
 )
 
 #
@@ -154,31 +154,31 @@ if (APPLE)
     list(APPEND PUPPETXR_SOURCES src/render_metal.mm)
 endif ()
 
-# The rooms of rooms/ are compiled in, so the library ships as one file (docs/world.md). The
+# The rooms of data/rooms/ are compiled in, so the library ships as one file (docs/world.md). The
 # generated source is tens of megabytes of bytes, so it is a library of its own that clang-tidy skips.
-file(GLOB puppetxr_room_files ${CMAKE_CURRENT_SOURCE_DIR}/rooms/*/room.json ${CMAKE_CURRENT_SOURCE_DIR}/rooms/*/room.bin ${CMAKE_CURRENT_SOURCE_DIR}/rooms/*/room_albedo.png)
+file(GLOB puppetxr_room_files ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room.json ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room.bin ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room_albedo.png)
 set(puppetxr_rooms_source ${CMAKE_BINARY_DIR}/rooms/rooms_embedded.cpp)
 add_custom_command(
     OUTPUT ${puppetxr_rooms_source}
-    COMMAND ${CMAKE_COMMAND} -DROOMS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/rooms -DOUTPUT=${puppetxr_rooms_source} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_rooms.cmake
+    COMMAND ${CMAKE_COMMAND} -DROOMS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data/rooms -DOUTPUT=${puppetxr_rooms_source} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_rooms.cmake
     DEPENDS ${puppetxr_room_files} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_rooms.cmake
     COMMENT "Embedding rooms"
     VERBATIM)
-# The built-in models of models/ (docs/props.md, Models) go into the same library
-file(GLOB puppetxr_model_files ${CMAKE_CURRENT_SOURCE_DIR}/models/*/*.glb)
+# The built-in models of data/models/ (docs/props.md, Models) go into the same library
+file(GLOB puppetxr_model_files ${CMAKE_CURRENT_SOURCE_DIR}/data/models/*/*.glb)
 set(puppetxr_models_source ${CMAKE_BINARY_DIR}/models/models_embedded.cpp)
 add_custom_command(
     OUTPUT ${puppetxr_models_source}
-    COMMAND ${CMAKE_COMMAND} -DMODELS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/models -DOUTPUT=${puppetxr_models_source} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_models.cmake
+    COMMAND ${CMAKE_COMMAND} -DMODELS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data/models -DOUTPUT=${puppetxr_models_source} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_models.cmake
     DEPENDS ${puppetxr_model_files} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_models.cmake
     COMMENT "Embedding models"
     VERBATIM)
-# The hand model and gestures of motion/ (docs/hand-motion.md) too
-file(GLOB_RECURSE puppetxr_motion_files CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/motion/*.json)
+# The hand model and gestures of data/motion/ (docs/hand-motion.md) too
+file(GLOB_RECURSE puppetxr_motion_files CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/data/motion/*.json)
 set(puppetxr_motion_source ${CMAKE_BINARY_DIR}/motion/motion_embedded.cpp)
 add_custom_command(
     OUTPUT ${puppetxr_motion_source}
-    COMMAND ${CMAKE_COMMAND} -DMOTION_DIR=${CMAKE_CURRENT_SOURCE_DIR}/motion -DOUTPUT=${puppetxr_motion_source} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_motion.cmake
+    COMMAND ${CMAKE_COMMAND} -DMOTION_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data/motion -DOUTPUT=${puppetxr_motion_source} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_motion.cmake
     DEPENDS ${puppetxr_motion_files} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_motion.cmake
     COMMENT "Embedding the hand model"
     VERBATIM)
@@ -247,7 +247,7 @@ file(RELATIVE_PATH puppetxr_relative_rooms_dir ${PUPPETXR_INSTALL_FULL_MODULEDIR
 if (PUPPETXR_DIST)
     set(puppetxr_source_rooms_dir "")
 else ()
-    set(puppetxr_source_rooms_dir "${CMAKE_CURRENT_SOURCE_DIR}/rooms")
+    set(puppetxr_source_rooms_dir "${CMAKE_CURRENT_SOURCE_DIR}/data/rooms")
 endif ()
 target_compile_definitions(puppetxr_core PRIVATE
     PUPPETXR_RELATIVE_ROOMS_DIR="${puppetxr_relative_rooms_dir}"

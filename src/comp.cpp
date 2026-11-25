@@ -511,7 +511,7 @@ static u64 color_lut_key (const COMP_PassthroughStyle& style)
     return hash((const u8*)parts, sizeof(parts));
 }
 
-// Lays the style's LUTs out as shaders/blocks.h describes and uploads them into the slot's atlas
+// Lays the style's LUTs out as data/shaders/blocks.h describes and uploads them into the slot's atlas
 static void upload_color_luts (COMP_Compositor* comp, const COMP_PassthroughStyle& style, u32 slot)
 {
     const usize size = (usize)COMP_COLOR_LUT_ATLAS_WIDTH * COMP_COLOR_LUT_ATLAS_HEIGHT * 4;

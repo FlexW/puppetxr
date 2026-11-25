@@ -1,4 +1,4 @@
-// Compiles a shader of shaders/ to DXBC at build time, for the D3D11 and D3D12 backends
+// Compiles a shader of data/shaders/ to DXBC at build time, for the D3D11 and D3D12 backends
 // (docs/shaders.md). It calls D3DCompile of d3dcompiler_47.dll, which every Windows since 10
 // ships and fxc wraps, so the build needs nothing of the Windows SDK but its headers. Cross
 // builds run it through CMAKE_CROSSCOMPILING_EMULATOR.

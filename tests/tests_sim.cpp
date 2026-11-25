@@ -2741,7 +2741,7 @@ TEST(Sim, tracked_hands_keep_only_gesture_inputs)
     EXPECT_EQ(sim_get_input(sim, SIM_Device::RightHand, SIM_Input::MenuClick).value.x, 1.0f);
 }
 
-// Bone offsets and radii of motion/hand_model.json, fitted to a Quest 3's fixed skeleton
+// Bone offsets and radii of data/motion/hand_model.json, fitted to a Quest 3's fixed skeleton
 // (tools/hand_fit.py, docs/hand-motion.md); the mesh is skinned to the open hand
 TEST(Sim, hands_have_the_bones_measured_on_a_quest_3)
 {
@@ -5416,7 +5416,7 @@ TEST(SimGesture, a_gesture_moves_the_same_way_every_time)
     EXPECT_TRUE(memory_equal(joints[0].poses, joints[1].poses, sizeof(joints[0].poses)));
 }
 
-// Every built-in gesture (motion/gestures) loads, and plays to its end with its defaults
+// Every built-in gesture (data/motion/gestures) loads, and plays to its end with its defaults
 TEST(SimGesture, every_built_in_gesture_plays_to_its_end)
 {
     SIM_Sim* sim = make_sim();

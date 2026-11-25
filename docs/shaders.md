@@ -1,6 +1,6 @@
 # Shaders
 
-One source per stage in `shaders/`, written in GLSL with the macros of `shaders/shader.h`, so that
+One source per stage in `data/shaders/`, written in GLSL with the macros of `data/shaders/shader.h`, so that
 the same file builds for every render backend. The approach is bgfx's: GLSL is the base
 language, the HLSL and MSL preludes map GLSL names, and declarations go through macros.
 
@@ -53,13 +53,13 @@ the body as HLSL does.
 
 ## Files
 
-- `shaders/shader.h`: the prelude, one section per language.
-- `shaders/composite.h`: the compositor's layer shader, included by `composite.frag` and, with
+- `data/shaders/shader.h`: the prelude, one section per language.
+- `data/shaders/composite.h`: the compositor's layer shader, included by `composite.frag` and, with
   `COMP_DEPTH` defined, `composite_depth.frag` (writes the layer depth for
   `XR_FB_composition_layer_depth_test`); `composite_resolve.frag` converts a projection view's
   depth into the compositor's. Including files declare the textures, so the embedded names match
   the shader (`cmake/embed.cmake` reads them from the file itself).
-- `shaders/blocks.h`: every push block as a field X-macro, plus `COMP_FLAG_*`. The shaders
+- `data/shaders/blocks.h`: every push block as a field X-macro, plus `COMP_FLAG_*`. The shaders
   expand it with `R_PUSH_BLOCK`; C++ (`comp.cpp`, `ui.cpp`, tests) gets `COMP_Push`,
   `COMP_PassthroughPush`, `COMP_DepthPush`, `UI_Push`. One definition, no copies to keep in sync.
 - `cmake/shaders.cmake`: `puppetxr_add_shaders`; `cmake/shader_text.cmake` writes the

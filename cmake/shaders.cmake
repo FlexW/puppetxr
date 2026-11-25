@@ -13,7 +13,7 @@ find_program(DXC dxc HINTS $ENV{VULKAN_SDK}/Bin $ENV{VULKAN_SDK}/bin VALIDATOR p
 set(PUPPETXR_HLSL_DEFINES "" CACHE STRING "Extra defines of the DXBC compile, NAME=VALUE;... (the mingw-debug preset works around Wine's compiler)")
 
 # puppetxr_add_shaders(<target> <shader files...>)
-# Shaders are written in the dialect of shaders/shader.h (docs/shaders.md). Each file is compiled
+# Shaders are written in the dialect of data/shaders/shader.h (docs/shaders.md). Each file is compiled
 # with glslc for Vulkan and expanded to one GL source; <build>/shaders/<file>.h embeds both as the
 # R_ShaderCode `<name>_shader`, e.g. `composite_vert_shader`. When glslangValidator and dxc are found, the GL 330, GLSL ES 300
 # and HLSL variants are compiled too, so that a shader that breaks a backend fails the build. HLSL
@@ -22,7 +22,7 @@ set(PUPPETXR_HLSL_DEFINES "" CACHE STRING "Extra defines of the DXBC compile, NA
 # <target> is an interface library carrying the include dir.
 function(puppetxr_add_shaders target)
     set(out_dir ${CMAKE_BINARY_DIR}/shaders)
-    set(src_dir ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+    set(src_dir ${CMAKE_CURRENT_SOURCE_DIR}/data/shaders)
     file(MAKE_DIRECTORY ${out_dir}/variants)
     set(headers "")
     set(stamps "")

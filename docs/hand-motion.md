@@ -24,7 +24,7 @@ debouncing) are not exercised.
 |---|---|---|
 | Hand model: skeleton, joint limits, shape to joints, pinch and grab strength from joints | sim (`src/sim.cpp`) | the joints are sim state, located by oxr and recorded |
 | Gesture loader, checker, expressions, paths, noise, player | sim (`src/sim.cpp`, section `Gestures`, `sim_gesture_*`) | runs in `sim_begin_frame` after the controls, in the fixed device order; never during replay |
-| Built-in gestures, fitted hand model | `motion/` at the top (like `rooms/`), embedded by `cmake/embed_motion.cmake` | JSON in the repository, one file per gesture, no code change to add one |
+| Built-in gestures, fitted hand model | `data/motion/` (next to `data/rooms/`), embedded by `cmake/embed_motion.cmake` | JSON in the repository, one file per gesture, no code change to add one |
 | Users' gestures | files on disk, loaded at startup and at runtime (Loading) | the same loader and checker as the built-ins |
 | Play, stop, list, check, events | control API, `puppetxrctl gesture`, C API, UI panel | how agents and tests drive it |
 
@@ -32,12 +32,12 @@ debouncing) are not exercised.
 
 Built: skeleton, key poses, curves, strengths from the joints, finger coupling and limits.
 
-`motion/hand_model.json` is fitted by `tools/hand_fit.py` (Python standard library only) to
+`data/motion/hand_model.json` is fitted by `tools/hand_fit.py` (Python standard library only) to
 recorder takes measured on a Quest 3, embedded by `cmake/embed_motion.cmake` and loaded by
 `load_hand_model` in `src/sim.cpp` at `sim_create`; a missing or invalid file fails there.
 
 ```
-python3 tools/hand_fit.py <takes dir>... -o motion/hand_model.json
+python3 tools/hand_fit.py <takes dir>... -o data/motion/hand_model.json
 ```
 
 - **Skeleton**: each joint's offset in its parent's frame, averaged over `still_open`, and its
@@ -215,7 +215,7 @@ Seeded per play (`seed`, default from the recording's seed so a replay matches):
 ### Clip steps
 
 A step can play recorded motion: `{ "hand": "right", "clip": "wave_right", "from": 1.2, "to": 3.0,
-"relative": "head" }`. `clip` names a take (built-in, in `motion/takes/`) or a file path; the
+"relative": "head" }`. `clip` names a take (built-in, in `data/motion/takes/`) or a file path; the
 loader converts it to wrist poses relative to the head at the take's first frame and joint
 rotations relative to their parents (the take's bone lengths are dropped, the sim skeleton
 kept), resampled to the sim's frames. So a user records their own gesture with the recorder,
@@ -227,7 +227,7 @@ later use the same step with `"body"` instead of `"hand"`.
 Built. Built-ins and users' gestures are the same JSON, loaded by `sim_gesture_load`; a user's file
 of a built-in's name replaces it for that run.
 
-- Built-ins: every `motion/gestures/*.json`, embedded by `cmake/embed_motion.cmake` with the hand
+- Built-ins: every `data/motion/gestures/*.json`, embedded by `cmake/embed_motion.cmake` with the hand
   model and loaded at `sim_create`; an invalid one fails there (`SimGesture.every_built_in_gesture_plays_to_its_end`).
 - At startup, after the built-ins: the files and directories of `gestures.paths` (config,
   `docs/config.md`), then those of `PUPPETXR_GESTURE_PATH` (`:` apart, `;` on Windows,
@@ -254,7 +254,7 @@ grasp, `point`, a microgesture) on a controller hand is a checker error unless t
 
 ## Library (built-ins)
 
-Built (`motion/gestures/`), each with defaults that work in front of the head. Where a gesture
+Built (`data/motion/gestures/`), each with defaults that work in front of the head. Where a gesture
 reaches, its default target puts the palm where the recorded takes put it (within 5 cm), and the
 recorded gestures hold the hand as in the takes; `SimGesture.built_in_gestures_look_like_their_recordings`
 holds both to the measured values:
@@ -315,7 +315,7 @@ found), a UI Gestures panel, a `tools/` script sweeping seeds once noise exists.
   release frame and grip below 0.5 before it, determinism (same seed, bit-identical joints;
   other seed differs), noise spectrum peaks where fitted, each built-in loads and checks.
 - Against takes: per built-in, the simulated motion's duration, peak speed and final shape lie
-  within the spread of the recorded reps (`motion/takes/`, trimmed and resampled).
+  within the spread of the recorded reps (`data/motion/takes/`, trimmed and resampled).
 - `tests_rec.cpp`: a gesture recorded and replayed gives identical state hashes; version 5 files
   still read.
 - `tests_api.cpp`: CLI and C API, events' frames match the frames the app saw the input change.
@@ -325,7 +325,7 @@ found), a UI Gestures panel, a `tools/` script sweeping seeds once noise exists.
 ## Decisions
 
 - The player is part of sim (`src/sim.cpp`), no layer of its own.
-- Only trimmed takes (60 Hz, 4 decimals, a few hundred kB each) go into `motion/takes/`; raw
+- Only trimmed takes (60 Hz, 4 decimals, a few hundred kB each) go into `data/motion/takes/`; raw
   sessions stay out.
 - Gestures drive controllers too (Controllers).
 - Users' gestures load from disk at startup and at runtime (Loading).

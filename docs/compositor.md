@@ -11,14 +11,14 @@ public `R_ImageHandle`.
 
 Backend-neutral rules of the API:
 
-- Shaders are `R_ShaderCode`, one per stage, generated from `shaders/` (`docs/shaders.md`); a
+- Shaders are `R_ShaderCode`, one per stage, generated from `data/shaders/` (`docs/shaders.md`); a
   backend rejects a pipeline whose code has nothing for it.
 - Formats cross the API as `R_Format`; `r_native_format` / `r_format_from_native` convert to
   the enum of the backend's API (`VkFormat`, GL internal format, `DXGI_FORMAT`), for the
   swapchain formats of the binding.
 - `r_backend_available` says which backends the build has: D3D11 and D3D12 only on Windows
   (`PUPPETXR_HAVE_D3D`, set by CMake); the OpenXR layer offers their extensions accordingly.
-- Blits with scaling are a draw on backends without a blit command (D3D): `shaders/blit.*`.
+- Blits with scaling are a draw on backends without a blit command (D3D): `data/shaders/blit.*`.
 - After writing mapped memory, `r_flush_buffer` before recording commands that read it
   (a no-op on Vulkan, whose host-visible memory is coherent).
 - Commands are recorded between begin and end within one call of the app on one thread, so a
@@ -311,7 +311,7 @@ Blending follows spec 10.6.2 with one premultiplied pipeline (`ONE`, `ONE_MINUS_
   `COMP_MAX_PIPELINES`; `comp_compose` makes them before recording, `draw_layers` only looks
   them up.
 - Push block flags: `COMP_FLAG_SOURCE_ALPHA`, `UNPREMULTIPLIED`, `INVERTED_ALPHA`,
-  `COLOR_TRANSFORM`, `CUSTOM_BLEND`. Blocks and flags are defined once in `shaders/blocks.h` for the shaders
+  `COLOR_TRANSFORM`, `CUSTOM_BLEND`. Blocks and flags are defined once in `data/shaders/blocks.h` for the shaders
   and C++ (`docs/shaders.md`); `tests_render.cpp` pins the layout.
 - sRGB sources are decoded by the sampler and re-encoded by the target, so blending happens
   in linear; UNORM sources are treated as linear.
@@ -319,7 +319,7 @@ Blending follows spec 10.6.2 with one premultiplied pipeline (`ONE`, `ONE_MINUS_
 Depth composition (`XR_FB_composition_layer_depth_test`, depth from
 `XR_KHR_composition_layer_depth`):
 
-- The compositor's depth is `1 - COMP_DEPTH_NEAR / view depth` (`shaders/blocks.h`, 0.01 m): an
+- The compositor's depth is `1 - COMP_DEPTH_NEAR / view depth` (`data/shaders/blocks.h`, 0.01 m): an
   infinite far plane at 1, which the render pass clears to; nearer than 1 cm clamps to 0.
 - Quads are rasterized at that depth (`eye_clip` in `src/oxr.cpp`: clip z = w - near), so the
   GPU clips the part of a quad nearer than 1 cm. Projection views stay at infinity (z = w) and are
@@ -369,7 +369,7 @@ environment blend mode):
   and saturation in CIELAB per the extension's formulas. Map colours are sRGB-encoded.
 - `XR_META_passthrough_color_lut` (`COMP_ColorMap::Lut`, `InterpolatedLut`): the style's 3D
   LUTs go into a 512x1024 atlas per layer slot (`color_lut_atlases`, made when a slot first
-  uses one, layout in `shaders/blocks.h`), bound in place of the 256x1 map and uploaded again
+  uses one, layout in `data/shaders/blocks.h`), bound in place of the 256x1 map and uploaded again
   when `color_lut_key` (generations and resolutions) changes. `passthrough.frag` interpolates
   trilinearly between texel centres, so the sampler's filter does not matter, and blends in
   sRGB: `(1 - w) * C + w * lut[C]`, or `(1 - w) * source[C] + w * target[C]`; source and target

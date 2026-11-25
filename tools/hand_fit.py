@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 #
-# Fits motion/hand_model.json, the simulated tracked hand (docs/hand-motion.md, Hand model), to
+# Fits data/motion/hand_model.json, the simulated tracked hand (docs/hand-motion.md, Hand model), to
 # takes of the motion recorder (docs/recorder.md):
 #
-#   python3 tools/hand_fit.py <takes dir>... -o motion/hand_model.json
+#   python3 tools/hand_fit.py <takes dir>... -o data/motion/hand_model.json
 #
 # A take is used by its step name: still_open, still_relaxed, fist, pinch_tap_*, pinch_hold_*, poses
 # (its thumbs-up and point), poke_*, grab_ball_* and wave for the poses, and with palm_up for the

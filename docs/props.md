@@ -39,7 +39,7 @@ What a mesh shows: a glTF 2.0 model, loaded into the sim under a name (`sim_add_
 runtime parses each once (`refresh_prop_models`, `src/oxr.cpp`) for passthrough, depth and
 raycasts. A model of a name already loaded replaces it, and every mesh naming it shows the new one.
 
-Built in (`models/<name>/<name>.glb`, compiled in by `cmake/embed_models.cmake`): each stands on
+Built in (`data/models/<name>/<name>.glb`, compiled in by `cmake/embed_models.cmake`): each stands on
 its origin, centred, its front at +Z (glTF), with base colours only.
 
 | Name | Size | What |
@@ -50,7 +50,7 @@ its origin, centred, its front at +Z (glTF), with base colours only.
 
 `tools/blender/puppetxr_models.py` builds them in Blender and writes each `.glb` next to its
 `.blend` (Git LFS, scene data only, so neither holds a local path):
-`blender -b --factory-startup --python tools/blender/puppetxr_models.py -- models [name ...]`.
+`blender -b --factory-startup --python tools/blender/puppetxr_models.py -- data/models [name ...]`.
 
 Loading a model:
 

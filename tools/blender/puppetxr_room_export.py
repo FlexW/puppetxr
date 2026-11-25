@@ -3,7 +3,7 @@
 # As an add-on it adds an "puppetxr" sidebar tab to tag shell faces and export. From the
 # command line it exports without touching the .blend:
 #
-#   blender -b rooms/bedroom/bedroom.blend --python tools/blender/puppetxr_room_export.py -- rooms/bedroom [--no-bake] [--room-mesh-only] [--global-mesh-only]
+#   blender -b data/rooms/bedroom/bedroom.blend --python tools/blender/puppetxr_room_export.py -- data/rooms/bedroom [--no-bake] [--room-mesh-only] [--global-mesh-only]
 #
 # Scene conventions (docs/world.md):
 #   collection puppetxr_shell    one closed mesh, every face tagged with the int face attribute
