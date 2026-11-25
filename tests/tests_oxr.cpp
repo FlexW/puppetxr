@@ -5410,6 +5410,19 @@ VKAPI_ATTR VkResult VKAPI_CALL hiding_create_instance (const VkInstanceCreateInf
     return create(info, allocator, out_instance);
 }
 
+VkInstance create_device_instance     = VK_NULL_HANDLE;
+b8         device_asked_for_swapchain = false;
+
+VKAPI_ATTR VkResult VKAPI_CALL watching_create_device (VkPhysicalDevice physical, const VkDeviceCreateInfo* info, const VkAllocationCallbacks* allocator, VkDevice* out_device)
+{
+    for (u32 i = 0; i < info->enabledExtensionCount; i++)
+    {
+        device_asked_for_swapchain |= cstr_equal(info->ppEnabledExtensionNames[i], VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    }
+    const PFN_vkCreateDevice create = (PFN_vkCreateDevice)unhidden_gipa(create_device_instance, "vkCreateDevice");
+    return create(physical, info, allocator, out_device);
+}
+
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL hiding_gipa (VkInstance vk_instance, const char* name)
 {
     if (cstr_equal(name, "vkEnumerateInstanceExtensionProperties"))
@@ -5419,6 +5432,11 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL hiding_gipa (VkInstance vk_instance, co
     if (cstr_equal(name, "vkCreateInstance"))
     {
         return (PFN_vkVoidFunction)hiding_create_instance;
+    }
+    if (cstr_equal(name, "vkCreateDevice"))
+    {
+        create_device_instance = vk_instance;
+        return (PFN_vkVoidFunction)watching_create_device;
     }
     return unhidden_gipa(vk_instance, name);
 }
@@ -5444,6 +5462,72 @@ TEST_F(OxrWindowedTest, a_driver_without_the_window_surface_extension_still_crea
     {
         volkLoadInstanceOnly(vk_instance);
     }
+}
+
+// Regression: without the window's surface extensions the runtime still asked for VK_KHR_swapchain,
+// which needs VK_KHR_surface on the instance: a device extension without its dependency
+TEST_F(OxrWindowedTest, a_driver_without_the_window_surface_extension_gets_no_swapchain_extension)
+{
+    if (os_is_headless())
+    {
+        GTEST_SKIP() << "no offscreen video driver";
+    }
+    unhidden_gipa              = vkGetInstanceProcAddr;
+    device_asked_for_swapchain = false;
+    const VkApplicationInfo             app_info         = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "puppetxr_tests", .apiVersion = VK_API_VERSION_1_0 };
+    const VkInstanceCreateInfo          instance_info    = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app_info };
+    const XrVulkanInstanceCreateInfoKHR xr_instance_info = { .type = XR_TYPE_VULKAN_INSTANCE_CREATE_INFO_KHR, .systemId = system, .pfnGetInstanceProcAddr = hiding_gipa, .vulkanCreateInfo = &instance_info };
+    VkResult vk_result = VK_ERROR_UNKNOWN;
+    ASSERT_EQ(create_vk_instance(instance, &xr_instance_info, &vk_instance, &vk_result), XR_SUCCESS);
+    if (vk_result != VK_SUCCESS)
+    {
+        GTEST_SKIP() << "vkCreateInstance failed";
+    }
+    volkLoadInstanceOnly(vk_instance);
+    const XrVulkanGraphicsDeviceGetInfoKHR get_info = { .type = XR_TYPE_VULKAN_GRAPHICS_DEVICE_GET_INFO_KHR, .systemId = system, .vulkanInstance = vk_instance };
+    ASSERT_EQ(get_vk_device(instance, &get_info, &vk_physical), XR_SUCCESS);
+    const f32                         priority       = 1.0f;
+    const VkDeviceQueueCreateInfo     queue_info     = { .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = 0, .queueCount = 1, .pQueuePriorities = &priority };
+    const VkDeviceCreateInfo          device_info    = { .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .queueCreateInfoCount = 1, .pQueueCreateInfos = &queue_info };
+    const XrVulkanDeviceCreateInfoKHR xr_device_info = { .type = XR_TYPE_VULKAN_DEVICE_CREATE_INFO_KHR, .systemId = system, .pfnGetInstanceProcAddr = hiding_gipa, .vulkanPhysicalDevice = vk_physical, .vulkanCreateInfo = &device_info };
+    ASSERT_EQ(create_vk_device(instance, &xr_device_info, &vk_device, &vk_result), XR_SUCCESS);
+    ASSERT_EQ(vk_result, VK_SUCCESS);
+    volkLoadDevice(vk_device);
+    EXPECT_FALSE(device_asked_for_swapchain);
+}
+
+// The same through XR_KHR_vulkan_enable, where the app enables what the runtime names
+struct OxrVulkanEnableWindowedTest : OxrTest
+{
+    OxrVulkanEnableWindowedTest ()
+    {
+        headless = false;
+    }
+
+    void extension_names (const char* function, char* out_names, u32 capacity)
+    {
+        PFN_xrGetVulkanInstanceExtensionsKHR get = nullptr;
+        ASSERT_EQ(gipa(instance, function, (PFN_xrVoidFunction*)&get), XR_SUCCESS);
+        u32 length = 0;
+        ASSERT_EQ(get(instance, system, capacity, &length, out_names), XR_SUCCESS);
+    }
+};
+
+TEST_F(OxrVulkanEnableWindowedTest, the_swapchain_extension_comes_with_the_surface_extension)
+{
+    if (volkInitialize() != VK_SUCCESS)
+    {
+        GTEST_SKIP() << "no Vulkan loader";
+    }
+    const char* extensions[] = { XR_KHR_VULKAN_ENABLE_EXTENSION_NAME };
+    ASSERT_EQ(create_instance(extensions, 1), XR_SUCCESS);
+    const XrSystemGetInfo system_info = { .type = XR_TYPE_SYSTEM_GET_INFO, .formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY };
+    ASSERT_EQ(xr.xrGetSystem(instance, &system_info, &system), XR_SUCCESS);
+    char instance_names[1024] = {};
+    char device_names[1024]   = {};
+    extension_names("xrGetVulkanInstanceExtensionsKHR", instance_names, sizeof(instance_names));
+    extension_names("xrGetVulkanDeviceExtensionsKHR", device_names, sizeof(device_names));
+    EXPECT_EQ(strstr(device_names, VK_KHR_SWAPCHAIN_EXTENSION_NAME) != nullptr, strstr(instance_names, "VK_KHR_surface") != nullptr) << instance_names << " / " << device_names;
 }
 
 // Unity runs xrWaitFrame and xrEndFrame on its render thread while its main thread, the window

@@ -12,6 +12,7 @@ config start with **Breaking:**.
 - Gestures in the simulator: JSON files of timed steps that move a hand's anchor to points given as expressions, turn its palm and shape its fingers, with params, events and errors that name the JSON path (`docs/hand-motion.md`); 14 built-in gestures (`data/motion/gestures/`) that shape, hold and place the hand as recorded on a Quest 3, and users' gestures from `gestures.paths` and `PUPPETXR_GESTURE_PATH`; `puppetxrctl gesture list|show|check|load|play|wait|events|stop` and the C API's gesture functions (API version 3).
 - The Simulator panel's Gestures tab plays gestures, poses a hand with a slider per finger and saves the pose as a gesture (`gestures.dir`).
 - Fixed: on Vulkan, swapchains with `XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT` are storage images; compute shaders writing to them were undefined behaviour and crashed some drivers.
+- Fixed: on Vulkan with the offscreen window and a driver without `VK_EXT_headless_surface`, the device asked for `VK_KHR_swapchain` without `VK_KHR_surface` on the instance, a validation error.
 - `XR_EXT_uuid`.
 - Fixed: recording with a model over 64 KB loaded, or a large anchor store, wrote past the recorder's buffer.
 - The four rooms are furnished with scanned models and surfaces and baked at 3072 x 3072; their entities stand where they did, seats and couches now down to the floor.

@@ -129,9 +129,11 @@ static VkPhysicalDevice pick_physical_device (PFN_vkGetInstanceProcAddr gipa, Vk
 }
 
 
-static u32 required_device_extensions (const char** out_names, u32 capacity)
+// VK_KHR_swapchain needs VK_KHR_surface on the instance (VUID-vkCreateDevice-ppEnabledExtensionNames-01387),
+// which is only there for a mirror window that gets a surface
+static u32 required_device_extensions (b8 window_extensions, const char** out_names, u32 capacity)
 {
-    if (os_is_headless() || capacity == 0)
+    if (os_is_headless() || !window_extensions || capacity == 0)
     {
         return 0;
     }
@@ -298,7 +300,11 @@ static XrResult extension_string (XrInstance instance, XrSystemId system, uint32
         return XR_ERROR_SYSTEM_INVALID;
     }
     const char* names[16];
-    const u32   names_count = device_level ? required_device_extensions(names, 16) : required_instance_extensions(instance_gipa(inst), names, 16);
+    u32         names_count = required_instance_extensions(instance_gipa(inst), names, 16);
+    if (device_level)
+    {
+        names_count = required_device_extensions(names_count > 0, names, 16);
+    }
     char        extensions[1024];
     join_extensions(names, names_count, extensions, sizeof(extensions));
     const u32      length     = (u32)cstr_length(extensions) + 1;
@@ -434,7 +440,7 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrCreateVulkanDeviceKHR (XrInstance in
         return XR_ERROR_RUNTIME_FAILURE;
     }
     const char* required[16];
-    u32         required_count  = required_device_extensions(required, 16);
+    u32         required_count  = required_device_extensions(!inst->vk_no_window_extensions, required, 16);
     required_count             += portability_device_extensions(info->pfnGetInstanceProcAddr, (VkInstance)inst->vk_instance, info->vulkanPhysicalDevice, required + required_count, 16 - required_count);
     const char* merged[64];
     const u32   merged_count = merge_extensions(info->vulkanCreateInfo->ppEnabledExtensionNames, info->vulkanCreateInfo->enabledExtensionCount, required, required_count, merged, 64);
