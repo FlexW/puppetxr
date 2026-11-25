@@ -156,7 +156,7 @@ endif ()
 
 # The rooms of data/rooms/ are compiled in, so the library ships as one file (docs/world.md). The
 # generated source is tens of megabytes of bytes, so it is a library of its own that clang-tidy skips.
-file(GLOB puppetxr_room_files ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room.json ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room.bin ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room_albedo.jpg ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room_albedo.png)
+file(GLOB puppetxr_room_files CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room.json ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room.bin ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room_albedo.jpg ${CMAKE_CURRENT_SOURCE_DIR}/data/rooms/*/room_albedo.png)
 set(puppetxr_rooms_source ${CMAKE_BINARY_DIR}/rooms/rooms_embedded.cpp)
 add_custom_command(
     OUTPUT ${puppetxr_rooms_source}
@@ -165,7 +165,7 @@ add_custom_command(
     COMMENT "Embedding rooms"
     VERBATIM)
 # The built-in models of data/models/ (docs/props.md, Models) go into the same library
-file(GLOB puppetxr_model_files ${CMAKE_CURRENT_SOURCE_DIR}/data/models/*/*.glb)
+file(GLOB puppetxr_model_files CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/data/models/*/*.glb)
 set(puppetxr_models_source ${CMAKE_BINARY_DIR}/models/models_embedded.cpp)
 add_custom_command(
     OUTPUT ${puppetxr_models_source}
