@@ -150,6 +150,7 @@
     X(EXT_spatial_entity,                     XR_EXT_SPATIAL_ENTITY_EXTENSION_NAME,                     XR_EXT_spatial_entity_SPEC_VERSION)                     \
     X(EXT_spatial_marker_tracking,            XR_EXT_SPATIAL_MARKER_TRACKING_EXTENSION_NAME,            XR_EXT_spatial_marker_tracking_SPEC_VERSION)            \
     X(EXT_stationary_reference_space,         XR_EXT_STATIONARY_REFERENCE_SPACE_EXTENSION_NAME,         XR_EXT_stationary_reference_space_SPEC_VERSION)         \
+    X(EXT_user_presence,                      XR_EXT_USER_PRESENCE_EXTENSION_NAME,                      XR_EXT_user_presence_SPEC_VERSION)                      \
     X(EXTX2_stationary_reference_space,       "XR_EXTX2_stationary_reference_space",                  1)                                                      \
     X(META_performance_metrics,               XR_META_PERFORMANCE_METRICS_EXTENSION_NAME,               XR_META_performance_metrics_SPEC_VERSION)               \
     X(FB_space_warp,                          XR_FB_SPACE_WARP_EXTENSION_NAME,                          XR_FB_space_warp_SPEC_VERSION)                          \
@@ -533,6 +534,7 @@ struct OXR_Session
     b8                     frame_begun = {};
     b8                     begin_failed = {}; // a frame fault failed the waited frame's xrBeginFrame: the next xrWaitFrame does not wait for it
     b8                     synchronize_pending = {}; // a graphics session reaches SYNCHRONIZED with its first submitted frame
+    b8                     user_absent_seen = {};    // the presence its last XR_EXT_user_presence event told it
 
     b8                     perf_metrics = {};      // XR_META_performance_metrics enabled
     b8                     space_warp = {};        // the last ended frame had XR_FB_space_warp infos
@@ -1309,6 +1311,8 @@ struct OXR_Runtime
     u64                        mirror_second_start = {};
     u64                        mirror_second_presents = {}; // mirror_presents when that second began
     b8                         exit_requested = {};   // by the control API or the end of a replay
+    b8                         unfocused = {};        // oxr_set_focus: a system menu over the app, its sessions VISIBLE
+    b8                         user_absent = {};      // oxr_set_user_present: the headset is off
     SIM_MirrorView             mirror_view = {};   // which eye the window shows, starts from config
 
     W_World*                   world = {};         // the simulated room, null for none

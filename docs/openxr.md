@@ -138,6 +138,20 @@ returns `XR_ERROR_GRAPHICS_DEVICE_INVALID`. Headless sessions reject swapchain
 creation with `XR_ERROR_FEATURE_UNSUPPORTED`, report no swapchain formats, report
 `shouldRender = false` and reject layers in `xrEndFrame`.
 
+## Focus and user presence
+
+The control API's `set_focus` and `set_user_present` (`docs/control-api.md`), `puppetxrctl focus|presence on|off`;
+`OXR_Runtime::unfocused` and `user_absent`, false at each `xrCreateInstance`:
+
+- Focus off, as a system menu over the app: at each `xrWaitFrame` a running session that is not
+  exiting goes FOCUSED to VISIBLE (spec 9.3); its actions are inactive and `xrSyncActions`
+  returns `XR_SESSION_NOT_FOCUSED` as for any unfocused session. Focus on takes it back to FOCUSED
+  at the next `xrWaitFrame`. A session that synchronizes while focus is off stops at VISIBLE.
+- Presence (`XR_EXT_user_presence`): at each `xrWaitFrame`, a session whose instance enabled the
+  extension and whose last told presence differs gets one `XrEventDataUserPresenceChangedEXT`.
+  The session state is not changed by it: an app that pauses on the headset coming off reads the event.
+- Neither is in a recording, so both return `PUPPETXR_ERROR_BUSY` while recording or replaying.
+
 ## Frame loop
 
 - `xrWaitFrame`: blocks (polling every 100 us with the lock released) while a frame

@@ -67,6 +67,8 @@ if (PUPPETXR_VERSION_GET_MINOR(runtime_version) >= 2) { /* behave differently */
 | `record_start`, `record_stop` | record from the current state (`docs/recording-format.md`) |
 | `replay_start`, `replay_stop` | replay a recording made at the same eye resolution and refresh rate |
 | `request_exit` | the session goes to STOPPING at the next frame |
+| `set_focus` | API version 3: zero takes the app's focus as a system menu does, its sessions VISIBLE from the next frame, non-zero gives it back (`docs/openxr.md`, Focus and user presence); `PUPPETXR_ERROR_BUSY` while recording or replaying |
+| `set_user_present` | API version 3: zero takes the headset off, non-zero puts it on: an `XrEventDataUserPresenceChangedEXT` at the next frame to a session whose app enabled `XR_EXT_user_presence`; `PUPPETXR_ERROR_BUSY` as `set_focus` |
 | `get_controller`, `set_controller` | simulated controller type: Meta Touch Plus (default), Touch Pro, Oculus Touch or KHR simple; `PUPPETXR_ERROR_BUSY` while recording or replaying |
 | `get_room`, `set_room` | the simulated room by name (`docs/world.md`), null or `""` for none; unknown or invalid rooms give `PUPPETXR_ERROR_INVALID_ARGUMENT` and keep the current one; `PUPPETXR_ERROR_BUSY` while recording or replaying. `replay_start` loads the recording's room and fails with `PUPPETXR_ERROR_IO` when it is missing or its files changed |
 | `get_control_mode`, `set_control_mode` | the profiles `body`, `head`, `left` and `right`, which were the control modes; `get_control_mode` gives `PUPPETXR_ERROR_NOT_AVAILABLE` in another profile and `PUPPETXR_Status.control_mode` is -1 there |

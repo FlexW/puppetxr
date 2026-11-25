@@ -1153,6 +1153,16 @@ static PUPPETXR_Result api_load_model (const char* name, const char* path)
     return control_result(oxr_load_model(name, path));
 }
 
+static PUPPETXR_Result api_set_focus (int32_t focused)
+{
+    return control_result(oxr_set_focus(focused != 0));
+}
+
+static PUPPETXR_Result api_set_user_present (int32_t present)
+{
+    return control_result(oxr_set_user_present(present != 0));
+}
+
 static PUPPETXR_Result api_add_prop (const PUPPETXR_Prop* prop, uint32_t* out_id)
 {
     SIM_Prop sim_prop = {};
@@ -2046,6 +2056,26 @@ static PUPPETXR_Result command_load_model (const JsonValue& request, API_Reply&,
     return api_load_model(name, path);
 }
 
+static PUPPETXR_Result request_flag (const JsonValue& request, const char* key, PUPPETXR_Result (*apply)(int32_t))
+{
+    b8 value = false;
+    if (!json_find_bool(request, key, value))
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    return apply(value ? 1 : 0);
+}
+
+static PUPPETXR_Result command_set_focus (const JsonValue& request, API_Reply&, API_Client&)
+{
+    return request_flag(request, "focused", api_set_focus);
+}
+
+static PUPPETXR_Result command_set_user_present (const JsonValue& request, API_Reply&, API_Client&)
+{
+    return request_flag(request, "present", api_set_user_present);
+}
+
 static PUPPETXR_Result command_get_models (const JsonValue&, API_Reply& reply, API_Client&)
 {
     oxr_lock();
@@ -2705,6 +2735,8 @@ const static struct
     { "get_props",       command_get_props },
     { "add_prop",        command_add_prop },
     { "load_model",      command_load_model },
+    { "set_focus",       command_set_focus },
+    { "set_user_present", command_set_user_present },
     { "get_models",      command_get_models },
     { "update_prop",     command_update_prop },
     { "remove_prop",     command_remove_prop },
@@ -3088,6 +3120,8 @@ static usize api_table_size (u32 version)
         return offsetof(PUPPETXR_Api, set_frame_fault) + sizeof(void*);
     case 2:
         return offsetof(PUPPETXR_Api, load_model) + sizeof(void*);
+    case 3:
+        return offsetof(PUPPETXR_Api, set_user_present) + sizeof(void*);
     default:
         return 0;
     }
@@ -3172,6 +3206,8 @@ PUPPETXR_Result puppetxr_get_api (uint32_t version, PUPPETXR_Api* out_api)
         .get_tracking_drift       = api_get_tracking_drift,
         .set_frame_fault          = api_set_frame_fault,
         .load_model               = api_load_model,
+        .set_focus                = api_set_focus,
+        .set_user_present         = api_set_user_present,
     };
     memory_copy(out_api, &table, api_table_size(filled));
     return PUPPETXR_SUCCESS;

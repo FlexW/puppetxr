@@ -7,6 +7,7 @@ config start with **Breaking:**.
 
 ## Unreleased
 
+- `XR_EXT_user_presence`, and two control calls (API version 3) for an app that pauses: `set_focus` takes the app's focus as a system menu does (its sessions VISIBLE until it comes back) and `set_user_present` takes the headset off and puts it on, each session of an app with the extension told by `XrEventDataUserPresenceChangedEXT`; `puppetxrctl focus on|off` and `presence on|off` (`docs/openxr.md`, Focus and user presence).
 - macOS: a new instance the main thread creates after the last one ended on another thread keeps its mirror window; the stop the old one left queued runs before the new video starts.
 - macOS: an app that destroys its last instance on another thread while the main thread is busy no longer leaves the mirror window open; it closes once the main thread comes by.
 - The Blender room exporter (`tools/blender/puppetxr_room_export.py`) loads again: three string literals were broken across lines, a syntax error.

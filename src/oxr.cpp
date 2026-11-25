@@ -4434,6 +4434,34 @@ OXR_ControlResult oxr_load_model (const char* name, const char* path)
     return OXR_ControlResult::Ok;
 }
 
+static OXR_ControlResult set_session_flag_locked (OXR_Runtime* rt, b8& flag, b8 value)
+{
+    if (!rt->sim)
+    {
+        return OXR_ControlResult::NoInstance;
+    }
+    if (recording_or_replaying(rt))
+    {
+        return OXR_ControlResult::Busy;
+    }
+    flag = value;
+    return OXR_ControlResult::Ok;
+}
+
+OXR_ControlResult oxr_set_focus (b8 focused)
+{
+    const OXR_Lock lock(__func__);
+    OXR_Runtime*   rt = runtime();
+    return set_session_flag_locked(rt, rt->unfocused, !focused);
+}
+
+OXR_ControlResult oxr_set_user_present (b8 present)
+{
+    const OXR_Lock lock(__func__);
+    OXR_Runtime*   rt = runtime();
+    return set_session_flag_locked(rt, rt->user_absent, !present);
+}
+
 OXR_ControlResult oxr_wipe_anchors (b8 include_cloud)
 {
     const OXR_Lock lock(__func__);
@@ -4898,6 +4926,8 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrCreateInstance (const XrInstanceCrea
     rt->clock_anchor_timespec  = os_timespec_ns();
     rt->live_instance  = handle;
     rt->exit_requested = false;
+    rt->unfocused      = false;
+    rt->user_absent    = false;
     if (replay)
     {
         replay_begin_locked(rt, replay);
@@ -5062,6 +5092,14 @@ static XrResult poll_event (XrInstance instance, OXR_Instance* inst, u64 channel
         data->session = e.session;
         data->state   = e.state;
         data->time    = e.time;
+        break;
+    }
+    case XR_TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT:
+    {
+        XrEventDataUserPresenceChangedEXT* data = (XrEventDataUserPresenceChangedEXT*)event;
+        data->type          = e.type;
+        data->session       = e.session;
+        data->isUserPresent = e.enabled ? XR_TRUE : XR_FALSE;
         break;
     }
     case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
@@ -5513,6 +5551,9 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrGetSystemProperties (XrInstance inst
             break;
         case XR_TYPE_SYSTEM_KEYBOARD_TRACKING_PROPERTIES_FB:
             ((XrSystemKeyboardTrackingPropertiesFB*)next)->supportsKeyboardTracking = inst->ext.FB_keyboard_tracking ? XR_TRUE : XR_FALSE;
+            break;
+        case XR_TYPE_SYSTEM_USER_PRESENCE_PROPERTIES_EXT:
+            ((XrSystemUserPresencePropertiesEXT*)next)->supportsUserPresence = inst->ext.EXT_user_presence ? XR_TRUE : XR_FALSE;
             break;
         case XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT:
             ((XrSystemHandTrackingPropertiesEXT*)next)->supportsHandTracking = inst->ext.EXT_hand_tracking ? XR_TRUE : XR_FALSE;
@@ -5967,7 +6008,10 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrBeginSession (XrSession session, con
         const OXR_SessionHandle handle = session_handle(session);
         session_set_state(sess, handle, XR_SESSION_STATE_SYNCHRONIZED);
         session_set_state(sess, handle, XR_SESSION_STATE_VISIBLE);
-        session_set_state(sess, handle, XR_SESSION_STATE_FOCUSED);
+        if (!runtime()->unfocused)
+        {
+            session_set_state(sess, handle, XR_SESSION_STATE_FOCUSED);
+        }
     }
     else
     {
@@ -6532,6 +6576,21 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrWaitFrame (XrSession session, const 
     if (rt->exit_requested && !sess->exit_requested)
     {
         request_exit(sess, handle);
+    }
+    // Spec 9.3: a session loses focus to the system (its menu) and keeps being VISIBLE
+    if (sess->running && !sess->exit_requested && sess->state == XR_SESSION_STATE_FOCUSED && rt->unfocused)
+    {
+        session_set_state(sess, handle, XR_SESSION_STATE_VISIBLE);
+    }
+    else if (sess->running && !sess->exit_requested && sess->state == XR_SESSION_STATE_VISIBLE && !rt->unfocused)
+    {
+        session_set_state(sess, handle, XR_SESSION_STATE_FOCUSED);
+    }
+    OXR_Instance* presence_owner = session_instance(sess);
+    if (presence_owner && presence_owner->ext.EXT_user_presence && sess->user_absent_seen != rt->user_absent)
+    {
+        sess->user_absent_seen = rt->user_absent;
+        push_event(presence_owner, { .type = XR_TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT, .session = session_xr(handle), .enabled = !rt->user_absent });
     }
     if (rt->window_closed && !sess->exit_requested)
     {
@@ -7406,7 +7465,10 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrEndFrame (XrSession session, const X
         const OXR_SessionHandle handle = session_handle(session);
         session_set_state(sess, handle, XR_SESSION_STATE_SYNCHRONIZED);
         session_set_state(sess, handle, XR_SESSION_STATE_VISIBLE);
-        session_set_state(sess, handle, XR_SESSION_STATE_FOCUSED);
+        if (!runtime()->unfocused)
+        {
+            session_set_state(sess, handle, XR_SESSION_STATE_FOCUSED);
+        }
     }
     if (!sess->compositor)
     {

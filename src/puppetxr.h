@@ -57,7 +57,7 @@ typedef long long          PUPPETXR_I64;
 extern "C" {
 #endif
 
-#define PUPPETXR_API_VERSION 2
+#define PUPPETXR_API_VERSION 3
 
 #define PUPPETXR_MAKE_VERSION(major, minor, patch) (((PUPPETXR_U32)(major) << 22) | ((PUPPETXR_U32)(minor) << 12) | (PUPPETXR_U32)(patch))
 #define PUPPETXR_VERSION_GET_MAJOR(version)     ((PUPPETXR_U32)(version) >> 22)
@@ -406,6 +406,17 @@ typedef struct PUPPETXR_Api
        may name, replacing a model of that name (docs/props.md, Models). Recorded; a file that is no
        model puppetxr reads is PUPPETXR_ERROR_INVALID_ARGUMENT, PUPPETXR_ERROR_BUSY during a replay. */
     PUPPETXR_Result (*load_model)            (const char* name, const char* path);
+
+    /* API version 3 */
+
+    /* Non-zero gives the app its focus back, zero takes it as a system menu does: from the next
+       xrWaitFrame its running sessions are VISIBLE, not FOCUSED, their actions inactive (docs/openxr.md,
+       Focus and user presence). Not recorded: PUPPETXR_ERROR_BUSY while recording or replaying. */
+    PUPPETXR_Result (*set_focus)             (PUPPETXR_I32 focused);
+    /* XR_EXT_user_presence: zero takes the headset off, non-zero puts it on; each session of an app
+       that enabled the extension gets an XrEventDataUserPresenceChangedEXT at the next xrWaitFrame.
+       Present at each instance's start, no event then. PUPPETXR_ERROR_BUSY as set_focus. */
+    PUPPETXR_Result (*set_user_present)      (PUPPETXR_I32 present);
 } PUPPETXR_Api;
 
 /* Fills the lower of `version` and the runtime's PUPPETXR_API_VERSION; version 0 is invalid */

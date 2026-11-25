@@ -73,6 +73,8 @@ static const char* ctl_usage =
     "  input <device> <input> [x [y]|on|off] get or set, e.g. input right trigger/value 1\n"
     "  controls on|off                      keyboard and mouse control of the simulator\n"
     "  fixed-step on|off\n"
+    "  focus on|off            the app's focus; off as a system menu over it\n"
+    "  presence on|off         the headset on or off (XR_EXT_user_presence)\n"
     "  recenter\n"
     "  profile [name]                       get or set the control profile: what keyboard and mouse drive\n"
     "  profiler start <path> | stop         a zone profile capture into a Chrome trace (docs/profiling.md)\n"
@@ -971,6 +973,14 @@ static b8 build_request (u32 count, const char* const* words, i32 id, char* out,
     else if ((cstr_equal(command, "controls") || cstr_equal(command, "fixed-step")) && count == 2 && parse_switch(words[1], on))
     {
         append(out, size, ",\"cmd\":\"%s\",\"enabled\":%s", cstr_equal(command, "controls") ? "set_controls" : "set_fixed_step", on ? "true" : "false");
+    }
+    else if (cstr_equal(command, "focus") && count == 2 && parse_switch(words[1], on))
+    {
+        append(out, size, ",\"cmd\":\"set_focus\",\"focused\":%s", on ? "true" : "false");
+    }
+    else if (cstr_equal(command, "presence") && count == 2 && parse_switch(words[1], on))
+    {
+        append(out, size, ",\"cmd\":\"set_user_present\",\"present\":%s", on ? "true" : "false");
     }
     else if ((cstr_equal(command, "pause") || cstr_equal(command, "resume")) && count == 1)
     {

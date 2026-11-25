@@ -1541,6 +1541,32 @@ TEST_F(ApiControlTest, hand_source_can_be_switched)
     expect_error("{\"id\":5,\"cmd\":\"get_hand_source\",\"device\":\"head\"}", "invalid_argument");
 }
 
+TEST_F(ApiControlTest, puppetxrctl_takes_the_focus_and_the_headset_off)
+{
+    start(XR_EXT_USER_PRESENCE_EXTENSION_NAME);
+    char target[16];
+    cstr_format(target, sizeof(target), "%u", os_process_id());
+    char        output[1024];
+    const char* unfocus[] = { "--target", target, "focus", "off" };
+    EXPECT_EQ(run_ctl(*this, unfocus, 4, output, sizeof(output)), 0) << output;
+    const char* absent[]  = { "--target", target, "presence", "off" };
+    EXPECT_EQ(run_ctl(*this, absent, 4, output, sizeof(output)), 0) << output;
+    frame();
+    b8                visible = false;
+    b8                gone    = false;
+    XrEventDataBuffer event   = { .type = XR_TYPE_EVENT_DATA_BUFFER };
+    while (poll_event(instance, &event) == XR_SUCCESS)
+    {
+        visible = visible || (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED && ((XrEventDataSessionStateChanged*)&event)->state == XR_SESSION_STATE_VISIBLE);
+        gone    = gone || (event.type == XR_TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT && !((XrEventDataUserPresenceChangedEXT*)&event)->isUserPresent);
+        event   = { .type = XR_TYPE_EVENT_DATA_BUFFER };
+    }
+    EXPECT_TRUE(visible);
+    EXPECT_TRUE(gone);
+    const char* wrong[] = { "--target", target, "focus", "maybe" };
+    EXPECT_NE(run_ctl(*this, wrong, 4, output, sizeof(output)), 0);
+}
+
 TEST_F(ApiControlTest, puppetxrctl_types_into_the_virtual_keyboard)
 {
     start(XR_META_VIRTUAL_KEYBOARD_EXTENSION_NAME);
@@ -2592,4 +2618,112 @@ TEST_F(ApiTest, face_tracking)
     EXPECT_TRUE(sim_get_face(oxr_get_sim()).blink);
     EXPECT_EQ(api.set_face(json), PUPPETXR_SUCCESS) << "what get_face saved loads back";
     EXPECT_FALSE(sim_get_face(oxr_get_sim()).blink);
+}
+
+//
+// Focus and user presence
+//
+
+// A system menu over the app: the session goes from FOCUSED to VISIBLE at the next frame, its
+// actions inactive, and back when the menu closes (spec 9.3, XrSessionState)
+TEST_F(ApiTest, a_session_loses_its_focus_and_gets_it_back)
+{
+    EXPECT_EQ(api.set_focus(0), PUPPETXR_ERROR_NO_INSTANCE);
+    start();
+    frame();
+    EXPECT_EQ(last_state(), XR_SESSION_STATE_FOCUSED);
+
+    ASSERT_EQ(api.set_focus(0), PUPPETXR_SUCCESS);
+    frame();
+    EXPECT_EQ(last_state(), XR_SESSION_STATE_VISIBLE);
+    frame();
+    EXPECT_EQ(last_state(), XR_SESSION_STATE_UNKNOWN) << "no event while it stays";
+
+    ASSERT_EQ(api.set_focus(1), PUPPETXR_SUCCESS);
+    frame();
+    EXPECT_EQ(last_state(), XR_SESSION_STATE_FOCUSED);
+
+    // Not recorded, so not changed while a recording runs
+    char path[OS_MAX_PATH];
+    api_path(path, sizeof(path), "puppetxr_api_focus.xrrec");
+    ASSERT_EQ(api.record_start(path), PUPPETXR_SUCCESS);
+    EXPECT_EQ(api.set_focus(0), PUPPETXR_ERROR_BUSY);
+    EXPECT_EQ(api.set_user_present(0), PUPPETXR_ERROR_BUSY);
+    ASSERT_EQ(api.record_stop(), PUPPETXR_SUCCESS);
+    os_delete_file(path);
+    PUPPETXR_Api older = {};
+    ASSERT_EQ(puppetxr_get_api(2, &older), PUPPETXR_SUCCESS);
+    EXPECT_EQ(older.set_focus, nullptr) << "a client of API version 2 knows neither call";
+    EXPECT_EQ(older.set_user_present, nullptr);
+
+    // An unfocused session still exits as any other
+    ASSERT_EQ(api.set_focus(0), PUPPETXR_SUCCESS);
+    frame();
+    ASSERT_EQ(api.request_exit(), PUPPETXR_SUCCESS);
+    frame();
+    EXPECT_EQ(last_state(), XR_SESSION_STATE_STOPPING);
+}
+
+// XR_EXT_user_presence: the headset taken off and put on again, one event each, only to an app
+// that enabled the extension
+TEST_F(ApiTest, the_user_takes_the_headset_off_and_puts_it_on_again)
+{
+    EXPECT_EQ(api.set_user_present(0), PUPPETXR_ERROR_NO_INSTANCE);
+    start(XR_EXT_USER_PRESENCE_EXTENSION_NAME);
+    XrSystemId                        system   = XR_NULL_SYSTEM_ID;
+    const XrSystemGetInfo             get_info = { .type = XR_TYPE_SYSTEM_GET_INFO, .formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY };
+    XrSystemUserPresencePropertiesEXT presence = { .type = XR_TYPE_SYSTEM_USER_PRESENCE_PROPERTIES_EXT };
+    XrSystemProperties                props    = { .type = XR_TYPE_SYSTEM_PROPERTIES, .next = &presence };
+    ASSERT_EQ(proc<PFN_xrGetSystem>("xrGetSystem")(instance, &get_info, &system), XR_SUCCESS);
+    ASSERT_EQ(proc<PFN_xrGetSystemProperties>("xrGetSystemProperties")(instance, system, &props), XR_SUCCESS);
+    EXPECT_EQ(presence.supportsUserPresence, XR_TRUE);
+
+    auto presence_events = [&](XrBool32& out_last) {
+        u32               count = 0;
+        XrEventDataBuffer event = { .type = XR_TYPE_EVENT_DATA_BUFFER };
+        while (poll_event(instance, &event) == XR_SUCCESS)
+        {
+            if (event.type == XR_TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT)
+            {
+                const XrEventDataUserPresenceChangedEXT* changed = (const XrEventDataUserPresenceChangedEXT*)&event;
+                EXPECT_EQ(changed->session, session);
+                out_last = changed->isUserPresent;
+                count++;
+            }
+            event = { .type = XR_TYPE_EVENT_DATA_BUFFER };
+        }
+        return count;
+    };
+    XrBool32 present = XR_TRUE;
+    frame();
+    EXPECT_EQ(presence_events(present), 0u) << "present from the start, no event";
+
+    ASSERT_EQ(api.set_user_present(0), PUPPETXR_SUCCESS);
+    frame();
+    EXPECT_EQ(presence_events(present), 1u);
+    EXPECT_EQ(present, XR_FALSE);
+    ASSERT_EQ(api.set_user_present(0), PUPPETXR_SUCCESS);
+    frame();
+    EXPECT_EQ(presence_events(present), 0u) << "no change, no event";
+
+    ASSERT_EQ(api.set_user_present(1), PUPPETXR_SUCCESS);
+    frame();
+    EXPECT_EQ(presence_events(present), 1u);
+    EXPECT_EQ(present, XR_TRUE);
+}
+
+TEST_F(ApiTest, an_app_without_user_presence_gets_no_presence_events)
+{
+    start();
+    frame();
+    ASSERT_EQ(api.set_user_present(0), PUPPETXR_SUCCESS);
+    frame();
+    u32               count = 0;
+    XrEventDataBuffer event = { .type = XR_TYPE_EVENT_DATA_BUFFER };
+    while (poll_event(instance, &event) == XR_SUCCESS)
+    {
+        count += event.type == XR_TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT ? 1u : 0u;
+        event = { .type = XR_TYPE_EVENT_DATA_BUFFER };
+    }
+    EXPECT_EQ(count, 0u);
 }

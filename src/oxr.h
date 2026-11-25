@@ -82,6 +82,13 @@ enum class OXR_ControlResult : u8
     Invalid,
 };
 
+// A system menu over the app: from the next xrWaitFrame its running sessions are VISIBLE, not
+// FOCUSED, until focus comes back. Not recorded, so Busy while recording or replaying
+OXR_ControlResult oxr_set_focus     (b8 focused);
+// XR_EXT_user_presence: the headset put on or taken off; each session of an app that enabled the
+// extension gets an XrEventDataUserPresenceChangedEXT at the next xrWaitFrame. Busy as oxr_set_focus
+OXR_ControlResult oxr_set_user_present (b8 present);
+
 // A .glb or .gltf file loaded as the model `name` mesh props may name, replacing one of that name
 // (docs/props.md, Models); recorded. Invalid for a bad name, a file that is no model or too many models
 OXR_ControlResult oxr_load_model    (const char* name, const char* path);

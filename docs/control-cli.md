@@ -70,6 +70,8 @@ puppetxrctl [--target <pid|app|host:port>] [--json] [--timeout <ms>] <command> [
 | `controls on\|off` | keyboard and mouse control |
 | `fixed-step on\|off` | clock mode |
 | `recenter` | LOCAL to the head |
+| `focus on\|off` | the app's focus; off as a system menu over it (`set_focus`) |
+| `presence on\|off` | the headset put on or taken off, `XR_EXT_user_presence` (`set_user_present`) |
 | `mirror left\|right\|both` | mirror and screenshot view |
 | `screenshot <path>` | PNG of the last composited frame, written by the simulator; `not_available` before the first frame, as the simulator reads frames back only in `xrEndFrame`: step a frame first |
 | `wait <frames>` | returns after that many more frames (timeout at least 60 s) |
@@ -150,7 +152,7 @@ Commands mirror `PUPPETXR_Api` (`docs/control-api.md`), plus `get_haptic` (`devi
 (`device`, `position`, `orientation`), `set_active` (`device`, `active`), `get_input`/
 `set_input` (`device`, `input`, `value`: number, bool or `[x, y]`), `set_controls`/
 `set_fixed_step` (`enabled`), `recenter`, `set_mirror_view` (`view`), `screenshot` (`path`),
-`record_start`/`replay_start` (`path`), `record_stop`, `replay_stop`, `request_exit`,
+`record_start`/`replay_start` (`path`), `record_stop`, `replay_stop`, `request_exit`, `set_focus` (`focused`), `set_user_present` (`present`),
 `get_controller`/`set_controller` (`controller`), `get_room`/`set_room` (`room`),
 `get_control_mode`/`set_control_mode` (`mode`: `body`, `head`, `left`, `right`), `get_profile`/
 `set_profile` (`profile`), `reset_poses`,
