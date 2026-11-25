@@ -352,6 +352,23 @@ static VkImageUsageFlags image_usage (u32 usage_flags)
     return usage;
 }
 
+// Storage usage only where the format allows it: most drivers have none for sRGB, and an image with
+// a usage its format lacks is invalid
+static VkImageUsageFlags image_usage_of_format (const R_VkDevice* device, const R_CreateImageInfo& info)
+{
+    VkImageUsageFlags usage = image_usage(info.usage_flags) | info.vk_extra_usage_flags;
+    if ((info.usage_flags & (u32)R_ImageUsageFlags::UnorderedAccess) && !format_is_depth(info.format))
+    {
+        VkFormatProperties properties = {};
+        vkGetPhysicalDeviceFormatProperties(device->physical_device, vk_format(info.format), &properties);
+        if (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)
+        {
+            usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+        }
+    }
+    return usage;
+}
+
 static b8 usage_allows_views (u32 usage_flags)
 {
     const u32 view_usages = (u32)R_ImageUsageFlags::Sampled | (u32)R_ImageUsageFlags::ColorAttachment | (u32)R_ImageUsageFlags::DepthStencilAttachment;
@@ -722,7 +739,7 @@ static R_ImageHandle vk_create_image (R_Device* base_device, const R_CreateImage
         return NULL_HANDLE;
     }
 
-    const VkImageUsageFlags usage = image_usage(info.usage_flags) | info.vk_extra_usage_flags;
+    const VkImageUsageFlags usage = image_usage_of_format(device, info);
 
     const b8  depth = format_is_depth(info.format);
     R_VkImage image = {
@@ -785,7 +802,7 @@ static b8 vk_image_flags_supported (const R_Device* base_device, const R_CreateI
 {
     const R_VkDevice* device = vk_device(base_device);
     ASSERT(device);
-    const VkImageUsageFlags  usage      = image_usage(info.usage_flags) | info.vk_extra_usage_flags;
+    const VkImageUsageFlags  usage      = image_usage_of_format(device, info);
     const VkImageCreateFlags flags      = (info.cube_compatible ? (VkImageCreateFlags)VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0u) | info.vk_extra_create_flags;
     VkImageFormatProperties  properties = {};
     return vkGetPhysicalDeviceImageFormatProperties(device->physical_device, vk_format(info.format), VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, usage, flags, &properties) == VK_SUCCESS;

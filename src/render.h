@@ -73,7 +73,7 @@ enum class R_ImageUsageFlags : u32
     Sampled                = 1 << 2,
     ColorAttachment        = 1 << 3,
     DepthStencilAttachment = 1 << 4,
-    UnorderedAccess        = 1 << 5, // D3D color images only; Vulkan and GL ignore it
+    UnorderedAccess        = 1 << 5, // color images, on Vulkan of formats that can be storage images; GL ignores it
 };
 
 enum class R_BufferUsageFlags : u32

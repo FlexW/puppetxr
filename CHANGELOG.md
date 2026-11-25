@@ -10,6 +10,10 @@ config start with **Breaking:**.
 - `XR_FB_hand_tracking_mesh` gives a sculpted hand fitted to a Quest 3's skeleton: one closed surface ending at the wrist, blended across the joints, where it was a prism per bone that bent with a hard edge.
 - Gestures in the simulator: JSON files of timed steps that move a hand's anchor to points given as expressions, turn its palm and shape its fingers, with params, events and errors that name the JSON path (`docs/hand-motion.md`); 14 built-in gestures (`data/motion/gestures/`) that shape, hold and place the hand as recorded on a Quest 3, and users' gestures from `gestures.paths` and `PUPPETXR_GESTURE_PATH`; `puppetxrctl gesture list|show|check|load|play|wait|events|stop` and the C API's gesture functions (API version 3).
 - The Simulator panel's Gestures tab plays gestures, poses a hand with a slider per finger and saves the pose as a gesture (`gestures.dir`).
+- Fixed: on Vulkan, swapchains with `XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT` are storage images; compute shaders writing to them were undefined behaviour and crashed some drivers.
+- `XR_EXT_uuid`.
+- Fixed: recording with a model over 64 KB loaded, or a large anchor store, wrote past the recorder's buffer.
+- The chair, case and pencil props have more shape and baked light.
 - Recording format 6: the shape a gesture gives a tracked hand, per frame; format 1 to 5 recordings still read.
 - As Meta's runtime a tracked hand outside the hand tracking cone stays active with the controller data source and zero joints, as a Quest 3 reports a lost hand; under puppetxr's own name it is inactive, as the spec says.
 - As Meta's runtime (runtime name `Oculus`, as for apps on OVRPlugin) `XR_FB_hand_tracking_aim` reports no pinch strength and no pinching bit, as a Quest 3 does to OpenXR apps; the pinch comes through `XR_EXT_hand_interaction`.

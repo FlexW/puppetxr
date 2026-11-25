@@ -2345,6 +2345,65 @@ TEST_F(OxrVulkanTest, requirements_missing_is_reported)
     EXPECT_EQ(xr.xrCreateSession(instance, &info, &session), XR_ERROR_GRAPHICS_REQUIREMENTS_CALL_MISSING);
 }
 
+// Regression: the Vulkan backend ignored the unordered access usage, so an app's storage views were of
+// images without storage usage: the CTS's SwapchainsUnorderedAccess crashed in lavapipe
+TEST_F(OxrVulkanTest, unordered_access_usage_makes_storage_images)
+{
+    create_vulkan();
+    if (IsSkipped() || HasFatalFailure())
+    {
+        return;
+    }
+    create_vulkan_session();
+    const i64 formats[] = { VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R8G8B8A8_SRGB };
+    u32 storable = 0;
+    for (const i64 format : formats)
+    {
+        XrSwapchainCreateInfo info = { .type = XR_TYPE_SWAPCHAIN_CREATE_INFO, .usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_UNORDERED_ACCESS_BIT, .format = format, .sampleCount = 1, .width = 16, .height = 16, .faceCount = 1, .arraySize = 1, .mipCount = 1 };
+        XrSwapchain swapchain = XR_NULL_HANDLE;
+        ASSERT_EQ(xr.xrCreateSwapchain(session, &info, &swapchain), XR_SUCCESS) << format;
+        VkFormatProperties properties = {};
+        vkGetPhysicalDeviceFormatProperties(vk_physical, (VkFormat)format, &properties);
+        if (!(properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT))
+        {
+            EXPECT_EQ(xr.xrDestroySwapchain(swapchain), XR_SUCCESS);
+            continue;
+        }
+        storable++;
+        XrSwapchainImageVulkan2KHR images[8] = {};
+        for (XrSwapchainImageVulkan2KHR& image : images)
+        {
+            image.type = XR_TYPE_SWAPCHAIN_IMAGE_VULKAN2_KHR;
+        }
+        u32 count = 0;
+        ASSERT_EQ(xr.xrEnumerateSwapchainImages(swapchain, 8, &count, (XrSwapchainImageBaseHeader*)images), XR_SUCCESS);
+
+        // What an app's compute shader needs: a view of the image as a storage descriptor
+        const VkImageViewCreateInfo view_info = { .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = images[0].image, .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = (VkFormat)format, .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 } };
+        VkImageView view = VK_NULL_HANDLE;
+        ASSERT_EQ(vkCreateImageView(vk_device, &view_info, nullptr, &view), VK_SUCCESS);
+        const VkDescriptorSetLayoutBinding    binding     = { .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT };
+        const VkDescriptorSetLayoutCreateInfo layout_info = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 1, .pBindings = &binding };
+        VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+        ASSERT_EQ(vkCreateDescriptorSetLayout(vk_device, &layout_info, nullptr, &layout), VK_SUCCESS);
+        const VkDescriptorPoolSize       pool_size = { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 };
+        const VkDescriptorPoolCreateInfo pool_info = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .maxSets = 1, .poolSizeCount = 1, .pPoolSizes = &pool_size };
+        VkDescriptorPool descriptors = VK_NULL_HANDLE;
+        ASSERT_EQ(vkCreateDescriptorPool(vk_device, &pool_info, nullptr, &descriptors), VK_SUCCESS);
+        const VkDescriptorSetAllocateInfo set_info = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, .descriptorPool = descriptors, .descriptorSetCount = 1, .pSetLayouts = &layout };
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        ASSERT_EQ(vkAllocateDescriptorSets(vk_device, &set_info, &set), VK_SUCCESS);
+        const VkDescriptorImageInfo image_info = { .imageView = view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
+        const VkWriteDescriptorSet  write      = { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .pImageInfo = &image_info };
+        vkUpdateDescriptorSets(vk_device, 1, &write, 0, nullptr); // the validation layer reports an image without storage usage
+        vkDestroyDescriptorPool(vk_device, descriptors, nullptr);
+        vkDestroyDescriptorSetLayout(vk_device, layout, nullptr);
+        vkDestroyImageView(vk_device, view, nullptr);
+        EXPECT_EQ(xr.xrDestroySwapchain(swapchain), XR_SUCCESS);
+    }
+    EXPECT_GT(storable, 0u);
+}
+
 TEST_F(OxrVulkanTest, swapchain_lifecycle_and_ordering)
 {
     create_vulkan();

@@ -109,12 +109,12 @@ Ordered: real takes first, then the model fitted to them, then gestures.
 - [ ] scenario tests of extensions once they land: palm_pose, maintenance1 GripSurface, eye gaze, dpad, plane detection, spatial anchors
 - [ ] the hand tracking scenarios take no screenshot of the hands; add one each with references made on Mesa 26.2.4 lavapipe (`--update`, then review)
 
-CTS results (1.1.63, non-interactive, `-H -T`, 2026-11-24 on an AMD Radeon RX 6700 XT; lavapipe 26.2.4 crashes in SwapchainsUnorderedAccess, the CTS's compute clear):
+CTS results (1.1.63, non-interactive, `-H -T`, 2026-11-24 on an AMD Radeon RX 6700 XT):
 
 | pass | command | result |
 |---|---|---|
 | cts_vulkan2 | `"~[interactive]" -G Vulkan2` | 103 cases, 0 failing (65 run, 38 skipped for missing extensions) |
-| cts_vulkan2, one case per process | same, on Mesa 25.2.8 lavapipe (2026-10-22) | 76 passed (XR_META_performance_metrics, XR_FB_space_warp among them), 25 skipped, 2 crash inside lavapipe 25.2.8 with and without this step's changes: SwapchainsUnorderedAccess (the CTS's compute clear), Timed_Pipelined_Frame_Submission |
+| cts_vulkan2, one case per process | same, on Mesa 25.2.8 lavapipe (2026-10-22) | 76 passed (XR_META_performance_metrics, XR_FB_space_warp among them), 25 skipped, 2 crashed inside lavapipe 25.2.8: SwapchainsUnorderedAccess (swapchain images without storage usage, fixed since) and Timed_Pipelined_Frame_Submission |
 | cts_vulkan | `"~[interactive]" -G Vulkan` | 103 cases, 0 failing |
 | cts_opengl | `"~[interactive]" -G OpenGL` (2026-10-21, on an X display) | 73 cases passed, 0 failing |
 | cts_headless | `"[XR_MND_headless]" -E XR_MND_headless` | 1 case, 0 failing |
