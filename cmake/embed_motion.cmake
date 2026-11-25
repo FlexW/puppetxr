@@ -1,6 +1,6 @@
 # Usage: cmake -DMOTION_DIR=<dir> -DOUTPUT=<file.cpp> -P embed_motion.cmake
-# Emits sim_embedded_motion (src/sim.h): every .json under <MOTION_DIR> (the hand model and the
-# built-in gestures) as zero-terminated text, named by its path below <MOTION_DIR> without .json and
+# Emits sim_embedded_motion (src/sim.h): every .json under <MOTION_DIR> (the hand model, the hand
+# mesh and the built-in gestures) as zero-terminated text, named by its path below <MOTION_DIR> without .json and
 # sorted, so the library carries them (docs/hand-motion.md).
 
 string(REPEAT "[0-9a-f]" 64 line_pattern)

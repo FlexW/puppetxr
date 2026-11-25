@@ -250,6 +250,7 @@ struct SIM_Sim
     SIM_GestureEvent gesture_events[SIM_MAX_GESTURE_EVENTS];
     u32              gesture_events_next;
     SIM_HandMesh   hand_meshes[2];
+    b8             hand_meshes_loaded;
     b8             gesture_seen[2][SIM_MICROGESTURES];      // a pulse was visible for a frame and ends at the next
     b8             gesture_keys[2][SIM_MICROGESTURES];      // held by a key last frame, so holding does not repeat
     SIM_Input      gesture_kind[2];                         // the thumb animates the last microgesture
@@ -1034,7 +1035,6 @@ static const char* const sim_hand_facings[SIM_HAND_FACINGS]  = { "pinch", "poke"
 static const Quat SIM_RIGHT_PALM_IN_GRIP = { -0.5f, -0.5f, -0.5f, 0.5f };
 static const Quat SIM_LEFT_PALM_IN_GRIP  = { -0.5f, 0.5f, 0.5f, 0.5f };
 
-#define SIM_HAND_MESH_SIDES 8
 
 static const char* const sim_hand_source_names[(u32)SIM_HandSource::Count] = { "controller", "hand" };
 
@@ -1364,56 +1364,17 @@ static Pose wrist_in_grip (const SIM_HandModel& model, b8 left)
     return zm::pose_mul(palm, { -palm_in_wrist, zm::QUAT_IDENTITY });
 }
 
-// A prism from a joint to its child, its rings in the joint's X/Y plane, capped at both ends,
-// moving with the joint `skin`
-static void add_bone (SIM_HandMesh& mesh, u32 joint, u32 skin, Vec3 end, f32 end_radius)
+// Decodes a base64 member of little-endian binary (hand_mesh.json) into exactly size bytes
+static b8 read_packed (const JsonValue& object, const char* key, Array<u8>& out, usize size)
 {
-    const Pose& frame  = mesh.bind_poses[joint];
-    const Vec3  x      = zm::rotate(frame.orientation, { 1.0f, 0.0f, 0.0f });
-    const Vec3  y      = zm::rotate(frame.orientation, { 0.0f, 1.0f, 0.0f });
-    const Vec3  along  = zm::normalize(end - frame.position);
-    const Vec3  ends[2]  = { frame.position, end };
-    const f32   radii[2] = { mesh.radii[joint], end_radius };
-    const u32   first  = mesh.vertices_count;
-    for (u32 r = 0; r < 2; r++)
-    {
-        for (u32 k = 0; k < SIM_HAND_MESH_SIDES; k++)
-        {
-            const f32  angle  = (f32)k * (2.0f * zm::PI / (f32)SIM_HAND_MESH_SIDES);
-            const Vec3 normal = x * zm::cos(angle) + y * zm::sin(angle);
-            const u32  v      = mesh.vertices_count++;
-            mesh.positions[v] = ends[r] + normal * radii[r];
-            mesh.normals[v]   = normal;
-            mesh.uvs[v]       = { (f32)k / (f32)SIM_HAND_MESH_SIDES, (f32)r };
-            mesh.joints[v]    = (u8)skin;
-        }
-    }
-    const u32 base_center = mesh.vertices_count++;
-    const u32 tip_center  = mesh.vertices_count++;
-    mesh.positions[base_center] = ends[0] - along * (radii[0] * 0.5f);
-    mesh.normals[base_center]   = -along;
-    mesh.uvs[base_center]       = { 0.5f, 0.0f };
-    mesh.joints[base_center]    = (u8)skin;
-    mesh.positions[tip_center]  = ends[1] + along * (radii[1] * 0.8f);
-    mesh.normals[tip_center]    = along;
-    mesh.uvs[tip_center]        = { 0.5f, 1.0f };
-    mesh.joints[tip_center]     = (u8)skin;
-
-    for (u32 k = 0; k < SIM_HAND_MESH_SIDES; k++)
-    {
-        const u32 a0   = first + k;
-        const u32 a1   = first + (k + 1) % SIM_HAND_MESH_SIDES;
-        const u32 b0   = a0 + SIM_HAND_MESH_SIDES;
-        const u32 b1   = a1 + SIM_HAND_MESH_SIDES;
-        const u32 tris[12] = { a0, b0, a1, a1, b0, b1, b0, tip_center, b1, a1, base_center, a0 };
-        for (const u32 index : tris)
-        {
-            mesh.indices[mesh.indices_count++] = (i16)index;
-        }
-    }
+    const char* text   = nullptr;
+    usize       length = 0;
+    out.length         = 0;
+    return json_is_string(json_find(object, key)) && json_raw(json_find(object, key), text, length) && base64_decode(text, length, out, size) && out.length == size;
 }
 
-static void build_hand_mesh (const SIM_HandModel& model, SIM_HandMesh& mesh, b8 left)
+// The open hand the mesh is skinned to: bind poses in the wrist frame, radii and parents
+static void hand_mesh_skeleton (const SIM_HandModel& model, SIM_HandMesh& mesh, b8 left)
 {
     mesh                = {};
     SIM_HandShape shape = hand_shape(0.0f, 0.0f);
@@ -1424,18 +1385,93 @@ static void build_hand_mesh (const SIM_HandModel& model, SIM_HandMesh& mesh, b8 
         mesh.radii[j]   = model.radii[j];
         mesh.parents[j] = joint_parent(j);
     }
-    for (u32 j = (u32)SIM_HandJoint::ThumbMetacarpal; j < SIM_HAND_JOINT_COUNT; j++)
+}
+
+// data/motion/hand_mesh.json (tools/blender/puppetxr_hand_mesh.py): one closed surface of the right hand in the open
+// hand's wrist frame, each vertex following up to two joints; the left hand (meshes[0]) mirrors
+// it across x, its triangles turned to stay counter-clockwise seen from outside. The targets are
+// little-endian
+static b8 load_hand_mesh (const char* json, SIM_HandMesh (&meshes)[2])
+{
+    JsonParser* parser = json_parse_from_string(json);
+    if (!parser)
     {
-        const b8 tip = j == (u32)SIM_HandJoint::ThumbTip || (j >= (u32)SIM_HandJoint::IndexMetacarpal && (j - (u32)SIM_HandJoint::IndexMetacarpal) % 5 == 4);
-        // Meta's hand skeleton has no index, middle or ring metacarpal; OVRPlugin cannot map a
-        // vertex skinned to one, and they move with the wrist anyway
-        const b8 rigid = j == (u32)SIM_HandJoint::IndexMetacarpal || j == (u32)SIM_HandJoint::MiddleMetacarpal || j == (u32)SIM_HandJoint::RingMetacarpal;
-        if (!tip)
+        return false;
+    }
+    Array<u8> bytes = {};
+    defer
+    {
+        json_release(parser);
+        bytes.release();
+    };
+    SIM_HandMesh&   right     = meshes[1];
+    SIM_HandMesh&   left      = meshes[0];
+    const JsonValue root      = json_get_root(parser);
+    u32             count     = 0;
+    u32             triangles = 0;
+    if (!json_find_uint(root, "vertices", count) || !json_find_uint(root, "triangles", triangles) || count == 0 || count > SIM_HAND_MESH_MAX_VERTICES || triangles * 3 > SIM_HAND_MESH_MAX_INDICES)
+    {
+        return false;
+    }
+    const struct
+    {
+        const char* key;
+        void*       out;
+        usize       size;
+    } arrays[] = {
+        { "positions", right.positions, count * sizeof(Vec3) },
+        { "normals", right.normals, count * sizeof(Vec3) },
+        { "uvs", right.uvs, count * sizeof(Vec2) },
+        { "weights", right.weights, count * sizeof(right.weights[0]) },
+        { "joints", right.joints, count * sizeof(right.joints[0]) },
+        { "indices", nullptr, (usize)triangles * 3 * sizeof(u16) },
+    };
+    for (const auto& array : arrays)
+    {
+        if (!read_packed(root, array.key, bytes, array.size))
         {
-            add_bone(mesh, j, rigid ? (u32)SIM_HandJoint::Wrist : j, mesh.bind_poses[j + 1].position, mesh.radii[j + 1]);
+            return false;
+        }
+        if (array.out)
+        {
+            memory_copy(array.out, bytes.data, bytes.length);
         }
     }
-    ASSERT(mesh.vertices_count <= SIM_HAND_MESH_MAX_VERTICES && mesh.indices_count <= SIM_HAND_MESH_MAX_INDICES);
+    for (u32 v = 0; v < count; v++)
+    {
+        const Vec3 p = right.positions[v];
+        const Vec3 n = right.normals[v];
+        const f32* w = right.weights[v];
+        if (!zm::is_finite(p.x + p.y + p.z) || !zm::is_finite(n.x + n.y + n.z) || zm::length(n) < 0.5f || !(w[0] >= 0.0f && w[1] >= 0.0f && zm::abs(w[0] + w[1] - 1.0f) < 0.01f) || right.joints[v][0] >= SIM_HAND_JOINT_COUNT || right.joints[v][1] >= SIM_HAND_JOINT_COUNT)
+        {
+            return false;
+        }
+        right.normals[v]   = zm::normalize(n);
+        left.positions[v]  = { -p.x, p.y, p.z };
+        left.normals[v]    = { -right.normals[v].x, right.normals[v].y, right.normals[v].z };
+        left.uvs[v]        = right.uvs[v];
+        memory_copy(left.weights[v], right.weights[v], sizeof(right.weights[v]));
+        memory_copy(left.joints[v], right.joints[v], sizeof(right.joints[v]));
+    }
+    for (u32 i = 0; i < triangles * 3; i++)
+    {
+        u16 index = 0;
+        memory_copy(&index, bytes.data + (usize)i * sizeof(u16), sizeof(u16));
+        if (index >= count)
+        {
+            return false;
+        }
+        right.indices[i] = (i16)index;
+        // Mirrored, a triangle turns the other way: its last two corners swap
+        const u32 corner                  = i % 3;
+        left.indices[i - corner + (3 - corner) % 3] = (i16)index;
+    }
+    for (SIM_HandMesh& mesh : meshes)
+    {
+        mesh.vertices_count = count;
+        mesh.indices_count  = triangles * 3;
+    }
+    return true;
 }
 
 // The thumb swings out and back over SIM_MICROGESTURE_NS: yaw for left and right (mirrored on
@@ -5272,8 +5308,10 @@ SIM_Sim* sim_create (const SIM_Config& config)
         }
         LOG_INFO("Gestures: %u from %s", loaded, config.gesture_paths[i]);
     }
-    build_hand_mesh(sim->hand_model, sim->hand_meshes[0], true);
-    build_hand_mesh(sim->hand_model, sim->hand_meshes[1], false);
+    // The geometry loads when an app first asks for it (sim_get_hand_mesh): decoding it took
+    // milliseconds at every start, and most sessions never draw it
+    hand_mesh_skeleton(sim->hand_model, sim->hand_meshes[0], true);
+    hand_mesh_skeleton(sim->hand_model, sim->hand_meshes[1], false);
 
     sim->tracking_drift = zm::POSE_IDENTITY;
     sim->drift_velocity = zm::is_finite(config.drift_velocity.x) && zm::is_finite(config.drift_velocity.y) && zm::is_finite(config.drift_velocity.z) ? config.drift_velocity : Vec3{};
@@ -6200,10 +6238,23 @@ void sim_hand_joints (const SIM_Sim* sim, SIM_Device hand, const Pose& grip, SIM
     }
 }
 
-const SIM_HandMesh& sim_get_hand_mesh (const SIM_Sim* sim, SIM_Device hand)
+const SIM_HandMesh& sim_get_hand_mesh (SIM_Sim* sim, SIM_Device hand)
 {
     ASSERT(sim);
     ASSERT_MSG(is_hand(hand), "device %u is not a hand", (u32)hand);
+    if (!sim->hand_meshes_loaded)
+    {
+        const char* json = nullptr;
+        for (u32 i = 0; i < sim_embedded_motion_count; i++)
+        {
+            json = sim_embedded_motion[i].name && cstr_equal(sim_embedded_motion[i].name, "hand_mesh") ? sim_embedded_motion[i].json : json;
+        }
+        if (!json || !load_hand_mesh(json, sim->hand_meshes))
+        {
+            FAIL_MSG("data/motion/hand_mesh.json is missing from the build or invalid");
+        }
+        sim->hand_meshes_loaded = true;
+    }
     return sim->hand_meshes[hand == SIM_Device::LeftHand ? 0 : 1];
 }
 

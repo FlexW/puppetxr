@@ -40,6 +40,23 @@ static void crc32_init ()
     crc32_table_ready = true;
 }
 
+static i32 base64_digit (char c)
+{
+    if (c >= 'A' && c <= 'Z')
+    {
+        return c - 'A';
+    }
+    if (c >= 'a' && c <= 'z')
+    {
+        return c - 'a' + 26;
+    }
+    if (c >= '0' && c <= '9')
+    {
+        return c - '0' + 52;
+    }
+    return c == '+' ? 62 : (c == '/' ? 63 : -1);
+}
+
 static b8 json_compute_subtree_ends (JsonParser* parser, u32 index, u32 depth, u32& out_end)
 {
     if (depth > JSON_MAX_DEPTH || index >= parser->tokens_count)
@@ -314,6 +331,42 @@ static f64 json_pow10 (i32 n)
 //
 // Hashes
 //
+
+b8 base64_decode (const char* text, usize length, Array<u8>& out, usize max_size)
+{
+    out.reserve(out.length + length / 4 * 3 + 3);
+    u32 bits  = 0;
+    u32 count = 0;
+    for (usize i = 0; i < length; i++)
+    {
+        const char c = text[i];
+        if (c == '\\')
+        {
+            continue;
+        }
+        if (c == '=')
+        {
+            break;
+        }
+        const i32 digit = base64_digit(c);
+        if (digit < 0)
+        {
+            return false;
+        }
+        bits = bits << 6 | (u32)digit;
+        count += 6;
+        if (count >= 8)
+        {
+            count -= 8;
+            out.data[out.length++] = (u8)(bits >> count);
+        }
+        if (out.length > max_size)
+        {
+            return false;
+        }
+    }
+    return true;
+}
 
 u64 hash (const u8* key, usize size)
 {

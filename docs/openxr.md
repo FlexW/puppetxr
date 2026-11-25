@@ -406,11 +406,17 @@ the frequency hint and unextrapolated poses need `XR_EXT_hand_tracking`; microge
   `sim_predicted_display_time`, the time the simulation computes it for, whatever the requested
   time; the base space is still located at the requested time. `captureTime` is that time, 0
   when the hand is not reported, and is written only when requested.
-- `xrGetHandMeshFB`: `sim_get_hand_mesh`, built at `sim_create`: 19 tapered octagonal prisms,
-  one per bone, every vertex skinned to its bone's joint with weight 1, in the open hand's
-  wrist frame (the bind poses). Zero capacities return the counts. Only joints of Meta's 24 bone
-  hand skeleton are skinned to: the index, middle and ring metacarpal prisms move with the
-  wrist, and the unused blend slots repeat the joint. OVRPlugin converts the mesh to that
+- `xrGetHandMeshFB`: `sim_get_hand_mesh`, `data/motion/hand_mesh.json` loaded at its first call
+  (`load_hand_mesh`; decoding it at every start cost milliseconds) over the bind poses built at
+  `sim_create`. The mesh is a sculpted hand fitted to the open hand of
+  `data/motion/hand_model.json` (docs/hand-motion.md, Hand model): one closed surface of about
+  3000 vertices that ends at the wrist. Nothing lies inside it, so a translucent hand shows no inner
+  parts. Each vertex follows up to two joints (linear blend skinning), so a bend spreads across
+  the joint.
+  The left hand mirrors the right. The arrays are base64 of little-endian binary in the JSON.
+  Zero capacities return the counts. Only joints of Meta's 24 bone hand skeleton are skinned to:
+  the palm and the index, middle and ring metacarpals move with the wrist, and the unused blend
+  slots repeat the first joint. OVRPlugin converts the mesh to that
   skeleton and maps the palm and those metacarpals to no bone (65535), which Unreal's hand
   component fails an array check on.
 

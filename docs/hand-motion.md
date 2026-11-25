@@ -38,7 +38,17 @@ recorder takes measured on a Quest 3, embedded by `cmake/embed_motion.cmake` and
 
 ```
 python3 tools/hand_fit.py <takes dir>... -o data/motion/hand_model.json
+blender -b data/motion/hand.blend --factory-startup --disable-autoexec --python tools/blender/puppetxr_hand_mesh.py -- data/motion/hand_model.json data/motion/hand_mesh.json
 ```
+
+`data/motion/hand_mesh.json`, the hand's skinned mesh (`XR_FB_hand_tracking_mesh`, docs/openxr.md),
+is the sculpt of `data/motion/hand.blend` fitted to the model's open hand and goes with it: after a
+refit run the second command too (`Sim.the_hand_mesh_fits_the_hand_model` fails until then). The
+sculpt is "Hand - Realistic" by Dan Ulrich of Blender Studio's Human Base Meshes 1.4.1 (CC0), with
+an empty per joint. Each bone maps the skin around it onto the same bone of the open hand: turned,
+stretched along it, scaled across it. Blender's heat weights blend the bones and skin the result,
+smoothed (`SMOOTHING`) so a bend spreads over several rings, the two largest kept per vertex. The
+forearm is cut `FOREARM` behind the wrist joint, as a Quest's hand ends there.
 
 - **Skeleton**: each joint's offset in its parent's frame, averaged over `still_open`, and its
   radius, the median. A Quest 3's skeleton is fixed (a bone varies by under 0.3 mm), and its

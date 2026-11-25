@@ -1218,59 +1218,6 @@ static b8 split_gltf (const u8* data, usize size, Array<char>& out_json, const u
     return true;
 }
 
-static i32 base64_digit (char c)
-{
-    if (c >= 'A' && c <= 'Z')
-    {
-        return c - 'A';
-    }
-    if (c >= 'a' && c <= 'z')
-    {
-        return c - 'a' + 26;
-    }
-    if (c >= '0' && c <= '9')
-    {
-        return c - '0' + 52;
-    }
-    return c == '+' ? 62 : (c == '/' ? 63 : -1);
-}
-
-// RFC 4648 base64; JSON may escape the slash, padding ends the data
-static b8 decode_base64 (const char* text, usize length, Array<u8>& out)
-{
-    u32 bits  = 0;
-    u32 count = 0;
-    for (usize i = 0; i < length; i++)
-    {
-        const char c = text[i];
-        if (c == '\\')
-        {
-            continue;
-        }
-        if (c == '=')
-        {
-            break;
-        }
-        const i32 digit = base64_digit(c);
-        if (digit < 0)
-        {
-            return false;
-        }
-        bits = bits << 6 | (u32)digit;
-        count += 6;
-        if (count >= 8)
-        {
-            count -= 8;
-            out.add((u8)(bits >> count));
-        }
-        if (out.length > W_MODEL_MAX_FILE_SIZE)
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
 static i32 hex_digit (char c)
 {
     if (c >= '0' && c <= '9')
@@ -1301,7 +1248,7 @@ static b8 read_uri (W_Gltf& gltf, const JsonValue& value, const u8*& out_data, u
             start = memory_equal(text + i, ";base64,", 8) ? i + 8 : 0;
         }
         Array<u8> bytes = {};
-        if (start == 0 || !decode_base64(text + start, length - start, bytes))
+        if (start == 0 || !base64_decode(text + start, length - start, bytes, W_MODEL_MAX_FILE_SIZE))
         {
             bytes.release();
             LOG_ERROR("Model: a data URI that is not base64");

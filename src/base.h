@@ -411,6 +411,10 @@ u64 hash     (const u8* key, usize size);
 u32 hash_u32 (const u8* key, usize size);
 u32 crc32    (const u8* data, usize size);
 
+// RFC 4648 base64 appended to out; JSON may escape the slash, padding ends the data. False for a
+// character outside the alphabet or more than max_size bytes
+b8 base64_decode (const char* text, usize length, Array<u8>& out, usize max_size);
+
 constexpr u64 hash_cstr (const char* str)
 {
     u64 h = 0xCBF29CE484222325ull;

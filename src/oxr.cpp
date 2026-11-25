@@ -15383,10 +15383,11 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrGetHandMeshFB (XrHandTrackerEXT hand
         mesh->vertexPositions[v]    = { p.x, p.y, p.z };
         mesh->vertexNormals[v]      = { n.x, n.y, n.z };
         mesh->vertexUVs[v]          = { source.uvs[v].x, source.uvs[v].y };
-        // Unused slots repeat the joint: OVRPlugin maps every slot, and the palm (0) has no bone
-        const i16 joint             = (i16)source.joints[v];
-        mesh->vertexBlendIndices[v] = { joint, joint, joint, joint };
-        mesh->vertexBlendWeights[v] = { 1.0f, 0.0f, 0.0f, 0.0f };
+        // Unused slots repeat a joint: OVRPlugin maps every slot, and the palm (0) has no bone
+        const i16 first             = (i16)source.joints[v][0];
+        const i16 second            = (i16)source.joints[v][1];
+        mesh->vertexBlendIndices[v] = { first, second, first, first };
+        mesh->vertexBlendWeights[v] = { source.weights[v][0], source.weights[v][1], 0.0f, 0.0f };
     }
     memory_copy(mesh->indices, source.indices, source.indices_count * sizeof(i16));
     return XR_SUCCESS;

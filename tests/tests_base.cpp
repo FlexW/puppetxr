@@ -58,6 +58,24 @@ struct Point
 
 } // namespace
 
+TEST(Base, base64_decodes_rfc_4648)
+{
+    Array<u8> out = {};
+    defer { out.release(); };
+    ASSERT_TRUE(base64_decode("aGFuZHM=", 8, out, 16));
+    ASSERT_EQ(out.length, 5u);
+    EXPECT_TRUE(memory_equal(out.data, "hands", 5));
+    out.length = 0;
+    ASSERT_TRUE(base64_decode("/w\\/+", 5, out, 16)) << "JSON may escape the slash";
+    ASSERT_EQ(out.length, 3u);
+    EXPECT_EQ(out[0], 0xff);
+    EXPECT_EQ(out[1], 0x0f);
+    EXPECT_EQ(out[2], 0xfe);
+    out.length = 0;
+    EXPECT_FALSE(base64_decode("a*b=", 4, out, 16));
+    EXPECT_FALSE(base64_decode("aGFuZHM=", 8, out, 4)) << "more than max_size";
+}
+
 TEST(Base, array_add_remove)
 {
     Array<i32> a = {};

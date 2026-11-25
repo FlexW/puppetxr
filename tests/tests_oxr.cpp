@@ -17839,9 +17839,11 @@ TEST_F(OxrHandTest, fb_mesh_two_call)
     EXPECT_TRUE(zm::near(vec(bind_poses[XR_HAND_JOINT_INDEX_TIP_EXT].position), expected.bind_poses[XR_HAND_JOINT_INDEX_TIP_EXT].position, 0.0f));
     for (u32 v = 0; v < expected.vertices_count; v++)
     {
-        EXPECT_EQ(blend_indices[v].x, (i16)expected.joints[v]);
-        EXPECT_FLOAT_EQ(blend_weights[v].x, 1.0f);
-        EXPECT_FLOAT_EQ(blend_weights[v].y + blend_weights[v].z + blend_weights[v].w, 0.0f);
+        EXPECT_EQ(blend_indices[v].x, (i16)expected.joints[v][0]);
+        EXPECT_EQ(blend_indices[v].y, (i16)expected.joints[v][1]);
+        EXPECT_FLOAT_EQ(blend_weights[v].x, expected.weights[v][0]);
+        EXPECT_FLOAT_EQ(blend_weights[v].y, expected.weights[v][1]);
+        EXPECT_FLOAT_EQ(blend_weights[v].z + blend_weights[v].w, 0.0f);
         EXPECT_TRUE(zm::near(vec(positions[v]), expected.positions[v], 0.0f));
     }
     for (u32 i = 0; i < expected.indices_count; i++)

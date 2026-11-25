@@ -572,11 +572,12 @@ struct SIM_FaceFrame
     Pose eyes[2];                            // left, right
 };
 
-#define SIM_HAND_MESH_MAX_VERTICES 512
-#define SIM_HAND_MESH_MAX_INDICES  2048
+#define SIM_HAND_MESH_MAX_VERTICES 4096
+#define SIM_HAND_MESH_MAX_INDICES  24576
+#define SIM_HAND_MESH_INFLUENCES   2
 
-// A file of data/motion/ compiled into the library (cmake/embed_motion.cmake): the hand model and
-// the built-in gestures; name is its path below data/motion/ without .json
+// A file of data/motion/ compiled into the library (cmake/embed_motion.cmake): the hand model, the
+// hand mesh and the built-in gestures; name is its path below data/motion/ without .json
 struct SIM_EmbeddedMotion
 {
     const char* name;
@@ -596,7 +597,8 @@ struct SIM_HandMesh
     Vec3 positions[SIM_HAND_MESH_MAX_VERTICES];
     Vec3 normals[SIM_HAND_MESH_MAX_VERTICES];
     Vec2 uvs[SIM_HAND_MESH_MAX_VERTICES];
-    u8   joints[SIM_HAND_MESH_MAX_VERTICES];
+    u8   joints[SIM_HAND_MESH_MAX_VERTICES][SIM_HAND_MESH_INFLUENCES];  // linear blend skinning, the
+    f32  weights[SIM_HAND_MESH_MAX_VERTICES][SIM_HAND_MESH_INFLUENCES]; // weights summing to 1
     u32  vertices_count;
     i16  indices[SIM_HAND_MESH_MAX_INDICES]; // counter-clockwise seen from outside
     u32  indices_count;
@@ -1093,7 +1095,7 @@ b8                sim_hand_source_from_name  (const char* name, SIM_HandSource& 
 b8                sim_hand_has_input         (SIM_HandSource source, SIM_Controller controller, SIM_Device hand, SIM_Input input); // a Touch's X, Y and menu are the left one's, A, B and system the right one's; a tracked hand has trigger/value (pinch), squeeze/value (grab), menu/click and the microgestures
 b8                sim_hand_in_view           (const SIM_Sim* sim, const SIM_Sample& sample, SIM_Device hand); // within the hand tracking cone of the sampled head
 void              sim_hand_joints            (const SIM_Sim* sim, SIM_Device hand, const Pose& grip, SIM_HandMotion motion, SIM_HandJoints& out_joints); // stage space, fingers from the hand's current inputs
-const SIM_HandMesh& sim_get_hand_mesh        (const SIM_Sim* sim, SIM_Device hand);
+const SIM_HandMesh& sim_get_hand_mesh        (SIM_Sim* sim, SIM_Device hand); // the geometry loads at the first call
 Pose              sim_get_detached_pose      (const SIM_Sim* sim, SIM_Device hand); // grip pose of the controller a tracked hand put down where it switched to hand tracking
 void              sim_set_detached_pose      (SIM_Sim* sim, SIM_Device hand, const Pose& pose);
 Pose              sim_detached_hand_pose     (const SIM_Sim* sim, SIM_Device hand, SIM_HandPose kind); // no hand holds it: pinch and poke are its aim pose

@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 static SIM_Sim* make_sim (SIM_ClockMode mode = SIM_ClockMode::FixedStep)
@@ -3056,6 +3057,135 @@ TEST(Sim, pinch_and_poke_poses_come_from_the_fingers)
     EXPECT_TRUE(zm::near(sim_get_hand_pose(sim, SIM_Device::RightHand, SIM_HandPose::Poke).position, held.poses[(u32)SIM_HandJoint::IndexTip].position, 1e-5f));
 }
 
+static int compare_u64 (const void* a, const void* b)
+{
+    const u64 x = *(const u64*)a;
+    const u64 y = *(const u64*)b;
+    return x < y ? -1 : x > y ? 1 : 0;
+}
+
+// The mesh was a prism per bone, each moving with one joint: where a finger bent, two prisms
+// crossed with a hard edge; then tubes per finger and a palm that overlapped, which a translucent
+// hand showed inside it and where the fingers met the back of the hand. A Quest's hand is one
+// closed skin, blended across the joints, ending at the wrist
+TEST(Sim, the_hand_mesh_is_one_closed_skin)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    for (const SIM_Device hand : { SIM_Device::LeftHand, SIM_Device::RightHand })
+    {
+        const SIM_HandMesh& mesh = sim_get_hand_mesh(sim, hand);
+
+        // Closed and consistently turned: every edge belongs to two triangles, once each way
+        Array<u64> edges = {};
+        defer { edges.release(); };
+        for (u32 i = 0; i < mesh.indices_count; i++)
+        {
+            const u64 a = (u64)mesh.indices[i];
+            const u64 b = (u64)mesh.indices[i % 3 == 2 ? i - 2 : i + 1];
+            edges.add(a << 32 | b);
+        }
+        qsort(edges.data, edges.length, sizeof(u64), compare_u64);
+        u32 open = 0;
+        for (u32 e = 0; e < edges.length; e++)
+        {
+            const u64 reverse = (edges[e] & 0xffffffffull) << 32 | edges[e] >> 32;
+            open += (e > 0 && edges[e] == edges[e - 1]) || !bsearch(&reverse, edges.data, edges.length, sizeof(u64), compare_u64) ? 1u : 0u;
+        }
+        EXPECT_EQ(open, 0u) << "edges not shared by two triangles turned the same way, hand " << (u32)hand;
+
+        // One piece, by union-find over the triangles' vertices
+        Array<u32> parent = {};
+        defer { parent.release(); };
+        parent.resize(mesh.vertices_count);
+        for (u32 v = 0; v < mesh.vertices_count; v++)
+        {
+            parent[v] = v;
+        }
+        auto root = [&] (u32 v)
+        {
+            while (parent[v] != v)
+            {
+                v = parent[v];
+            }
+            return v;
+        };
+        for (u32 i = 0; i < mesh.indices_count; i++)
+        {
+            parent[root((u32)mesh.indices[i])] = root((u32)mesh.indices[i - i % 3]);
+        }
+        u32 pieces = 0;
+        for (u32 v = 0; v < mesh.vertices_count; v++)
+        {
+            pieces += root(v) == v ? 1u : 0u;
+        }
+        EXPECT_EQ(pieces, 1u);
+
+        // Where two bones meet, the skin follows both
+        u32 blended[SIM_HAND_JOINT_COUNT] = {};
+        for (u32 v = 0; v < mesh.vertices_count; v++)
+        {
+            if (mesh.weights[v][1] > 0.25f)
+            {
+                blended[mesh.joints[v][0]]++;
+                blended[mesh.joints[v][1]]++;
+            }
+        }
+        for (const SIM_HandJoint knuckle : { SIM_HandJoint::ThumbProximal, SIM_HandJoint::ThumbDistal, SIM_HandJoint::IndexProximal, SIM_HandJoint::IndexIntermediate, SIM_HandJoint::IndexDistal, SIM_HandJoint::LittleDistal })
+        {
+            EXPECT_GT(blended[(u32)knuckle], 0u) << (u32)knuckle;
+        }
+
+        // Counter-clockwise seen from outside: each face turns with its vertices' normals
+        u32 inward = 0;
+        for (u32 i = 0; i < mesh.indices_count; i += 3)
+        {
+            const Vec3 a    = mesh.positions[mesh.indices[i]];
+            const Vec3 b    = mesh.positions[mesh.indices[i + 1]];
+            const Vec3 c    = mesh.positions[mesh.indices[i + 2]];
+            const Vec3 n    = mesh.normals[mesh.indices[i]] + mesh.normals[mesh.indices[i + 1]] + mesh.normals[mesh.indices[i + 2]];
+            inward += zm::dot(zm::cross(b - a, c - a), n) <= 0.0f ? 1u : 0u;
+        }
+        EXPECT_EQ(inward, 0u) << "hand " << (u32)hand;
+
+        // As on a Quest the hand ends where it goes over into the arm
+        f32 behind = 0.0f;
+        const Vec3 forward = zm::normalize(mesh.bind_poses[(u32)SIM_HandJoint::MiddleProximal].position - mesh.bind_poses[(u32)SIM_HandJoint::Wrist].position);
+        for (u32 v = 0; v < mesh.vertices_count; v++)
+        {
+            behind = zm::max(behind, -zm::dot(mesh.positions[v] - mesh.bind_poses[(u32)SIM_HandJoint::Wrist].position, forward));
+        }
+        EXPECT_GT(behind, 0.01f);
+        EXPECT_LT(behind, 0.03f);
+    }
+}
+
+// data/motion/hand_mesh.json is generated for the skeleton of data/motion/hand_model.json; refitting the
+// model needs tools/blender/puppetxr_hand_mesh.py run again
+TEST(Sim, the_hand_mesh_fits_the_hand_model)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    const char* json = nullptr;
+    for (u32 i = 0; i < sim_embedded_motion_count; i++)
+    {
+        json = cstr_equal(sim_embedded_motion[i].name, "hand_mesh") ? sim_embedded_motion[i].json : json;
+    }
+    ASSERT_NE(json, nullptr);
+    JsonParser* parser = json_parse_from_string(json);
+    ASSERT_NE(parser, nullptr);
+    defer { json_release(parser); };
+    const JsonValue     bind = json_find(json_get_root(parser), "bind");
+    const SIM_HandMesh& mesh = sim_get_hand_mesh(sim, SIM_Device::RightHand);
+    ASSERT_EQ(json_length(bind), SIM_HAND_JOINT_COUNT);
+    for (u32 j = 0; j < SIM_HAND_JOINT_COUNT; j++)
+    {
+        Vec3 p = {};
+        ASSERT_TRUE(json_as_float(json_at(json_at(bind, j), 0), p.x) && json_as_float(json_at(json_at(bind, j), 1), p.y) && json_as_float(json_at(json_at(bind, j), 2), p.z));
+        EXPECT_LT(zm::length(p - mesh.bind_poses[j].position), 0.001f) << "joint " << j << ": run tools/blender/puppetxr_hand_mesh.py";
+    }
+}
+
 TEST(Sim, hand_mesh_is_skinned_to_the_open_hand)
 {
     SIM_Sim* sim = make_sim();
@@ -3076,12 +3206,20 @@ TEST(Sim, hand_mesh_is_skinned_to_the_open_hand)
         }
         for (u32 v = 0; v < mesh.vertices_count; v++)
         {
-            ASSERT_LT(mesh.joints[v], (u8)SIM_HAND_JOINT_COUNT);
             EXPECT_NEAR(zm::length(mesh.normals[v]), 1.0f, 1e-4f);
-            // Every vertex lies on its bone's surface, so it stays within a wrist to knuckle length
-            // (about 0.1 m measured) of its joint; the metacarpals are skinned to the wrist
-            const Vec3 local = zm::transform_point(zm::pose_inverse(mesh.bind_poses[mesh.joints[v]]), mesh.positions[v]);
-            EXPECT_LT(zm::length(local), 0.12f) << v;
+            EXPECT_NEAR(mesh.weights[v][0] + mesh.weights[v][1], 1.0f, 1e-6f) << v;
+            for (u32 i = 0; i < SIM_HAND_MESH_INFLUENCES; i++)
+            {
+                ASSERT_LT(mesh.joints[v][i], (u8)SIM_HAND_JOINT_COUNT);
+                // Every vertex lies on its bones' surface, so it stays within a wrist to knuckle
+                // length (about 0.1 m measured) of the joints it mostly follows; the metacarpals
+                // are skinned to the wrist, and a knuckle follows the wrist a little from further
+                if (mesh.weights[v][i] >= 0.25f)
+                {
+                    const Vec3 local = zm::transform_point(zm::pose_inverse(mesh.bind_poses[mesh.joints[v][i]]), mesh.positions[v]);
+                    EXPECT_LT(zm::length(local), 0.12f) << v;
+                }
+            }
         }
         EXPECT_EQ(mesh.parents[(u32)SIM_HandJoint::Wrist], (u8)SIM_HandJoint::Wrist) << "the root is its own parent";
         EXPECT_EQ(mesh.parents[(u32)SIM_HandJoint::IndexTip], (u8)SIM_HandJoint::IndexDistal);
