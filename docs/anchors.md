@@ -128,6 +128,21 @@ it was shared with (`docs/world.md`).
   `docs/recording-format.md`), so a replay sees the cloud as it was even after the owner
   erased the anchor.
 
+## Sharing rooms
+
+A host shares the room entity with a group (`xrShareSpacesMETA`) and a guest queries the group
+(`xrQuerySpacesFB`, group filter, location CLOUD), as Horizon OS space sharing does.
+
+- Rooms of the loaded room support SHARABLE with a sharing extension enabled; their children do not,
+  a room is shared whole.
+- A share writes the room's cloud file like an anchor's, with the room entity's uuid and its pose
+  in room space.
+- A cloud query that finds a room of the loaded room, the same version of it, returns the room
+  entity and every entity of the room (planes, volumes, the global mesh) with their scene
+  components, not an anchor: the guest stands in the same physical room, so its own copy of
+  the room is the host's scan, placed by the guest's own origin offset. Filters apply to each
+  entity.
+
 ## Colocation discovery
 
 Apps find each other with `XR_META_colocation_discovery`, usually to exchange the group uuid

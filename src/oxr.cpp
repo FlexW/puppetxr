@@ -2083,6 +2083,11 @@ static u32 entity_components (const OXR_Instance* instance, const W_Entity& enti
     {
         mask |= component_bit(OXR_Component::SpaceContainer);
     }
+    // Rooms are shared whole, as on Horizon OS (docs/anchors.md, Sharing rooms)
+    if ((instance->ext.FB_spatial_entity_sharing || instance->ext.META_spatial_entity_sharing) && (entity.components & (u32)W_ComponentFlags::Room))
+    {
+        mask |= component_bit(OXR_Component::Sharable);
+    }
     if (instance->ext.META_spatial_entity_mesh && (entity.components & (u32)W_ComponentFlags::Mesh))
     {
         mask |= component_bit(OXR_Component::TriangleMesh);
@@ -2459,7 +2464,29 @@ static void run_query (OXR_Instance* instance, OXR_SessionHandle session, u64 re
         }
         for (const W_StoredAnchor& anchor : cloud)
         {
-            if (query->anchors.length < max_results && matches_all(anchor_components(instance), anchor.uuid, filters, filters_count, exclude) && stored_in_this_room(rt, anchor))
+            if (!stored_in_this_room(rt, anchor))
+            {
+                continue;
+            }
+            // A shared room loads as the room and everything in it, the entities of the loaded
+            // room: whoever shared it stood in the same physical room
+            u32 room_entity = 0;
+            if (rt->world && w_find_entity(rt->world, anchor.uuid, room_entity) && (w_entity(rt->world, room_entity).components & (u32)W_ComponentFlags::Room))
+            {
+                const W_Room& room     = w_room(rt->world, w_entity(rt->world, room_entity).room);
+                const u32*    children = w_room_indices(rt->world) + room.children_first;
+                for (u32 i = 0; i <= room.children_count && query->entities.length + query->anchors.length < max_results; i++)
+                {
+                    const u32       index  = i == 0 ? room_entity : children[i - 1];
+                    const W_Entity& entity = w_entity(rt->world, index);
+                    if (!query->entities.contains(index) && matches_all(entity_components(instance, entity), entity.uuid, filters, filters_count, exclude))
+                    {
+                        query->entities.add(index);
+                    }
+                }
+                continue;
+            }
+            if (query->entities.length + query->anchors.length < max_results && matches_all(anchor_components(instance), anchor.uuid, filters, filters_count, exclude))
             {
                 query->anchors.add(anchor);
             }
@@ -9826,6 +9853,10 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrGetSpaceRoomMeshFaceIndicesMETA (XrS
 static W_StoredAnchor stored_anchor_of (const OXR_Runtime* rt, const OXR_Space* space)
 {
     W_StoredAnchor anchor = { .uuid = space->uuid, .room_hash = rt->world ? w_content_hash(rt->world) : 0, .pose = zm::pose_mul(rt->room_from_stage, space->anchor_pose) };
+    if (space->kind == OXR_SpaceKind::Entity && rt->world)
+    {
+        anchor.pose = w_entity(rt->world, space->entity).pose; // a shared room, kept in room space
+    }
     cstr_copy(anchor.room, sizeof(anchor.room), rt->room);
     return anchor;
 }

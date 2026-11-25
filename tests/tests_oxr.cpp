@@ -9349,6 +9349,54 @@ TEST_F(OxrSharingTest, group_filter_may_be_the_query_filter)
     EXPECT_EQ(result, XR_SUCCESS);
 }
 
+// MRUK's ShareRoomsAsync shares the room anchor with a group; a guest's LoadSceneFromSharedRooms
+// queries the group and builds the room from the room and its children, the global mesh among them
+TEST_F(OxrSharingTest, shared_rooms_load_with_everything_in_them)
+{
+    start_sharing();
+    const XrSpace          room     = discover_room();
+    XrSpaceComponentTypeFB types[8] = {};
+    u32                    count    = 0;
+    ASSERT_EQ(scene.xrEnumerateSpaceSupportedComponentsFB(room, 8, &count, types), XR_SUCCESS);
+    b8 sharable = false;
+    for (u32 i = 0; i < count; i++)
+    {
+        sharable = sharable || types[i] == XR_SPACE_COMPONENT_TYPE_SHARABLE_FB;
+    }
+    EXPECT_TRUE(sharable) << "rooms are sharable";
+    EXPECT_EQ(share_with_group(room, group_uuid(5)), XR_SUCCESS);
+
+    // The guest stands in the same room and tracks from another place
+    os_set_env("PUPPETXR_ORIGIN_OFFSET", "-90,0.5,0.5");
+    relaunch_as("2");
+    XrSpaceQueryResultFB found[16] = {};
+    XrResult             result    = XR_ERROR_RUNTIME_FAILURE;
+    ASSERT_EQ(query_group(group_uuid(5), found, 16, &result), 9u) << "the room and its 8 children";
+    EXPECT_EQ(result, XR_SUCCESS);
+    EXPECT_TRUE(uuid_is(found[0].uuid, test_entity_uuid(TEST_ROOM_ENTITY_ROOM)));
+    b8 mesh = false;
+    for (u32 i = 0; i < 9; i++)
+    {
+        mesh = mesh || uuid_is(found[i].uuid, test_entity_uuid(TEST_ROOM_ENTITY_MESH));
+    }
+    EXPECT_TRUE(mesh) << "the global mesh comes with the room";
+
+    // The table lies where the room has it, though the guest's stage moved
+    XrSpace table = XR_NULL_HANDLE;
+    for (u32 i = 0; i < 9; i++)
+    {
+        table = uuid_is(found[i].uuid, test_entity_uuid(TEST_ROOM_ENTITY_TABLE)) ? found[i].space : table;
+    }
+    ASSERT_NE(table, XR_NULL_HANDLE);
+    Pose room_from_stage = {};
+    ASSERT_TRUE(oxr_get_origin_offset(room_from_stage));
+    const XrPosef in_stage = locate(table, stage).pose;
+    const Vec3    in_room  = zm::transform_point(room_from_stage, { in_stage.position.x, in_stage.position.y, in_stage.position.z });
+    EXPECT_NEAR(in_room.x, 0.5f, 1e-5f);
+    EXPECT_NEAR(in_room.y, TEST_ROOM_TABLE_Y, 1e-5f);
+    EXPECT_NEAR(in_room.z, 0.0f, 1e-5f);
+}
+
 TEST_F(OxrSharingTest, cloud_saves_and_erases_belong_to_their_owner)
 {
     start_sharing();
