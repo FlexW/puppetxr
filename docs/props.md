@@ -40,13 +40,14 @@ runtime parses each once (`refresh_prop_models`, `src/oxr.cpp`) for passthrough,
 raycasts. A model of a name already loaded replaces it, and every mesh naming it shows the new one.
 
 Built in (`data/models/<name>/<name>.glb`, compiled in by `cmake/embed_models.cmake`): each stands on
-its origin, centred, its front at +Z (glTF), with base colours only.
+its origin, centred, its front at +Z (glTF), with one small texture (256 to 512 pixels, JPEG) its
+light is baked into, as passthrough draws props unlit.
 
 | Name | Size | What |
 |---|---|---|
-| `chair` | 44 x 87 x 42 cm, 772 triangles | wooden legs and back posts, blue seat and back rest |
-| `pencil` | 18.6 x 0.7 x 0.6 cm, 148 triangles | lying along X, hexagonal, sharpened at +X |
-| `case` | 22 x 6 x 16.8 cm, 520 triangles | a small dark hard case, its handle at the front |
+| `chair` | 44 x 87 x 43 cm, 2432 triangles | oak legs and back posts, a wool seat and curved back rest |
+| `pencil` | 18.6 x 0.7 x 0.6 cm, 544 triangles | lying along X, hexagonal, sharpened at +X |
+| `case` | 22 x 6 x 17 cm, 1724 triangles | a small dark hard case with ribs and latches, its handle at the front |
 
 `tools/blender/puppetxr_models.py` builds them in Blender and writes each `.glb` next to its
 `.blend` (Git LFS, scene data only, so neither holds a local path):

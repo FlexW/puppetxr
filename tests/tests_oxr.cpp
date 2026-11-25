@@ -9777,13 +9777,16 @@ TEST_F(OxrPassthroughTest, mesh_props_show_their_models_in_passthrough)
     submit_and_read(layers, 1, pixels, width, height);
     const u8 wall[3] = { eye_pixel(pixels, width, height, 0, 0.0f, 0.0f)[0], eye_pixel(pixels, width, height, 0, 0.0f, 0.0f)[1], eye_pixel(pixels, width, height, 0, 0.0f, 0.0f)[2] };
 
-    // The built-in chair at twice its size: its back rest, sRGB of linear (0.10, 0.22, 0.30), at eye height
+    // The built-in chair at twice its size: the blue wool of its back rest at eye height
     SIM_Prop chair = { .kind = SIM_PropKind::Mesh, .pose = { { 0.0f, 0.0f, -1.0f }, zm::QUAT_IDENTITY }, .scale = 2.0f };
     cstr_copy(chair.model, sizeof(chair.model), "chair");
     const u32 id = sim_add_prop(oxr_get_sim(), chair);
     ASSERT_NE(id, 0u);
     submit_and_read(layers, 1, pixels, width, height);
-    EXPECT_RGB(eye_pixel(pixels, width, height, 0, 0.0f, 0.0f), 89, 130, 149);
+    const u8* back = eye_pixel(pixels, width, height, 0, 0.0f, 0.0f);
+    EXPECT_GT(back[2], back[0] + 20) << (u32)back[0] << " " << (u32)back[1] << " " << (u32)back[2];
+    EXPECT_LT(back[0], 140);
+    EXPECT_GT(back[2], 80);
     // PUPPETXR_TEST_DUMP_DIR=<dir> keeps the frame, to look at
     if (os_env("PUPPETXR_TEST_DUMP_DIR"))
     {
@@ -9821,7 +9824,9 @@ TEST_F(OxrPassthroughTest, mesh_props_show_their_models_in_passthrough)
     chair.scale = 14.0f;
     ASSERT_TRUE(sim_update_prop(oxr_get_sim(), id, chair));
     submit_and_read(layers, 1, pixels, width, height);
-    EXPECT_RGB(eye_pixel(pixels, width, height, 0, 0.0f, 0.0f), 97, 97, 100);
+    const u8* shell = eye_pixel(pixels, width, height, 0, 0.0f, 0.0f);
+    EXPECT_LT(shell[0], 90);
+    EXPECT_LT(shell[2], 90) << "the dark case, not the blue chair or the wall";
     const W_Model* shown = nullptr;
     for (u32 i = 0; i < rt->prop_models_count; i++)
     {
@@ -12057,7 +12062,7 @@ TEST_F(OxrMeshRaycastTest, rays_stop_at_props)
     EXPECT_GT(hit.pose.position.z, -1.3f) << "the back rest, not the wall";
     EXPECT_LT(hit.pose.position.z, -0.9f);
     const Quat facing = { hit.pose.orientation.x, hit.pose.orientation.y, hit.pose.orientation.z, hit.pose.orientation.w };
-    EXPECT_TRUE(zm::near(zm::rotate(facing, { 0, 0, 1 }), Vec3{ 0, 0, 1 }, 1e-3f)) << "the back rest faces the ray";
+    EXPECT_TRUE(zm::near(zm::rotate(facing, { 0, 0, 1 }), Vec3{ 0, 0, 1 }, 0.1f)) << "the back rest, a little curved, faces the ray";
     EXPECT_EQ(cast(raycaster, stage, { 0.0f, 1.6f, 0.0f }, { 0.0f, 0.0f, -1.0f }, 0.5f).status, XR_ENVIRONMENT_RAYCAST_HIT_STATUS_NO_HIT_META);
 
     // A keyboard on the table stops a ray straight down 9 mm above the table top
