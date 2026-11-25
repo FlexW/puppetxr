@@ -572,8 +572,9 @@ struct SIM_FaceFrame
     Pose eyes[2];                            // left, right
 };
 
-#define SIM_HAND_MESH_MAX_VERTICES 4096
-#define SIM_HAND_MESH_MAX_INDICES  24576
+// OVRPlugin reads the mesh into arrays of this size on its stack, its capacities whatever the counts are
+#define SIM_HAND_MESH_MAX_VERTICES 3000
+#define SIM_HAND_MESH_MAX_INDICES  18000
 #define SIM_HAND_MESH_INFLUENCES   2
 
 // A file of data/motion/ compiled into the library (cmake/embed_motion.cmake): the hand model, the

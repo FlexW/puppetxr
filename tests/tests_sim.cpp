@@ -3186,6 +3186,22 @@ TEST(Sim, the_hand_mesh_fits_the_hand_model)
     }
 }
 
+// OVRPlugin copies the mesh to arrays of this size on its stack whatever counts xrGetHandMeshFB
+// returns: a larger one crashed every Unity player that read the hand skeleton
+TEST(Sim, the_hand_mesh_fits_ovrplugins_arrays)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+
+    for (const SIM_Device hand : { SIM_Device::LeftHand, SIM_Device::RightHand })
+    {
+        const SIM_HandMesh& mesh = sim_get_hand_mesh(sim, hand);
+        EXPECT_GT(mesh.vertices_count, 0u);
+        EXPECT_LE(mesh.vertices_count, 3000u);
+        EXPECT_LE(mesh.indices_count, 18000u);
+    }
+}
+
 TEST(Sim, hand_mesh_is_skinned_to_the_open_hand)
 {
     SIM_Sim* sim = make_sim();

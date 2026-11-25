@@ -26,6 +26,7 @@ import hand_fit as h  # noqa: E402
 
 FOREARM = 0.015  # m behind the wrist joint where the sculpt is cut: a Quest's hand ends where it goes over into the arm
 SMOOTHING = 4    # passes over the weights
+MAX_VERTICES, MAX_TRIANGLES = 3000, 6000  # of OVRPlugin's arrays, SIM_HAND_MESH_MAX_VERTICES
 WRIST = h.WRIST
 NAMES = ["thumb", "index", "middle", "ring", "little"]
 # (name, joint the skin follows, joints the bone runs between). Meta's hand skeleton has no palm nor
@@ -89,8 +90,8 @@ def cut_forearm(mesh, height):
         v.co.z = height
     center = sum((v.co for v in loop), Vector()) / len(loop)
     ring = loop
-    for step in range(1, 6):
-        angle = math.radians(90.0 * step / 6.0)
+    for step in range(1, 5):
+        angle = math.radians(90.0 * step / 5.0)
         inner = [bm.verts.new(center + (v.co - center) * math.cos(angle) ** 0.6 + Vector((0, 0, 0.006 * math.sin(angle)))) for v in loop]
         for k in range(len(loop)):
             n = (k + 1) % len(loop)
@@ -215,6 +216,8 @@ def main():
             corners = corners[1:] + corners[:1]
         for i in range(1, len(corners) - 1):
             triangles += [corners[0], corners[i], corners[i + 1]]
+    if len(positions) > MAX_VERTICES or len(triangles) > MAX_TRIANGLES * 3:
+        sys.exit("puppetxr_hand_mesh.py: %d vertices and %d triangles are more than OVRPlugin's arrays hold" % (len(positions), len(triangles) // 3))
     normals = [Vector() for _ in positions]
     for t in range(0, len(triangles), 3):
         a, b, c = triangles[t:t + 3]

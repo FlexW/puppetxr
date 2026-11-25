@@ -414,7 +414,9 @@ the frequency hint and unextrapolated poses need `XR_EXT_hand_tracking`; microge
   parts. Each vertex follows up to two joints (linear blend skinning), so a bend spreads across
   the joint.
   The left hand mirrors the right. The arrays are base64 of little-endian binary in the JSON.
-  Zero capacities return the counts. Only joints of Meta's 24 bone hand skeleton are skinned to:
+  Zero capacities return the counts. OVRPlugin copies the mesh to fixed arrays of 3000 vertices and
+  18000 indices on its stack and passes the returned counts as its capacities, so a larger mesh
+  overruns them: `SIM_HAND_MESH_MAX_VERTICES`, `SIM_HAND_MESH_MAX_INDICES`. Only joints of Meta's 24 bone hand skeleton are skinned to:
   the palm and the index, middle and ring metacarpals move with the wrist, and the unused blend
   slots repeat the first joint. OVRPlugin converts the mesh to that
   skeleton and maps the palm and those metacarpals to no bone (65535), which Unreal's hand

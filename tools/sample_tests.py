@@ -2065,7 +2065,12 @@ def app_command(test, opts, out, env, prefix=""):
             with open(config, "w") as f:
                 json.dump(test["config"], f)
             env["PUPPETXR_CONFIG"] = config
-        return [exe] + [arg.replace("{out}", out).replace("{prefix}", prefix) for arg in test.get("args", [])], os.path.dirname(exe)
+        args = [arg.replace("{out}", out).replace("{prefix}", prefix) for arg in test.get("args", [])]
+        # After a crash AppKit asks whether to reopen the windows, before the app starts: a player
+        # would wait for the click and one crash would fail every later test
+        if sys.platform == "darwin" and "-logFile" in args:
+            args = ["-ApplePersistenceIgnoreState", "YES"] + args
+        return [exe] + args, os.path.dirname(exe)
     config = os.path.join(out, "puppetxr.json")
     with open(config, "w") as f:
         json.dump({"views": GODOT_VIEWS}, f)
