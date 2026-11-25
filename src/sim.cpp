@@ -28,13 +28,31 @@ struct SIM_DeviceData
     SIM_Haptic     haptics[(u32)SIM_HapticOutput::Count];
 };
 
-// Index, middle, ring and little finger of the right hand in its wrist frame (-Z towards the
-// fingers, +Y out of the back of the hand, the thumb on -X)
-struct SIM_FingerModel
+// The hand poses of motion/hand_model.json, each joint's rotation relative to its parent
+enum class SIM_HandKey : u8
 {
-    Vec3 base;    // metacarpal joint
-    Vec3 knuckle; // proximal joint
-    f32  lengths[3]; // proximal, intermediate, distal phalanx
+    Open,
+    Relaxed,
+    Pinch,
+    Fist,
+    Count,
+};
+
+#define SIM_HAND_CURVE_MAX 64
+
+// The right hand fitted to a Quest 3 (tools/hand_fit.py): bone offsets in the parent's frame, the
+// key poses the shapes blend, and what XR_EXT_hand_interaction reports for a tip gap or a curl
+struct SIM_HandModel
+{
+    Vec3 offsets[SIM_HAND_JOINT_COUNT];
+    f32  radii[SIM_HAND_JOINT_COUNT];
+    u8   parents[SIM_HAND_JOINT_COUNT]; // the wrist is its own parent
+    Quat poses[(u32)SIM_HandKey::Count][SIM_HAND_JOINT_COUNT];
+    Vec2 pinch_curve[SIM_HAND_CURVE_MAX]; // thumb to index tip in m, pinch_ext/value
+    u32  pinch_curve_count;
+    Vec2 grasp_curve[SIM_HAND_CURVE_MAX]; // middle, ring and little tips to the palm in m, grasp_ext/value
+    u32  grasp_curve_count;
+    f32  coupling[4][4]; // index to little: how far the column's finger curls at least, per curl of the row's
 };
 
 // A body joint of the T-pose: where it is and how its axes lie
@@ -44,11 +62,15 @@ struct SIM_BodyRest
     Quat basis;
 };
 
-// Finger curls and thumb angles of one hand pose
+// How far each finger, thumb to little, goes from the base pose toward the pinch and the fist
+// (the pinch first, the fist on top), and turns of the thumb on top of both
 struct SIM_HandShape
 {
-    f32 curls[4];  // index to little, 0 open to 1 a fist
-    f32 thumb[5];  // yaw, pitch, roll of the metacarpal, then proximal and distal flexion, radians
+    SIM_HandKey base;     // Relaxed for a tracked hand, Open for the mesh's bind pose
+    f32         open[5];  // toward the open pose first: the index straightens to point
+    f32         pinch[5];
+    f32         fist[5];
+    f32         thumb[5]; // yaw, pitch, roll of the metacarpal, then proximal and distal flexion, radians
 };
 
 enum class SIM_HapticKind : u8
@@ -105,6 +127,7 @@ struct SIM_Sim
     u64            local_origin_generation;
     i64            local_origin_change_time;
     SIM_Controller controller;
+    SIM_HandModel  hand_model;
     SIM_HandMesh   hand_meshes[2];
     b8             gesture_seen[2][SIM_MICROGESTURES];      // a pulse was visible for a frame and ends at the next
     b8             gesture_keys[2][SIM_MICROGESTURES];      // held by a key last frame, so holding does not repeat
@@ -878,39 +901,14 @@ static b8 prop_model_loaded (SIM_Sim* sim, const SIM_Prop& prop)
 // Hand model
 //
 
-static const SIM_FingerModel sim_fingers[4] = {
-    { { -0.012f,  0.000f, -0.005f }, { -0.022f,  0.000f, -0.085f }, { 0.040f, 0.024f, 0.022f } },
-    { {  0.000f,  0.000f, -0.005f }, { -0.002f,  0.000f, -0.090f }, { 0.045f, 0.028f, 0.024f } },
-    { {  0.012f, -0.002f, -0.005f }, {  0.017f, -0.003f, -0.085f }, { 0.042f, 0.027f, 0.023f } },
-    { {  0.022f, -0.005f, -0.005f }, {  0.034f, -0.007f, -0.075f }, { 0.033f, 0.020f, 0.020f } },
-};
-
-static const Vec3 SIM_THUMB_BASE              = { -0.020f, -0.012f, -0.020f };
-static const f32  sim_thumb_lengths[3]        = { 0.045f, 0.032f, 0.026f };
-static const Vec3 SIM_PALM_IN_WRIST           = { -0.001f, 0.0f, -0.0475f }; // middle of the middle metacarpal
 static const Vec3 SIM_PALM_FROM_HANDLE        = { 0.0f, 0.025f, 0.015f };    // palm joint behind and above a held handle, in the palm frame
-static const f32  sim_finger_flexion[3]       = { 85.0f, 100.0f, 70.0f };     // degrees at a full curl, proximal to distal
-#define SIM_PINCH_INDEX_CURL                    0.6f
 #define SIM_HELD_GRAB                           0.7f  // a held controller keeps the fingers at least this curled
 #define SIM_HELD_PINCH                          0.35f
 
-// Thumb angles in degrees: open, touching the index tip at SIM_PINCH_INDEX_CURL, and folded over
-// the middle finger in a fist; fitted offline so the pinch closes
-static const f32 sim_thumb_open[5]  = { 35.0f, -15.0f, 60.0f, 5.0f, 5.0f };
-static const f32 sim_thumb_pinch[5] = { 43.2f, -27.9f, 60.0f, 43.1f, 54.4f };
-static const f32 sim_thumb_fist[5]  = { 15.9f, -18.4f, 60.0f, 33.8f, 44.2f };
+static const char* const sim_hand_keys[(u32)SIM_HandKey::Count] = { "open", "relaxed", "pinch", "fist" };
 
-static const f32 sim_joint_radii[SIM_HAND_JOINT_COUNT] = {
-    0.016f, 0.018f,
-    0.013f, 0.011f, 0.009f, 0.008f,
-    0.011f, 0.010f, 0.009f, 0.008f, 0.007f,
-    0.0115f, 0.0105f, 0.0095f, 0.0085f, 0.0075f,
-    0.010f, 0.0095f, 0.0085f, 0.0075f, 0.0065f,
-    0.009f, 0.0085f, 0.0075f, 0.0065f, 0.0055f,
-};
-
-// The palm frame in the grip frame: spec grip +X points out of the back of the right hand and
-// into the back of the left one, grip -Y runs along the metacarpals of a held controller
+// Planes a palm is shown in; spec grip +X points out of the back of the right hand and into the
+// back of the left one, grip -Y runs along the metacarpals of a held controller
 static const Quat SIM_RIGHT_PALM_IN_GRIP = { -0.5f, -0.5f, -0.5f, 0.5f };
 static const Quat SIM_LEFT_PALM_IN_GRIP  = { -0.5f, 0.5f, 0.5f, 0.5f };
 
@@ -928,72 +926,256 @@ static u8 joint_parent (u32 joint)
     return metacarpal ? (u8)SIM_HandJoint::Wrist : (u8)(joint - 1);
 }
 
+// Thumb 0 to little 4; the palm and the wrist belong to no finger
+static i32 joint_finger (u32 joint)
+{
+    if (joint < (u32)SIM_HandJoint::ThumbMetacarpal)
+    {
+        return -1;
+    }
+    return joint < (u32)SIM_HandJoint::IndexMetacarpal ? 0 : 1 + (i32)((joint - (u32)SIM_HandJoint::IndexMetacarpal) / 5);
+}
+
 static Quat flexion (f32 radians)
 {
     return zm::quat_from_axis_angle({ 1.0f, 0.0f, 0.0f }, -radians);
 }
 
+static b8 hand_curve_json (const JsonValue& array, Vec2 (&out)[SIM_HAND_CURVE_MAX], u32& out_count)
+{
+    out_count = json_length(array);
+    if (!json_is_array(array) || out_count < 2 || out_count > SIM_HAND_CURVE_MAX)
+    {
+        return false;
+    }
+    for (u32 i = 0; i < out_count; i++)
+    {
+        const JsonValue point = json_at(array, i);
+        if (!json_as_float(json_at(point, 0), out[i].x) || !json_as_float(json_at(point, 1), out[i].y) || (i > 0 && out[i].x <= out[i - 1].x))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// motion/hand_model.json, embedded; its joints are in XrHandJointEXT order
+static b8 load_hand_model (const char* json, SIM_HandModel& out)
+{
+    out                = {};
+    JsonParser* parser = json_parse_from_string(json);
+    if (!parser)
+    {
+        return false;
+    }
+    defer { json_release(parser); };
+    const JsonValue root   = json_get_root(parser);
+    const JsonValue joints = json_find(root, "joints");
+    const JsonValue poses  = json_find(root, "poses");
+    if (json_length(joints) != SIM_HAND_JOINT_COUNT)
+    {
+        return false;
+    }
+    for (u32 j = 0; j < SIM_HAND_JOINT_COUNT; j++)
+    {
+        const JsonValue joint  = json_at(joints, j);
+        const JsonValue offset = json_find(joint, "offset");
+        i32             parent = 0;
+        if (!json_as_float(json_at(offset, 0), out.offsets[j].x) || !json_as_float(json_at(offset, 1), out.offsets[j].y) || !json_as_float(json_at(offset, 2), out.offsets[j].z) || !json_find_float(joint, "radius", out.radii[j]) || !json_find_int(joint, "parent", parent))
+        {
+            return false;
+        }
+        const i32 expected = j == (u32)SIM_HandJoint::Wrist ? -1 : (i32)joint_parent(j);
+        if (parent != expected || !(out.radii[j] > 0.0f && out.radii[j] < 0.05f))
+        {
+            return false;
+        }
+        out.parents[j] = joint_parent(j);
+    }
+    for (u32 k = 0; k < (u32)SIM_HandKey::Count; k++)
+    {
+        const JsonValue pose = json_find(poses, sim_hand_keys[k]);
+        if (json_length(pose) != SIM_HAND_JOINT_COUNT)
+        {
+            return false;
+        }
+        for (u32 j = 0; j < SIM_HAND_JOINT_COUNT; j++)
+        {
+            const JsonValue q = json_at(pose, j);
+            Quat&           r = out.poses[k][j];
+            if (!json_as_float(json_at(q, 0), r.x) || !json_as_float(json_at(q, 1), r.y) || !json_as_float(json_at(q, 2), r.z) || !json_as_float(json_at(q, 3), r.w) || zm::abs(zm::length(r) - 1.0f) > 1e-3f)
+            {
+                return false;
+            }
+            r = zm::normalize(r);
+        }
+    }
+    const JsonValue coupling = json_find(root, "coupling");
+    if (json_length(coupling) != 4)
+    {
+        return false;
+    }
+    for (u32 f = 0; f < 4; f++)
+    {
+        const JsonValue row = json_at(coupling, f);
+        for (u32 g = 0; g < 4; g++)
+        {
+            f32& c = out.coupling[f][g];
+            if (json_length(row) != 4 || !json_as_float(json_at(row, g), c) || !(c >= 0.0f && c <= 1.0f))
+            {
+                return false;
+            }
+        }
+    }
+    return hand_curve_json(json_find(root, "pinch_curve"), out.pinch_curve, out.pinch_curve_count) && hand_curve_json(json_find(root, "grasp_curve"), out.grasp_curve, out.grasp_curve_count);
+}
+
+// Weights within [0, 1], the recorded poses being the limits, and each finger at least as curled
+// as its neighbours drag it (the fit's coupling)
+static SIM_HandShape couple_shape (const SIM_HandModel& model, const SIM_HandShape& shape)
+{
+    SIM_HandShape out = shape;
+    for (u32 f = 0; f < 5; f++)
+    {
+        out.open[f]  = zm::clamp(shape.open[f], 0.0f, 1.0f);
+        out.pinch[f] = zm::clamp(shape.pinch[f], 0.0f, 1.0f);
+        out.fist[f]  = zm::clamp(shape.fist[f], 0.0f, 1.0f);
+    }
+    const SIM_HandShape clamped = out;
+    for (u32 g = 1; g < 5; g++)
+    {
+        for (u32 f = 1; f < 5; f++)
+        {
+            out.fist[g] = zm::max(out.fist[g], model.coupling[f - 1][g - 1] * clamped.fist[f]);
+        }
+    }
+    return out;
+}
+
 static SIM_HandShape hand_shape (f32 pinch, f32 grab)
 {
-    SIM_HandShape shape = {};
-    shape.curls[0]      = pinch * (SIM_PINCH_INDEX_CURL + (1.0f - SIM_PINCH_INDEX_CURL) * grab);
-    shape.curls[1]      = grab;
-    shape.curls[2]      = grab;
-    shape.curls[3]      = grab;
-    const f32 toward_pinch = pinch * (1.0f - grab);
-    for (u32 i = 0; i < 5; i++)
+    SIM_HandShape shape = { .base = SIM_HandKey::Relaxed };
+    const f32     toward_pinch = pinch * (1.0f - grab);
+    for (u32 f = 0; f < 5; f++)
     {
-        const f32 degrees = sim_thumb_open[i] + toward_pinch * (sim_thumb_pinch[i] - sim_thumb_open[i]) + grab * (sim_thumb_fist[i] - sim_thumb_open[i]);
-        shape.thumb[i]    = degrees * zm::DEG_TO_RAD;
+        shape.pinch[f] = toward_pinch;
+        shape.fist[f]  = grab;
     }
+    // Grabbing without the pinch points: the index stays out of the fist and straightens
+    shape.open[1] = grab * (1.0f - pinch);
+    shape.fist[1] = grab * pinch;
     return shape;
 }
 
-// -Z along the direction, +Y as close to up as the direction allows
-static Quat bone_frame (Vec3 direction)
+static f32 hand_curve (const Vec2* curve, u32 count, f32 x)
 {
-    const f32 yaw   = zm::atan2(-direction.x, -direction.z);
-    const f32 pitch = zm::asin(zm::clamp(direction.y, -1.0f, 1.0f));
-    return zm::quat_from_axis_angle({ 0.0f, 1.0f, 0.0f }, yaw) * zm::quat_from_axis_angle({ 1.0f, 0.0f, 0.0f }, pitch);
+    if (x <= curve[0].x)
+    {
+        return curve[0].y;
+    }
+    for (u32 i = 1; i < count; i++)
+    {
+        if (x <= curve[i].x)
+        {
+            const f32 t = (x - curve[i - 1].x) / (curve[i].x - curve[i - 1].x);
+            return curve[i - 1].y + (curve[i].y - curve[i - 1].y) * t;
+        }
+    }
+    return curve[count - 1].y;
 }
 
-// Each joint of a chain is placed one bone along its parent's -Z and bends about its own X
-static void place_chain (Pose* joints, Vec3 position, Quat frame, const f32* flexions, const f32* lengths, u32 bones)
+static void hand_local (const SIM_HandModel& model, const SIM_HandShape& shape, b8 left, Pose (&out)[SIM_HAND_JOINT_COUNT]);
+
+// What XR_EXT_hand_interaction reports for these joints on a Quest 3
+static f32 joints_pinch (const SIM_HandModel& model, const Pose (&joints)[SIM_HAND_JOINT_COUNT])
 {
-    joints[0] = { position, frame };
-    for (u32 b = 0; b < bones; b++)
+    const f32 gap = zm::length(joints[(u32)SIM_HandJoint::ThumbTip].position - joints[(u32)SIM_HandJoint::IndexTip].position);
+    return hand_curve(model.pinch_curve, model.pinch_curve_count, gap);
+}
+
+static f32 joints_grasp (const SIM_HandModel& model, const Pose (&joints)[SIM_HAND_JOINT_COUNT])
+{
+    const Vec3 palm = joints[(u32)SIM_HandJoint::Palm].position;
+    const f32  curl = (zm::length(joints[(u32)SIM_HandJoint::MiddleTip].position - palm) + zm::length(joints[(u32)SIM_HandJoint::RingTip].position - palm) + zm::length(joints[(u32)SIM_HandJoint::LittleTip].position - palm)) / 3.0f;
+    return hand_curve(model.grasp_curve, model.grasp_curve_count, curl);
+}
+
+#define SIM_HAND_SOLVE_STEPS 16
+
+// The weight in [0, 1] where strength(weight) reaches target, strength rising with the weight;
+// a target at or above the strength of 1 takes the whole way, as a full pinch closes the tips
+// past the curve's flat top
+template <typename F>
+static f32 solve_weight (f32 target, F strength)
+{
+    if (target <= strength(0.0f))
     {
-        position     += zm::rotate(frame, { 0.0f, 0.0f, -lengths[b] });
-        frame         = b + 1 < bones ? frame * flexion(flexions[b]) : frame;
-        joints[b + 1] = { position, frame };
+        return 0.0f;
     }
+    if (target >= strength(1.0f))
+    {
+        return 1.0f;
+    }
+    f32 low  = 0.0f;
+    f32 high = 1.0f;
+    for (u32 i = 0; i < SIM_HAND_SOLVE_STEPS; i++)
+    {
+        const f32 mid = (low + high) * 0.5f;
+        (strength(mid) < target ? low : high) = mid;
+    }
+    return high;
+}
+
+static SIM_HandShape hand_shape (f32 pinch, f32 grab);
+
+// A tracked hand's inputs are the strengths it is to report: the shape whose joints give them
+static SIM_HandShape solve_hand_shape (const SIM_HandModel& model, f32 pinch, f32 grab)
+{
+    Pose       joints[SIM_HAND_JOINT_COUNT];
+    const f32 grab_weight = solve_weight(grab, [&] (f32 w) {
+        hand_local(model, hand_shape(0.0f, w), false, joints);
+        return joints_grasp(model, joints);
+    });
+    const f32 pinch_weight = solve_weight(pinch, [&] (f32 w) {
+        hand_local(model, hand_shape(w, grab_weight), false, joints);
+        return joints_pinch(model, joints);
+    });
+    return hand_shape(pinch_weight, grab_weight);
 }
 
 // Joints of the right hand in its wrist frame; the left hand mirrors them across x
-static void hand_local (const SIM_HandShape& shape, b8 left, Pose (&out)[SIM_HAND_JOINT_COUNT])
+static void hand_local (const SIM_HandModel& model, const SIM_HandShape& unclamped, b8 left, Pose (&out)[SIM_HAND_JOINT_COUNT])
 {
-    out[(u32)SIM_HandJoint::Palm]  = { SIM_PALM_IN_WRIST, zm::QUAT_IDENTITY };
+    const SIM_HandShape shape = couple_shape(model, unclamped);
+    const Quat* base  = model.poses[(u32)shape.base];
+    const Quat* open  = model.poses[(u32)SIM_HandKey::Open];
+    const Quat* pinch = model.poses[(u32)SIM_HandKey::Pinch];
+    const Quat* fist  = model.poses[(u32)SIM_HandKey::Fist];
     out[(u32)SIM_HandJoint::Wrist] = zm::POSE_IDENTITY;
-
-    const f32* t           = shape.thumb;
-    const Quat thumb       = zm::quat_from_axis_angle({ 0.0f, 1.0f, 0.0f }, t[0]) * zm::quat_from_axis_angle({ 1.0f, 0.0f, 0.0f }, t[1]) * zm::quat_from_axis_angle({ 0.0f, 0.0f, 1.0f }, t[2]);
-    const f32  thumb_flex[2] = { t[3], t[4] };
-    place_chain(&out[(u32)SIM_HandJoint::ThumbMetacarpal], SIM_THUMB_BASE, thumb, thumb_flex, sim_thumb_lengths, 3);
-
-    for (u32 f = 0; f < 4; f++)
+    for (u32 j = 0; j < SIM_HAND_JOINT_COUNT; j++)
     {
-        const SIM_FingerModel& finger  = sim_fingers[f];
-        const u32              first   = (u32)SIM_HandJoint::IndexMetacarpal + f * 5;
-        const Vec3             bone    = finger.knuckle - finger.base;
-        const f32              lengths[4] = { zm::length(bone), finger.lengths[0], finger.lengths[1], finger.lengths[2] };
-        f32                    flexions[3] = {};
-        for (u32 k = 0; k < 3; k++)
+        if (j == (u32)SIM_HandJoint::Wrist)
         {
-            flexions[k] = sim_finger_flexion[k] * zm::DEG_TO_RAD * shape.curls[f];
+            continue;
         }
-        // The metacarpal is rigid: the first bend is at the knuckle
-        out[first] = { finger.base, bone_frame(zm::normalize(bone)) };
-        place_chain(&out[first + 1], finger.knuckle, out[first].orientation * flexion(flexions[0]), flexions + 1, lengths + 1, 3);
+        const i32 f        = joint_finger(j);
+        Quat      rotation = base[j];
+        if (f >= 0)
+        {
+            rotation = zm::nlerp(rotation, open[j], shape.open[f]);
+            rotation = zm::nlerp(rotation, pinch[j], shape.pinch[f]);
+            rotation = zm::nlerp(rotation, fist[j], shape.fist[f]);
+        }
+        const f32* t = shape.thumb;
+        if (j == (u32)SIM_HandJoint::ThumbMetacarpal)
+        {
+            rotation = rotation * zm::quat_from_axis_angle({ 0.0f, 1.0f, 0.0f }, t[0]) * zm::quat_from_axis_angle({ 1.0f, 0.0f, 0.0f }, t[1]) * zm::quat_from_axis_angle({ 0.0f, 0.0f, 1.0f }, t[2]);
+        }
+        else if (j == (u32)SIM_HandJoint::ThumbProximal || j == (u32)SIM_HandJoint::ThumbDistal)
+        {
+            rotation = rotation * flexion(t[j == (u32)SIM_HandJoint::ThumbProximal ? 3 : 4]);
+        }
+        out[j] = zm::pose_mul(out[model.parents[j]], { model.offsets[j], rotation });
     }
 
     if (left)
@@ -1008,11 +1190,12 @@ static void hand_local (const SIM_HandShape& shape, b8 left, Pose (&out)[SIM_HAN
 }
 
 // Where the wrist frame lies relative to the grip pose
-static Pose wrist_in_grip (b8 left)
+static Pose wrist_in_grip (const SIM_HandModel& model, b8 left)
 {
     const Quat palm_orientation = left ? SIM_LEFT_PALM_IN_GRIP : SIM_RIGHT_PALM_IN_GRIP;
     const Pose palm             = { zm::rotate(palm_orientation, SIM_PALM_FROM_HANDLE), palm_orientation };
-    const Vec3 palm_in_wrist    = { left ? -SIM_PALM_IN_WRIST.x : SIM_PALM_IN_WRIST.x, SIM_PALM_IN_WRIST.y, SIM_PALM_IN_WRIST.z };
+    const Vec3 offset           = model.offsets[(u32)SIM_HandJoint::Palm];
+    const Vec3 palm_in_wrist    = { left ? -offset.x : offset.x, offset.y, offset.z };
     return zm::pose_mul(palm, { -palm_in_wrist, zm::QUAT_IDENTITY });
 }
 
@@ -1065,13 +1248,15 @@ static void add_bone (SIM_HandMesh& mesh, u32 joint, u32 skin, Vec3 end, f32 end
     }
 }
 
-static void build_hand_mesh (SIM_HandMesh& mesh, b8 left)
+static void build_hand_mesh (const SIM_HandModel& model, SIM_HandMesh& mesh, b8 left)
 {
-    mesh = {};
-    hand_local(hand_shape(0.0f, 0.0f), left, mesh.bind_poses);
+    mesh                = {};
+    SIM_HandShape shape = hand_shape(0.0f, 0.0f);
+    shape.base          = SIM_HandKey::Open;
+    hand_local(model, shape, left, mesh.bind_poses);
     for (u32 j = 0; j < SIM_HAND_JOINT_COUNT; j++)
     {
-        mesh.radii[j]   = sim_joint_radii[j];
+        mesh.radii[j]   = model.radii[j];
         mesh.parents[j] = joint_parent(j);
     }
     for (u32 j = (u32)SIM_HandJoint::ThumbMetacarpal; j < SIM_HAND_JOINT_COUNT; j++)
@@ -3834,8 +4019,17 @@ SIM_Sim* sim_create (const SIM_Config& config)
 
     sim->gesture_kind[0] = SIM_NO_INPUT;
     sim->gesture_kind[1] = SIM_NO_INPUT;
-    build_hand_mesh(sim->hand_meshes[0], true);
-    build_hand_mesh(sim->hand_meshes[1], false);
+    const SIM_EmbeddedMotion* hand_model = nullptr;
+    for (u32 i = 0; i < sim_embedded_motion_count; i++)
+    {
+        hand_model = sim_embedded_motion[i].name && cstr_equal(sim_embedded_motion[i].name, "hand_model") ? &sim_embedded_motion[i] : hand_model;
+    }
+    if (!hand_model || !load_hand_model(hand_model->json, sim->hand_model))
+    {
+        FAIL_MSG("motion/hand_model.json is missing from the build or invalid");
+    }
+    build_hand_mesh(sim->hand_model, sim->hand_meshes[0], true);
+    build_hand_mesh(sim->hand_model, sim->hand_meshes[1], false);
 
     sim->tracking_drift = zm::POSE_IDENTITY;
     sim->drift_velocity = zm::is_finite(config.drift_velocity.x) && zm::is_finite(config.drift_velocity.y) && zm::is_finite(config.drift_velocity.z) ? config.drift_velocity : Vec3{};
@@ -4660,6 +4854,48 @@ b8 sim_hand_in_view (const SIM_Sim* sim, const SIM_Sample& sample, SIM_Device ha
     return zm::dot(to_hand, forward) >= distance * zm::cos(half);
 }
 
+void sim_curled_hand_joints (const SIM_Sim* sim, SIM_Device hand, const Pose& grip, const SIM_HandCurls& curls, SIM_HandJoints& out_joints)
+{
+    ASSERT(sim);
+    out_joints = {};
+    if (!is_hand(hand))
+    {
+        ASSERT_MSG(false, "device %u is not a hand", (u32)hand);
+        return;
+    }
+    SIM_HandShape shape = { .base = curls.base_open ? SIM_HandKey::Open : SIM_HandKey::Relaxed };
+    for (u32 f = 0; f < 5; f++)
+    {
+        shape.pinch[f] = curls.pinch;
+        shape.fist[f]  = curls.curls[f];
+    }
+    const b8 left = hand == SIM_Device::LeftHand;
+    Pose     local[SIM_HAND_JOINT_COUNT];
+    hand_local(sim->hand_model, shape, left, local);
+    const Pose wrist = zm::pose_mul(grip, wrist_in_grip(sim->hand_model, left));
+    for (u32 j = 0; j < SIM_HAND_JOINT_COUNT; j++)
+    {
+        out_joints.poses[j] = zm::pose_mul(wrist, local[j]);
+        out_joints.radii[j] = sim->hand_model.radii[j];
+    }
+}
+
+SIM_InputValue sim_reported_input (const SIM_Sim* sim, SIM_Device device, SIM_Input input)
+{
+    ASSERT(sim);
+    const b8 strength = input == SIM_Input::TriggerValue || input == SIM_Input::SqueezeValue;
+    if (!is_hand(device) || !strength || sim->devices[(u32)device].source != SIM_HandSource::Hand)
+    {
+        return sim_get_input(sim, device, input);
+    }
+    const SIM_DeviceData& data  = sim->devices[(u32)device];
+    const SIM_HandShape   shape = solve_hand_shape(sim->hand_model, data.inputs[(u32)SIM_Input::TriggerValue].value.x, data.inputs[(u32)SIM_Input::SqueezeValue].value.x);
+    Pose                  joints[SIM_HAND_JOINT_COUNT];
+    hand_local(sim->hand_model, shape, false, joints);
+    const f32 value = input == SIM_Input::TriggerValue ? joints_pinch(sim->hand_model, joints) : joints_grasp(sim->hand_model, joints);
+    return { .value = { value, 0.0f } };
+}
+
 void sim_hand_joints (const SIM_Sim* sim, SIM_Device hand, const Pose& grip, SIM_HandMotion motion, SIM_HandJoints& out_joints)
 {
     ASSERT(sim);
@@ -4678,15 +4914,15 @@ void sim_hand_joints (const SIM_Sim* sim, SIM_Device hand, const Pose& grip, SIM
         grab  = zm::max(grab, SIM_HELD_GRAB);
     }
     const b8      left  = hand == SIM_Device::LeftHand;
-    SIM_HandShape shape = hand_shape(pinch, grab);
+    SIM_HandShape shape = device.source == SIM_HandSource::Hand ? solve_hand_shape(sim->hand_model, pinch, grab) : hand_shape(pinch, grab);
     add_microgesture(sim, hand, shape);
     Pose local[SIM_HAND_JOINT_COUNT];
-    hand_local(shape, left, local);
-    const Pose wrist = zm::pose_mul(grip, wrist_in_grip(left));
+    hand_local(sim->hand_model, shape, left, local);
+    const Pose wrist = zm::pose_mul(grip, wrist_in_grip(sim->hand_model, left));
     for (u32 j = 0; j < SIM_HAND_JOINT_COUNT; j++)
     {
         out_joints.poses[j] = zm::pose_mul(wrist, local[j]);
-        out_joints.radii[j] = sim_joint_radii[j];
+        out_joints.radii[j] = sim->hand_model.radii[j];
     }
 }
 

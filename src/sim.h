@@ -321,6 +321,15 @@ struct SIM_HandJoints
     f32  radii[SIM_HAND_JOINT_COUNT];
 };
 
+// A hand shape by finger, thumb to little: 0 the base pose, 1 the recorded fist; neighbours follow
+// as measured (docs/hand-motion.md, Hand model), values beyond [0, 1] are clamped
+struct SIM_HandCurls
+{
+    f32 curls[5];
+    f32 pinch;     // toward the recorded pinch, before the curls
+    b8  base_open; // from the open hand instead of the relaxed one
+};
+
 // XR_META_body_tracking_full_body order; the first 70 are XR_FB_body_tracking's. The 26 joints of
 // each hand follow at LeftHandPalm and RightHandPalm in XrHandJointEXT order
 enum class SIM_BodyJoint : u8
@@ -546,6 +555,17 @@ struct SIM_FaceFrame
 
 #define SIM_HAND_MESH_MAX_VERTICES 512
 #define SIM_HAND_MESH_MAX_INDICES  2048
+
+// A file of motion/ compiled into the library (cmake/embed_motion.cmake): the hand model, later
+// the built-in gestures; name is its path below motion/ without .json
+struct SIM_EmbeddedMotion
+{
+    const char* name;
+    const char* json;
+};
+
+extern const SIM_EmbeddedMotion sim_embedded_motion[]; // sorted by name, generated into the build
+extern const u32                sim_embedded_motion_count;
 
 // A low-poly hand of tapered prisms around the bones, each vertex rigidly skinned to one joint,
 // modelled in the bind pose: the open hand with the wrist at the origin (XR_FB_hand_tracking_mesh)
@@ -1026,6 +1046,8 @@ const char*       sim_slot_name              (SIM_Slot slot);
 b8                sim_slot_from_name         (const char* name, SIM_Slot& out_slot);
 
 SIM_HandSource    sim_get_hand_source        (const SIM_Sim* sim, SIM_Device hand);
+void              sim_curled_hand_joints     (const SIM_Sim* sim, SIM_Device hand, const Pose& grip, const SIM_HandCurls& curls, SIM_HandJoints& out_joints); // a shape of single fingers, coupled and limited as measured
+SIM_InputValue    sim_reported_input         (const SIM_Sim* sim, SIM_Device device, SIM_Input input); // what apps read: a tracked hand's pinch and grasp from its joints, else the input
 void              sim_set_hand_source        (SIM_Sim* sim, SIM_Device hand, SIM_HandSource source); // zeroes inputs the source lacks
 const char*       sim_hand_source_name       (SIM_HandSource source); // "controller", "hand"; stable, used by recordings
 b8                sim_hand_source_from_name  (const char* name, SIM_HandSource& out_source);

@@ -28,6 +28,7 @@ struct ExpectedFrame
     b8             active;
     SIM_HandJoints joints;
     f32            pinch;
+    f32            grasp;
 };
 
 struct RecorderTest : testing::Test
@@ -93,7 +94,8 @@ struct RecorderTest : testing::Test
         sim_sample(sim, sim_predicted_display_time(sim), sample);
         ExpectedFrame out = {};
         out.active        = sample.devices[(u32)SIM_Device::RightHand].active;
-        out.pinch         = sim_get_input(sim, SIM_Device::RightHand, SIM_Input::TriggerValue).value.x;
+        out.pinch         = sim_reported_input(sim, SIM_Device::RightHand, SIM_Input::TriggerValue).value.x;
+        out.grasp         = sim_reported_input(sim, SIM_Device::RightHand, SIM_Input::SqueezeValue).value.x;
         sim_hand_joints(sim, SIM_Device::RightHand, sample.devices[(u32)SIM_Device::RightHand].pose, SIM_HandMotion::Unobstructed, out.joints);
         return out;
     }
@@ -215,7 +217,7 @@ TEST_F(RecorderTest, takes_hold_the_joints_the_runtime_reports)
             }
             ASSERT_TRUE(json_is_object(interaction)) << "XR_EXT_hand_interaction's values of the frame";
             EXPECT_NEAR(field(interaction, "pinch"), want.pinch, 1e-4f);
-            EXPECT_EQ(field(interaction, "grasp"), 0.0f);
+            EXPECT_NEAR(field(interaction, "grasp"), want.grasp, 1e-4f);
         }
         json_release(parser);
     }

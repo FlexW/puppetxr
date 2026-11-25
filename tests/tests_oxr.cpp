@@ -17630,6 +17630,96 @@ TEST_F(OxrHandTest, data_sources_and_motion_range)
     EXPECT_EQ(state.dataSource, XR_HAND_TRACKING_DATA_SOURCE_UNOBSTRUCTED_EXT);
 }
 
+namespace
+{
+// puppetxr as Meta's runtime, as for apps on OVRPlugin (docs/config.md, Known modules)
+struct OxrHandOculusTest : OxrHandTest
+{
+    OxrHandOculusTest ()
+    {
+        os_set_env("PUPPETXR_RUNTIME_NAME", "Oculus");
+    }
+
+    ~OxrHandOculusTest () override
+    {
+        os_unset_env("PUPPETXR_RUNTIME_NAME");
+    }
+};
+} // namespace
+
+// A Quest 3 reports no pinch in the aim state to OpenXR apps, only through XR_EXT_hand_interaction
+// (docs/recorder.md, On a Quest 3); as Meta's runtime puppetxr does the same
+TEST_F(OxrHandOculusTest, the_aim_state_reports_no_pinch_as_meta_s_runtime)
+{
+    const XrAction                 pinch   = make_action("pinch", XR_ACTION_TYPE_FLOAT_INPUT);
+    const XrActionSuggestedBinding binding = { pinch, path("/user/hand/right/input/pinch_ext/value") };
+    const XrInteractionProfileSuggestedBinding suggested = { .type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING, .interactionProfile = path("/interaction_profiles/ext/hand_interaction_ext"), .countSuggestedBindings = 1, .suggestedBindings = &binding };
+    ASSERT_EQ(xr.xrSuggestInteractionProfileBindings(instance, &suggested), XR_SUCCESS);
+    attach();
+    begin_session();
+    SIM_Sim* sim = oxr_get_sim();
+    sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
+    sim_set_input(sim, SIM_Device::RightHand, SIM_Input::TriggerValue, { .value = { 1.0f, 0.0f } });
+    frame();
+    ASSERT_EQ(sync(), XR_SUCCESS);
+    ASSERT_EQ(sync(), XR_SUCCESS);
+
+    XrHandTrackingAimStateFB aim       = { .type = XR_TYPE_HAND_TRACKING_AIM_STATE_FB };
+    XrHandJointLocationEXT   joints[XR_HAND_JOINT_COUNT_EXT] = {};
+    XrBool32                 active    = XR_FALSE;
+    ASSERT_EQ(locate(tracker(XR_HAND_RIGHT_EXT), joints, active, &aim), XR_SUCCESS);
+    ASSERT_TRUE(active);
+    EXPECT_TRUE(aim.status & XR_HAND_TRACKING_AIM_VALID_BIT_FB);
+    EXPECT_FALSE(aim.status & XR_HAND_TRACKING_AIM_INDEX_PINCHING_BIT_FB);
+    EXPECT_EQ(aim.pinchStrengthIndex, 0.0f);
+    EXPECT_NEAR(float_state(pinch, hands[1]).currentState, 1.0f, 1e-3f) << "the pinch comes through the interaction profile";
+}
+
+// A Quest 3 keeps a hand its cameras lost active, with the controller data source and every joint
+// zero without flags, its aim state computed and valid (docs/recorder.md, On a Quest 3); as Meta's
+// runtime puppetxr does the same. Under its own name the hand is inactive, as the spec says
+TEST_F(OxrHandOculusTest, a_lost_hand_stays_active_without_joints_as_meta_s_runtime)
+{
+    begin_session();
+    SIM_Sim* sim = oxr_get_sim();
+    sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
+    XrHandTrackingDataSourceEXT           unobstructed = XR_HAND_TRACKING_DATA_SOURCE_UNOBSTRUCTED_EXT;
+    const XrHandTrackingDataSourceInfoEXT sources      = { .type = XR_TYPE_HAND_TRACKING_DATA_SOURCE_INFO_EXT, .requestedDataSourceCount = 1, .requestedDataSources = &unobstructed };
+    const XrHandTrackerEXT                hand_tracker = tracker(XR_HAND_RIGHT_EXT, &sources);
+
+    const Pose in_view = sim_get_device_pose(sim, SIM_Device::RightHand);
+    Pose       behind  = in_view;
+    behind.position    = sim_get_device_pose(sim, SIM_Device::Head).position + Vec3{ 0.2f, -0.2f, 0.3f };
+    sim_set_device_pose(sim, SIM_Device::RightHand, behind);
+    frame();
+    frame();
+
+    XrHandTrackingDataSourceStateEXT source = { .type = XR_TYPE_HAND_TRACKING_DATA_SOURCE_STATE_EXT };
+    XrHandTrackingAimStateFB         aim    = { .type = XR_TYPE_HAND_TRACKING_AIM_STATE_FB, .next = &source };
+    XrHandJointLocationEXT           joints[XR_HAND_JOINT_COUNT_EXT] = {};
+    XrBool32                         active = XR_FALSE;
+    ASSERT_EQ(locate(hand_tracker, joints, active, &aim), XR_SUCCESS);
+    EXPECT_TRUE(active);
+    for (const XrHandJointLocationEXT& joint : joints)
+    {
+        EXPECT_EQ(joint.locationFlags, 0u);
+        EXPECT_EQ(joint.pose.position.x, 0.0f);
+        EXPECT_EQ(joint.pose.position.y, 0.0f);
+        EXPECT_EQ(joint.pose.position.z, 0.0f);
+    }
+    EXPECT_TRUE(source.isActive);
+    EXPECT_EQ(source.dataSource, XR_HAND_TRACKING_DATA_SOURCE_CONTROLLER_EXT);
+    EXPECT_EQ(aim.status, (XrHandTrackingAimFlagsFB)(XR_HAND_TRACKING_AIM_COMPUTED_BIT_FB | XR_HAND_TRACKING_AIM_VALID_BIT_FB));
+
+    sim_set_device_pose(sim, SIM_Device::RightHand, in_view);
+    frame();
+    frame();
+    ASSERT_EQ(locate(hand_tracker, joints, active, &aim), XR_SUCCESS);
+    EXPECT_TRUE(active);
+    EXPECT_EQ(source.dataSource, XR_HAND_TRACKING_DATA_SOURCE_UNOBSTRUCTED_EXT) << "back in view";
+    EXPECT_TRUE(joints[0].locationFlags & XR_SPACE_LOCATION_POSITION_TRACKED_BIT);
+}
+
 TEST_F(OxrHandTest, fb_aim_capsules_scale_and_velocities)
 {
     begin_session();
@@ -17856,9 +17946,13 @@ TEST_F(OxrHandTest, a_tracked_hand_switches_only_its_own_profile)
     ASSERT_EQ(xr.xrGetCurrentInteractionProfile(session, hands[0], &state), XR_SUCCESS);
     EXPECT_EQ(state.interactionProfile, path("/interaction_profiles/oculus/touch_controller"));
 
-    EXPECT_FLOAT_EQ(float_state(pinch, hands[1]).currentState, 0.75f);
+    // A tracked hand reports what its joints give on a Quest 3 (docs/hand-motion.md, Hand model):
+    // the pinch it was asked for, and the grasp of its curled fingers, which a pinch curls part
+    // way, as a Quest 3 reports a high grasp while a person pinches
+    EXPECT_NEAR(float_state(pinch, hands[1]).currentState, 0.75f, 0.03f);
     EXPECT_TRUE(bool_state(ready, hands[1]).currentState);
-    EXPECT_FLOAT_EQ(float_state(grasp, hands[1]).currentState, 0.25f);
+    EXPECT_GT(float_state(grasp, hands[1]).currentState, 0.45f);
+    EXPECT_EQ(float_state(grasp, hands[1]).currentState, sim_reported_input(sim, SIM_Device::RightHand, SIM_Input::SqueezeValue).value.x);
     EXPECT_FALSE(float_state(trigger, hands[1]).isActive) << "the right controller is put down";
     EXPECT_FLOAT_EQ(float_state(trigger, hands[0]).currentState, 0.5f);
     EXPECT_FALSE(float_state(pinch, hands[0]).isActive);
@@ -18351,7 +18445,7 @@ TEST_F(OxrDetachedTest, a_put_down_controller_reports_under_its_detached_path)
     EXPECT_EQ(current(detached[1]), path("/interaction_profiles/oculus/touch_controller"));
     EXPECT_EQ(current(detached[0]), (XrPath)XR_NULL_PATH) << "the left controller is still held";
 
-    EXPECT_FLOAT_EQ(float_state(press, hands[1]).currentState, 0.8f) << "the hand pinches";
+    EXPECT_NEAR(float_state(press, hands[1]).currentState, 0.8f, 1e-3f) << "the hand pinches, as strong as its joints give";
     EXPECT_TRUE(float_state(press, detached[1]).isActive);
     EXPECT_FLOAT_EQ(float_state(press, detached[1]).currentState, 0.0f) << "nobody pulls the trigger of a controller on the table";
 

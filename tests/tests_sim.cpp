@@ -2741,6 +2741,46 @@ TEST(Sim, tracked_hands_keep_only_gesture_inputs)
     EXPECT_EQ(sim_get_input(sim, SIM_Device::RightHand, SIM_Input::MenuClick).value.x, 1.0f);
 }
 
+// Bone offsets and radii of motion/hand_model.json, fitted to a Quest 3's fixed skeleton
+// (tools/hand_fit.py, docs/hand-motion.md); the mesh is skinned to the open hand
+TEST(Sim, hands_have_the_bones_measured_on_a_quest_3)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+
+    for (const SIM_Device hand : { SIM_Device::LeftHand, SIM_Device::RightHand })
+    {
+        const SIM_HandMesh& mesh = sim_get_hand_mesh(sim, hand);
+        auto bone = [&] (SIM_HandJoint a, SIM_HandJoint b)
+        {
+            return zm::length(mesh.bind_poses[(u32)a].position - mesh.bind_poses[(u32)b].position);
+        };
+        EXPECT_NEAR(bone(SIM_HandJoint::Wrist, SIM_HandJoint::Palm), 0.067f, 0.002f);
+        EXPECT_NEAR(bone(SIM_HandJoint::Wrist, SIM_HandJoint::ThumbMetacarpal), 0.0503f, 0.002f);
+        EXPECT_NEAR(bone(SIM_HandJoint::ThumbMetacarpal, SIM_HandJoint::ThumbProximal), 0.0336f, 0.002f);
+        EXPECT_NEAR(bone(SIM_HandJoint::IndexProximal, SIM_HandJoint::IndexIntermediate), 0.039f, 0.002f);
+        EXPECT_NEAR(bone(SIM_HandJoint::IndexIntermediate, SIM_HandJoint::IndexDistal), 0.025f, 0.002f);
+        EXPECT_NEAR(bone(SIM_HandJoint::IndexDistal, SIM_HandJoint::IndexTip), 0.023f, 0.002f);
+        EXPECT_NEAR(bone(SIM_HandJoint::Wrist, SIM_HandJoint::MiddleTip), 0.195f, 0.004f) << "the open hand";
+        EXPECT_NEAR(mesh.radii[(u32)SIM_HandJoint::Wrist], 0.022f, 0.001f);
+        EXPECT_NEAR(mesh.radii[(u32)SIM_HandJoint::LittleTip], 0.0056f, 0.0005f);
+    }
+}
+
+// An idle tracked hand rests as people's do, fingers slightly curled, not spread open
+TEST(Sim, an_idle_hand_rests_relaxed)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+
+    sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
+    const SIM_HandJoints idle = hand_joints(sim, SIM_Device::RightHand);
+    const SIM_HandMesh&  open = sim_get_hand_mesh(sim, SIM_Device::RightHand);
+    const f32            open_middle = zm::length(open.bind_poses[(u32)SIM_HandJoint::MiddleTip].position - open.bind_poses[(u32)SIM_HandJoint::Palm].position);
+    EXPECT_LT(joint_distance(idle, SIM_HandJoint::MiddleTip, SIM_HandJoint::Palm), open_middle - 0.01f);
+    EXPECT_NEAR(joint_distance(idle, SIM_HandJoint::ThumbTip, SIM_HandJoint::IndexTip), 0.047f, 0.01f);
+}
+
 TEST(Sim, open_hand_is_a_plausible_hand)
 {
     SIM_Sim* sim = make_sim();
@@ -2757,7 +2797,7 @@ TEST(Sim, open_hand_is_a_plausible_hand)
             EXPECT_LT(joints.radii[j], 0.04f);
         }
         const f32 span = joint_distance(joints, SIM_HandJoint::Wrist, SIM_HandJoint::MiddleTip);
-        EXPECT_GT(span, 0.17f);
+        EXPECT_GT(span, 0.15f);
         EXPECT_LT(span, 0.21f);
 
         // The palm joint is held where a controller's handle would be, within a few cm of the grip
@@ -2770,7 +2810,8 @@ TEST(Sim, open_hand_is_a_plausible_hand)
 }
 
 // Spec XR_EXT_hand_tracking: -Z of a joint points along its bone towards the fingertip, +Y away
-// from the back of the hand
+// from the back of the hand. A Quest 3's joints, which the hand model is fitted to, point up to 5
+// degrees off their bones
 TEST(Sim, finger_joints_point_along_their_bones)
 {
     SIM_Sim* sim = make_instant_sim();
@@ -2788,7 +2829,7 @@ TEST(Sim, finger_joints_point_along_their_bones)
             {
                 const Vec3 bone    = zm::normalize(joints.poses[j + 1].position - joints.poses[j].position);
                 const Vec3 forward = zm::rotate(joints.poses[j].orientation, { 0.0f, 0.0f, -1.0f });
-                EXPECT_GT(zm::dot(bone, forward), 0.999f) << "joint " << j << " curl " << curl;
+                EXPECT_GT(zm::dot(bone, forward), 0.995f) << "joint " << j << " curl " << curl;
             }
         }
     }
@@ -2808,13 +2849,18 @@ TEST(Sim, pinch_and_fist_gestures_follow_trigger_and_squeeze)
     for (const SIM_Device hand : { SIM_Device::LeftHand, SIM_Device::RightHand })
     {
         sim_set_hand_source(sim, hand, SIM_HandSource::Hand);
+        // At rest the tips are farther apart than a Quest 3 reports any pinch at (docs/recorder.md)
         const SIM_HandJoints open = hand_joints(sim, hand);
-        EXPECT_GT(joint_distance(open, SIM_HandJoint::ThumbTip, SIM_HandJoint::IndexTip), 0.05f);
+        EXPECT_GT(joint_distance(open, SIM_HandJoint::ThumbTip, SIM_HandJoint::IndexTip), 0.037f);
 
         sim_set_input(sim, hand, SIM_Input::TriggerValue, { .value = { 1.0f, 0.0f } });
         const SIM_HandJoints pinch = hand_joints(sim, hand);
-        EXPECT_LT(joint_distance(pinch, SIM_HandJoint::ThumbTip, SIM_HandJoint::IndexTip), 0.01f);
-        EXPECT_GT(joint_distance(pinch, SIM_HandJoint::MiddleTip, SIM_HandJoint::Palm), 0.08f) << "a pinch leaves the other fingers open";
+        // The tip joints of a Quest 3 come to 5 to 9 mm of each other in a pinch, not to 0
+        const f32 tips = joint_distance(pinch, SIM_HandJoint::ThumbTip, SIM_HandJoint::IndexTip);
+        EXPECT_GT(tips, 0.004f);
+        EXPECT_LT(tips, 0.01f);
+        EXPECT_GT(joint_distance(pinch, SIM_HandJoint::MiddleTip, SIM_HandJoint::Palm), 0.065f) << "a pinch curls the other fingers part way, as people do";
+        EXPECT_LT(joint_distance(pinch, SIM_HandJoint::MiddleTip, SIM_HandJoint::Palm), 0.1f);
 
         sim_set_input(sim, hand, SIM_Input::SqueezeValue, { .value = { 1.0f, 0.0f } });
         const SIM_HandJoints fist = hand_joints(sim, hand);
@@ -2827,6 +2873,127 @@ TEST(Sim, pinch_and_fist_gestures_follow_trigger_and_squeeze)
         const SIM_HandJoints point = hand_joints(sim, hand);
         EXPECT_GT(joint_distance(point, SIM_HandJoint::IndexTip, SIM_HandJoint::Palm), 0.12f) << "grab without pinch points";
         EXPECT_LT(joint_distance(point, SIM_HandJoint::MiddleTip, SIM_HandJoint::Palm), 0.065f);
+    }
+}
+
+// A tracked hand reports what a Quest 3 would for its joints (docs/hand-motion.md, Hand model,
+// Strengths): the pinch from the thumb to index tip gap, the grasp from the curl of the middle,
+// ring and little fingers. An input is the strength to reach, so it reads back
+TEST(Sim, tracked_hands_report_the_strengths_of_their_joints)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+
+    for (const SIM_Device hand : { SIM_Device::LeftHand, SIM_Device::RightHand })
+    {
+        sim_set_hand_source(sim, hand, SIM_HandSource::Hand);
+        for (const f32 target : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f })
+        {
+            sim_set_input(sim, hand, SIM_Input::TriggerValue, { .value = { target, 0.0f } });
+            EXPECT_NEAR(sim_reported_input(sim, hand, SIM_Input::TriggerValue).value.x, target, 0.03f) << target;
+        }
+        sim_set_input(sim, hand, SIM_Input::TriggerValue, {});
+        for (const f32 target : { 0.6f, 0.8f, 1.0f })
+        {
+            sim_set_input(sim, hand, SIM_Input::SqueezeValue, { .value = { target, 0.0f } });
+            EXPECT_NEAR(sim_reported_input(sim, hand, SIM_Input::SqueezeValue).value.x, target, 0.03f) << target;
+        }
+        sim_set_input(sim, hand, SIM_Input::SqueezeValue, {});
+    }
+}
+
+TEST(Sim, a_half_pinch_shows_the_gap_a_quest_3_reports_it_at)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+
+    sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
+    sim_set_input(sim, SIM_Device::RightHand, SIM_Input::TriggerValue, { .value = { 0.5f, 0.0f } });
+    const f32 gap = joint_distance(hand_joints(sim, SIM_Device::RightHand), SIM_HandJoint::ThumbTip, SIM_HandJoint::IndexTip);
+    EXPECT_GT(gap, 0.012f);
+    EXPECT_LT(gap, 0.02f);
+}
+
+// An open hand on a Quest 3 reports a grasp of about 0.45 (docs/recorder.md, On a Quest 3)
+TEST(Sim, an_idle_tracked_hand_grasps_a_little_and_pinches_not)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+
+    sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
+    EXPECT_EQ(sim_reported_input(sim, SIM_Device::RightHand, SIM_Input::TriggerValue).value.x, 0.0f);
+    EXPECT_NEAR(sim_reported_input(sim, SIM_Device::RightHand, SIM_Input::SqueezeValue).value.x, 0.45f, 0.08f);
+}
+
+TEST(Sim, controllers_report_their_inputs_as_they_are)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+
+    sim_set_input(sim, SIM_Device::RightHand, SIM_Input::TriggerValue, { .value = { 0.3f, 0.0f } });
+    EXPECT_EQ(sim_reported_input(sim, SIM_Device::RightHand, SIM_Input::TriggerValue).value.x, 0.3f);
+    EXPECT_EQ(sim_reported_input(sim, SIM_Device::RightHand, SIM_Input::SqueezeValue).value.x, 0.0f);
+    EXPECT_EQ(sim_reported_input(sim, SIM_Device::RightHand, SIM_Input::AClick).value.x, 0.0f);
+}
+
+// How far a finger's tip is from the palm between the open hand (0) and the fist (1)
+static f32 finger_curl (const SIM_Sim* sim, const SIM_HandJoints& joints, SIM_HandJoint tip)
+{
+    SIM_HandJoints open = {}, fist = {};
+    const Pose     grip = sim_get_device_pose(sim, SIM_Device::RightHand);
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, .base_open = true }, open);
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, .base_open = true }, fist);
+    const f32 o = joint_distance(open, tip, SIM_HandJoint::Palm);
+    const f32 f = joint_distance(fist, tip, SIM_HandJoint::Palm);
+    return (o - joint_distance(joints, tip, SIM_HandJoint::Palm)) / (o - f);
+}
+
+// Fingers move together as measured in curl_each on a Quest 3 (docs/hand-motion.md, Hand model):
+// the ring follows a curled middle or little finger part way, the index moves on its own
+TEST(Sim, single_finger_curls_drag_their_neighbours_as_measured)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    const Pose grip = sim_get_device_pose(sim, SIM_Device::RightHand);
+
+    SIM_HandJoints middle = {};
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 0.0f, 0.0f, 1.0f, 0.0f, 0.0f }, .base_open = true }, middle);
+    EXPECT_GT(finger_curl(sim, middle, SIM_HandJoint::MiddleTip), 0.95f);
+    EXPECT_GT(finger_curl(sim, middle, SIM_HandJoint::RingTip), 0.4f) << "the ring follows the middle";
+    EXPECT_LT(finger_curl(sim, middle, SIM_HandJoint::IndexTip), 0.05f) << "the index stays";
+
+    SIM_HandJoints little = {};
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 0.0f, 0.0f, 0.0f, 0.0f, 1.0f }, .base_open = true }, little);
+    EXPECT_GT(finger_curl(sim, little, SIM_HandJoint::RingTip), 0.5f) << "the ring follows the little finger";
+
+    SIM_HandJoints index = {};
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 0.0f, 1.0f, 0.0f, 0.0f, 0.0f }, .base_open = true }, index);
+    EXPECT_GT(finger_curl(sim, index, SIM_HandJoint::IndexTip), 0.95f);
+    for (const SIM_HandJoint tip : { SIM_HandJoint::MiddleTip, SIM_HandJoint::RingTip, SIM_HandJoint::LittleTip })
+    {
+        EXPECT_LT(finger_curl(sim, index, tip), 0.05f) << (u32)tip;
+    }
+}
+
+// A point: the index straight, the others in a fist; curls stay within the recorded fist
+TEST(Sim, curls_point_and_stay_within_the_fist)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    const Pose grip = sim_get_device_pose(sim, SIM_Device::RightHand);
+
+    SIM_HandJoints point = {};
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 1.0f, 0.0f, 1.0f, 1.0f, 1.0f }, .base_open = true }, point);
+    EXPECT_LT(finger_curl(sim, point, SIM_HandJoint::IndexTip), 0.05f);
+    EXPECT_GT(finger_curl(sim, point, SIM_HandJoint::MiddleTip), 0.95f);
+
+    SIM_HandJoints beyond = {};
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 3.0f, 3.0f, 3.0f, 3.0f, 3.0f }, .base_open = true }, beyond);
+    SIM_HandJoints fist = {};
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, .base_open = true }, fist);
+    for (u32 j = 0; j < SIM_HAND_JOINT_COUNT; j++)
+    {
+        EXPECT_TRUE(zm::near(beyond.poses[j].position, fist.poses[j].position, 1e-6f)) << j;
     }
 }
 
@@ -2858,12 +3025,12 @@ TEST(Sim, hands_conform_to_a_held_controller)
 
     const SIM_HandJoints free = hand_joints(sim, SIM_Device::RightHand, SIM_HandMotion::Unobstructed);
     const SIM_HandJoints held = hand_joints(sim, SIM_Device::RightHand, SIM_HandMotion::ConformingToController);
-    EXPECT_GT(joint_distance(free, SIM_HandJoint::MiddleTip, SIM_HandJoint::Palm), 0.12f);
+    EXPECT_GT(joint_distance(free, SIM_HandJoint::MiddleTip, SIM_HandJoint::Palm), 0.1f);
     EXPECT_LT(joint_distance(held, SIM_HandJoint::MiddleTip, SIM_HandJoint::Palm), 0.08f);
 
     sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
     const SIM_HandJoints bare = hand_joints(sim, SIM_Device::RightHand, SIM_HandMotion::ConformingToController);
-    EXPECT_GT(joint_distance(bare, SIM_HandJoint::MiddleTip, SIM_HandJoint::Palm), 0.12f) << "without a controller there is nothing to conform to";
+    EXPECT_GT(joint_distance(bare, SIM_HandJoint::MiddleTip, SIM_HandJoint::Palm), 0.1f) << "without a controller there is nothing to conform to";
 }
 
 TEST(Sim, pinch_and_poke_poses_come_from_the_fingers)
@@ -2911,9 +3078,10 @@ TEST(Sim, hand_mesh_is_skinned_to_the_open_hand)
         {
             ASSERT_LT(mesh.joints[v], (u8)SIM_HAND_JOINT_COUNT);
             EXPECT_NEAR(zm::length(mesh.normals[v]), 1.0f, 1e-4f);
-            // Every vertex lies on its bone's surface, so it stays within a metacarpal's length of its joint
+            // Every vertex lies on its bone's surface, so it stays within a wrist to knuckle length
+            // (about 0.1 m measured) of its joint; the metacarpals are skinned to the wrist
             const Vec3 local = zm::transform_point(zm::pose_inverse(mesh.bind_poses[mesh.joints[v]]), mesh.positions[v]);
-            EXPECT_LT(zm::length(local), 0.1f) << v;
+            EXPECT_LT(zm::length(local), 0.12f) << v;
         }
         EXPECT_EQ(mesh.parents[(u32)SIM_HandJoint::Wrist], (u8)SIM_HandJoint::Wrist) << "the root is its own parent";
         EXPECT_EQ(mesh.parents[(u32)SIM_HandJoint::IndexTip], (u8)SIM_HandJoint::IndexDistal);

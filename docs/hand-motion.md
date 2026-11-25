@@ -30,27 +30,60 @@ debouncing) are not exercised.
 
 ## Hand model (sim)
 
-Fitted by `tools/hand_fit.py` (Python standard library only) from the calibration takes into
-`motion/hand_model.json`, which replaces the constants in `src/sim.cpp`:
+Built: skeleton, key poses, curves, strengths from the joints, finger coupling and limits.
 
-- **Skeleton**: the joint offsets of the open hand in the wrist frame and every bone length,
-  the median over `still_open`. The hand scale override (`TODO.md` 8b) scales them.
-- **Joint limits and coupling**: per finger joint flexion range; the distal joint follows the
-  middle one (ratio fitted from `curl_each`); ring and little finger pulled along by the middle
-  one (coupling fitted, so a fist and a point both look right).
-- **Shape**: `SIM_HandShape` grows from `curls[4]`, `thumb[5]` to per finger curl, spread and a
-  thumb pose (`open`, `pinch:<finger>`, `fist`, `side`, `up`, or five angles); joints are
-  `hand_local` of the shape. Solved shapes (Motion, Shapes) produce the same struct.
-- **Strengths from joints**: pinch strength per finger as a function of tip distance, fitted
-  against the recorded `XrHandTrackingAimStateFB` pinch strengths; grab from the mean curl.
-  `trigger/value`, `squeeze/value` and the aim state's strengths read from the joints, so a
-  gesture that does not fully close a pinch reads as a weak one. The keyboard keeps working:
-  a key sets a target shape (pinch 1 closes thumb and index until strength 1).
-- **Relaxed pose**: `idle` from `still_relaxed`: slightly curled, more toward the little finger.
+`motion/hand_model.json` is fitted by `tools/hand_fit.py` (Python standard library only) to
+recorder takes measured on a Quest 3, embedded by `cmake/embed_motion.cmake` and loaded by
+`load_hand_model` in `src/sim.cpp` at `sim_create`; a missing or invalid file fails there.
 
-Tests (`tests_sim.cpp`): bone lengths and the open hand within 2 mm of `motion/takes/still_open`;
-each built-in shape's pinch strength within 0.05 of the take that shows it; the keyboard pinch
-still reads 1.
+```
+python3 tools/hand_fit.py <takes dir>... -o motion/hand_model.json
+```
+
+- **Skeleton**: each joint's offset in its parent's frame, averaged over `still_open`, and its
+  radius, the median. A Quest 3's skeleton is fixed (a bone varies by under 0.3 mm), and its
+  left hand mirrors the right within a millimetre, so both hands go into one right hand that
+  `hand_local` mirrors for the left. Its joints point up to 5 degrees off their bones.
+- **Key poses**: every joint's rotation relative to its parent in four poses, each the medoid
+  of its frames (the recorded frame closest to all others; an average of the rotations opens a
+  pinch that closes in every frame): `open` (`still_open`), `relaxed` (`still_relaxed`), `pinch`
+  (frames of `pinch_tap` and `pinch_hold` with the thumb and index tips under 8 mm apart) and
+  `fist` (the tenth of `fist` with the fingertips closest to the palm). The pinch's thumb comes
+  from another session than the bones, so the fit turns its four thumb joints until the tips are
+  as far apart as the median of the recorded pinches (7.5 mm).
+- **Shape**: `SIM_HandShape` holds per finger, thumb to little, how far it goes from the base
+  pose toward `open`, then `pinch`, then `fist` (nlerp per joint), and thumb turns on top
+  (microgestures). The base is `relaxed` for a tracked hand at rest and `open` for the hand
+  mesh's bind pose and the body skeleton's T-pose. `hand_shape(pinch, grab)`: all fingers toward
+  the pinch by `pinch * (1 - grab)` and toward the fist by `grab`, except the index, which goes
+  to the fist only with the pinch and straightens to the open pose with grab alone (pointing).
+- **Coupling and limits**: `coupling`, index to little, how far each finger curls at least
+  while another is fully curled, as a blend weight. Fitted from `curl_each`, `poses`, `fist` and
+  `spread`: the 1st percentile of a finger's curl (tip to palm, open pose 0, fist pose 1) while
+  another is at least 0.8 curled, converted to the weight that reaches it. Only the fingers with
+  joined tendons are coupled, middle and ring and ring and little (middle to ring 0.62, little to
+  ring 0.72, ring to middle 0.50); the index moves alone, as it has its own extensor and the takes
+  hold no tight point to measure it by. Every weight is clamped to [0, 1], so no finger curls past
+  the recorded fist (no frame of the takes curls more than 5 to 12 % past it). `couple_shape` in
+  `hand_local` applies both to every shape. `sim_curled_hand_joints` (`SIM_HandCurls`: a curl per
+  finger, a pinch, the open or relaxed base) gives the joints of such a shape for gestures.
+- **Curves**: `pinch_curve` (thumb to index tip in m to `pinch_ext/value`) and `grasp_curve`
+  (mean of the middle, ring and little tips to the palm to `grasp_ext/value`), medians of 2 and
+  5 mm bins, non-increasing.
+- **Strengths**: what apps read of a tracked hand's `trigger/value` and `squeeze/value` (and so
+  `pinch_ext`, `aim_activate_ext`, `grasp_ext`, `select` and the aim state's pinch strength) comes
+  from its joints through the curves (`sim_reported_input`); controllers report their inputs as
+  they are. A tracked hand's inputs are the strengths to reach: `solve_hand_shape` bisects the
+  grab weight on the grasp curve, then the pinch weight on the pinch curve, so an input reads
+  back (within 0.001), a half pinch shows the 12 to 20 mm a Quest 3 reports it at, and 1 takes
+  the whole way to the recorded pinch. No hand reads less grasp than its relaxed fingers give
+  (about 0.45, as an open hand on a Quest 3), and a pinch curls the others enough to read a high
+  grasp, as on the headset.
+
+What the model gives (`tests_sim.cpp`): the open hand 195 mm from wrist to middle tip, the palm
+joint 67 mm from the wrist; at rest the thumb and index tips 47 mm apart, beyond any pinch; a
+pinch closes them to 4 to 10 mm with the other fingers part way curled; a fist brings every tip
+within 65 mm of the palm; pinch and grasp inputs read back as reported strengths.
 
 ## Gesture format
 

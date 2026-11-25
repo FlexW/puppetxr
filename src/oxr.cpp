@@ -1046,7 +1046,7 @@ static Vec2 source_value (const SIM_Sim* sim, OXR_TopLevel side, const OXR_Profi
     {
         return {};
     }
-    const Vec2 raw = sim_get_input(sim, side_device(side), component->input).value;
+    const Vec2 raw = sim_reported_input(sim, side_device(side), component->input).value;
     f32        scalar = 0.0f;
     switch (component->kind)
     {
@@ -15225,6 +15225,27 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrLocateHandJointsEXT (XrHandTrackerEX
     const OXR_Located      located = locate_world(base, sample);
     const b8               seen    = source == SIM_HandSource::Controller || sim_hand_in_view(sim, latest, hand);
     clear_hand_outputs(locations, out);
+    // A Quest 3 keeps a hand its cameras lost active, under the controller data source, with every
+    // joint zero and its aim state valid (docs/recorder.md, On a Quest 3); as Meta's runtime so
+    // does this, though the spec wants every joint valid of an active hand
+    const b8 meta = cstr_equal(sim_get_config(sim).runtime_name, "Oculus");
+    if (meta && wanted && device.active && located.valid && !seen && !tracker->wide_motion)
+    {
+        locations->isActive = XR_TRUE;
+        if (out.data_source)
+        {
+            out.data_source->isActive   = XR_TRUE;
+            out.data_source->dataSource = XR_HAND_TRACKING_DATA_SOURCE_CONTROLLER_EXT;
+        }
+        if (out.aim)
+        {
+            const OXR_Located    aim   = { .pose = sim_sample_hand_pose(sim, latest, hand, SIM_HandPose::Aim), .valid = true, .tracked = false };
+            XrSpaceLocationFlags flags = 0;
+            locate_relative(aim, located, out.aim->aimPose, flags, nullptr);
+            out.aim->status = XR_HAND_TRACKING_AIM_COMPUTED_BIT_FB | XR_HAND_TRACKING_AIM_VALID_BIT_FB;
+        }
+        return XR_SUCCESS;
+    }
     if (!wanted || !device.active || !located.valid || (!seen && !tracker->wide_motion))
     {
         return XR_SUCCESS;
@@ -15255,7 +15276,9 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrLocateHandJointsEXT (XrHandTrackerEX
     }
     if (out.aim)
     {
-        const f32 pinch = sim_get_input(sim, hand, SIM_Input::TriggerValue).value.x;
+        // A Quest 3 leaves the aim state's pinch at 0 for OpenXR apps, the pinch comes through
+        // XR_EXT_hand_interaction (docs/recorder.md, On a Quest 3); as Meta's runtime so does this
+        const f32 pinch = meta ? 0.0f : sim_reported_input(sim, hand, SIM_Input::TriggerValue).value.x;
         const b8  menu  = sim_get_input(sim, hand, SIM_Input::MenuClick).value.x > 0.5f;
         XrHandTrackingAimFlagsFB status = XR_HAND_TRACKING_AIM_COMPUTED_BIT_FB | XR_HAND_TRACKING_AIM_VALID_BIT_FB;
         status |= pinch >= OXR_PINCHING ? XR_HAND_TRACKING_AIM_INDEX_PINCHING_BIT_FB : 0;

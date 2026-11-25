@@ -360,18 +360,23 @@ the frequency hint and unextrapolated poses need `XR_EXT_hand_tracking`; microge
   `puppetxrctl hand`, the C API, recorded per frame). A tracked hand has only
   `trigger/value` (pinch), `squeeze/value` (grab) and `menu/click` (menu gesture).
 - `sim_hand_joints` (`src/sim.cpp`, "Hand model") builds the 26 joints by forward kinematics
-  from the grip pose: fixed bone lengths of an adult right hand, mirrored for the left; the
-  palm joint sits where a held handle is, so joints and controller agree. Pinch curls the index
-  to 0.6 and swings the thumb onto its tip (angles fitted offline, `sim_thumb_pinch`); grab curls
-  middle, ring and little; both make a fist, grab alone points. Joint axes follow the spec: -Z
-  along the bone to the tip, +Y out of the back of the hand.
+  from the grip pose with the skeleton and key poses of a Quest 3 (`motion/hand_model.json`,
+  docs/hand-motion.md, Hand model), mirrored for the left; the palm joint sits where a held
+  handle is, so joints and controller agree. At rest the hand is relaxed; pinch blends toward the
+  recorded pinch, grab toward the recorded fist, grab alone points. Joint axes follow the spec,
+  -Z along the bone to the tip and +Y out of the back of the hand, within the 5 degrees a Quest 3
+  is off.
 - `xrLocateHandJointsEXT` samples the grip at the requested time like an action space; joint
   velocities are the hand's, with the lever arm to each joint. Without
   `XrHandTrackingDataSourceInfoEXT` a tracker reports only an unobstructed, tracked hand; with
   it, `CONTROLLER` also reports a hand holding its controller. `CONFORMING_TO_CONTROLLER`
   curls that hand around the handle (`SIM_HELD_GRAB`, `SIM_HELD_PINCH`); a tracked hand has
   nothing to conform to. An inactive hand reports `isActive` false and zero flags everywhere.
-- FB aim: the sim's aim pose, `pinchStrengthIndex` from the trigger, `INDEX_PINCHING` from 0.9,
+  As Meta's runtime (runtime name `Oculus`) a tracked hand outside the cone stays active, as on a
+  Quest 3: data source `CONTROLLER`, every joint zero with flags 0, the aim state computed and
+  valid (docs/recorder.md, On a Quest 3).
+- A tracked hand's float sources (`pinch_ext`, `grasp_ext`, `aim_activate_ext`, `select`) read `sim_reported_input`: the strengths its joints give (docs/hand-motion.md, Hand model, Strengths).
+- FB aim: the sim's aim pose, `pinchStrengthIndex` from the joints' pinch strength (0, and no pinching bit, while the runtime name is `Oculus`, as a Quest 3 reports to OpenXR apps: docs/recorder.md, On a Quest 3), `INDEX_PINCHING` from 0.9,
   `DOMINANT_HAND` for the configured primary hand, `menu/click` is `MENU_PRESSED` on the left
   and `SYSTEM_GESTURE` on the right. Capsules: one per bone from a joint to the next, the
   joint's radius. Scale: 1, or the override the app asks for (joints are not scaled).

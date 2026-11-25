@@ -173,7 +173,16 @@ add_custom_command(
     DEPENDS ${puppetxr_model_files} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_models.cmake
     COMMENT "Embedding models"
     VERBATIM)
-add_library(puppetxr_rooms STATIC ${puppetxr_rooms_source} ${puppetxr_models_source})
+# The hand model and gestures of motion/ (docs/hand-motion.md) too
+file(GLOB_RECURSE puppetxr_motion_files ${CMAKE_CURRENT_SOURCE_DIR}/motion/*.json)
+set(puppetxr_motion_source ${CMAKE_BINARY_DIR}/motion/motion_embedded.cpp)
+add_custom_command(
+    OUTPUT ${puppetxr_motion_source}
+    COMMAND ${CMAKE_COMMAND} -DMOTION_DIR=${CMAKE_CURRENT_SOURCE_DIR}/motion -DOUTPUT=${puppetxr_motion_source} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_motion.cmake
+    DEPENDS ${puppetxr_motion_files} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_motion.cmake
+    COMMENT "Embedding the hand model"
+    VERBATIM)
+add_library(puppetxr_rooms STATIC ${puppetxr_rooms_source} ${puppetxr_models_source} ${puppetxr_motion_source})
 target_compile_features(puppetxr_rooms PRIVATE cxx_std_20)
 target_include_directories(puppetxr_rooms PRIVATE src)
 set_target_properties(puppetxr_rooms PROPERTIES POSITION_INDEPENDENT_CODE ON)

@@ -136,10 +136,11 @@ occlusion), `out_of_view` (hands leave the cameras' view and return).
 Measured in the full protocol (39 takes, 72 Hz):
 
 - A hand the cameras lose stays `active` 1: its data source turns to `controller`, every joint is
-  zero with flags 0, and the aim state still says computed and valid with a pose. Around a loss
-  the index tip goes tracked (flags 15) to about 3 frames of position without tracking (flags 3),
-  to lost, back to flags 3, to tracked. No controller was awake; `"source": "controller"` frames in
-  a take are lost hands.
+  zero with flags 0, and the aim state still says computed and valid with a pose. No controller
+  was awake; `"source": "controller"` frames in a take are lost hands. A loss comes and goes in a
+  frame: of 30, 4 had fingers untracked just before (median 2 frames).
+- Fingers lose tracking on their own while the wrist stays tracked (flags 3, valid without
+  tracked, at the index tip in 747 frames of 49 takes; runs of 1 to 153 frames, median 2).
 - The aim state's pinch strengths were 0 and its pinching bits never set, in every frame of every
   take with the thumb and index tips down to 3 mm apart; the same with an instance enabling only
   `XR_EXT_hand_tracking`, `XR_FB_hand_tracking_aim` and `XR_FB_passthrough`, and a lost hand stays
