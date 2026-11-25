@@ -9,3 +9,6 @@ imgui.ini
 # Blender backups
 *.blend1
 __pycache__/
+
+# The recorder's Android SDK (tools/recorder/setup_android.sh)
+tools/recorder/android_sdk/

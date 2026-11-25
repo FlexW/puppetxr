@@ -54,6 +54,8 @@ Agents working on this repository: read `AGENTS.md`.
 - ImGui panels in the mirror window for devices, inputs, clock, room, recording and performance (frame rate and a frame time graph)
 - An OpenXR API trace of every call with its arguments and results (`PUPPETXR_TRACE`)
 - A C API (`src/puppetxr.h`) for tests and tools
+- A motion recorder (`puppetxr_recorder`) that writes tracked hands as an app sees them into JSON
+  takes, guided by a protocol of gestures; on the desktop and as a Meta Quest APK (`docs/recorder.md`)
 
 ## Build
 

@@ -46,6 +46,10 @@ Release workflow (`.github/workflows/release.yml`, docs/building.md "Releasing")
 - [ ] the control API tests (`ApiControlPausedTest.*`) hang until the ctest timeout (25 min) when the control socket cannot connect (a network namespace without loopback) instead of failing fast
 - [ ] `tools/release.sh` on the first release: the draft has both Linux tarballs, both Windows zips, both macOS tarballs, both source tarballs, the four `.buildinfo`, `SHA256SUMS`
 
+Motion recorder APK (`tools/recorder/build_apk.sh`, docs/recorder.md):
+- [ ] `XR_FB_hand_tracking_aim` as the runtime puppetxr presents: while it answers as Meta's runtime (runtime name `Oculus`, as for apps on OVRPlugin, docs/config.md, Known modules), pinch strengths 0 and no pinching bit, as a Quest 3 reports to OpenXR apps (docs/recorder.md, On a Quest 3), the pinch only in `XR_EXT_hand_interaction`'s `pinch_ext/value`; otherwise strengths and bits as the spec describes, as today. Start at the aim block of `oxr_xrLocateHandJointsEXT` in `src/oxr.cpp`, with a test per case in `tests_oxr.cpp`; check the samples that read the aim state (`tools/sample_tests.py`)
+- [ ] on a Quest 3: `build_apk.sh --run` starts it in the headset with passthrough, the panel ahead; poking RECORD with the index tip records a step and `pull.sh` fetches takes that parse, with both hands, the aim state and the data source; a `push_protocol.sh` protocol replaces the built-in one at the next start. The recorder has only run on puppetxr so far
+
 GPUs:
 - [ ] an NVIDIA GPU (only AMD and software renderers so far): the test suite, hello_xr on Vulkan, OpenGL, D3D11, D3D12
 
@@ -68,6 +72,24 @@ GPUs:
 - [ ] hands: a hand scale override is reported but does not scale the joints; `ready_ext` and action states of a hand outside the cone stay active
 - [ ] host gamepad drives the simulator: SDL gamepad events in platform, sticks/triggers/bumpers/face buttons to both Touch controllers, View held moves the body, deadzone in sim
 - [ ] simulated OpenXR gamepad: `microsoft/xbox_controller` on `/user/gamepad`, a gamepad device with its inputs and four haptic outputs, recording format bump
+
+## 8c. Realistic hands (docs/recorder.md, docs/hand-motion.md)
+
+Ordered: real takes first, then the model fitted to them, then gestures.
+
+- [ ] trim and resample the takes the tests need into `motion/takes/`. The full protocol was recorded once on a Quest 3 (39 takes, 122 MB raw, kept outside the repository); a second person's session would show which fitted values are personal
+- [ ] lost hands as a Quest 3 reports them (docs/recorder.md, On a Quest 3): with `XR_EXT_hand_tracking_data_source` a lost hand stays active with the controller source and zero joints, after about 3 frames of untracked positions; puppetxr reports it inactive. Start at `oxr_xrLocateHandJointsEXT` in `src/oxr.cpp` with a test in `tests_oxr.cpp` that walks a hand out of the tracking cone
+- [ ] hand model fitted by `tools/hand_fit.py` into `motion/hand_model.json`: skeleton, joint limits and coupling, thumb poses, relaxed pose, pinch strength from tip distance against the recorded aim state. Replaces the constants in `src/sim.cpp`; keyboard pinch and grab keep working. Done when the sim tests of docs/hand-motion.md (Hand model) pass
+- [ ] gestures in `src/sim.cpp`: loader, checker with path-precise errors, expressions, paths, shapes (solved grasps), events, player; built-ins embedded by `cmake/embed_motion.cmake`; users' gestures from `gestures.paths`, `PUPPETXR_GESTURE_PATH` and `gesture load` (docs/hand-motion.md, Loading)
+- [ ] gestures on controllers: paths move the grip (anchor `tip` for poking), strengths set trigger and squeeze, a step's `inputs` (docs/hand-motion.md, Controllers)
+- [ ] noise: jitter, tremor, sloppiness, dropouts, fitted to the takes, seeded
+- [ ] recording format 6: per tracked hand the joint rotations and strengths; versions 1 to 5 still read
+- [ ] `puppetxrctl gesture`, the C API functions, the UI Gestures panel, events with frames
+- [ ] the library of docs/hand-motion.md, each checked against its takes, and an app test that `talking_hands` triggers nothing
+- [ ] clip steps: a user's take plays as a gesture, inside one or alone
+- [ ] body: the recorder's `body` track, body clips through the same step
+- [ ] after the above: README screenshots showing the new hand gestures
+- [ ] after the above: a nicer controller render model, made with zenvr's ZenApp kit skill (joins the render models item in 8b)
 
 ## 9. robustness + CTS
 - [ ] extension tests the CTS skips until we implement them: EXT_hand_tracking, EXT_dpad_binding, EXT_eye_gaze_interaction (full list in docs/extensions.md)

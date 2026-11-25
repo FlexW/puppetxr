@@ -92,6 +92,13 @@ a C caller passes is a valid value in C++ too; validation rejects it.
 `PUPPETXR_HEADLESS_ONLY` builds no window system drivers, so it needs no X11 or xkbcommon headers. Code using `ui.h` sits under `#if !PUPPETXR_HEADLESS_ONLY`. The `gcc-headless` preset
 builds it; worth running for changes to `ui`, `oxr` or the CMake files.
 
+## Android
+
+Only the motion recorder builds for Android, as an APK for Meta Quest without Gradle:
+`tools/recorder/build_apk.sh` (`docs/recorder.md`, Building the APK). `tools/recorder/` configured
+on its own with the NDK's toolchain builds the recorder, the OpenXR loader and nothing of the
+runtime.
+
 ## Distribution
 
 `cmake --preset dist && cmake --build --preset dist && ctest --preset dist`, then

@@ -11,7 +11,7 @@ upstream ships them, and, where upstream has one, its CMake build patched for th
 |---|---|---|---|---|
 | `jsmn` | https://github.com/zserge/jsmn | `v1.1.0` | `5f0913a10657fe7ec8d5794ccf00a01000e3e1f2f1e1f143c34a0f7b47edcb38` | MIT |
 | `googletest` | https://github.com/google/googletest | `v1.18.0` | `6e3191c1455468b3fc35a417fb565c1c5071aee1b7e7f85e30cf48a98d37d8b5` | BSD-3-Clause |
-| `openxr` | https://github.com/KhronosGroup/OpenXR-SDK | `release-1.1.65` | `27aa797baf680c5f836b6138e78e59e2f72d6becfef6d4587ed9a57756d6d3b3` | Apache-2.0 (`LICENSE`, `LICENSES/`); jsoncpp and sanitizers-cmake MIT in `src/external/` |
+| `openxr` | https://github.com/KhronosGroup/OpenXR-SDK | `release-1.1.65` | `27aa797baf680c5f836b6138e78e59e2f72d6becfef6d4587ed9a57756d6d3b3` | Apache-2.0 (`LICENSE`, `LICENSES/`); jsoncpp, sanitizers-cmake and jnipp MIT, android-jni-wrappers BSL-1.0 (`LICENSES/BSL-1.0.txt`) in `src/external/` |
 | `vulkan-headers` | https://github.com/KhronosGroup/Vulkan-Headers | `vulkan-sdk-1.4.363.0` | `4a078be12bef21cfebc09d878b77a63cff9d68f899254a0b00d0e37ef73e7f7e` | Apache-2.0 or MIT |
 | `volk` | https://github.com/zeux/volk | `vulkan-sdk-1.4.363.0` | `1547d8d74395d4048fb3f4a6313da56db626e89b55db238d0d7e8944c8a645f3` | MIT |
 | `imgui` | https://github.com/ocornut/imgui | `v1.93.0` | `f7bf6bc76e5d79d40d751096663e6c5d18daf08129dd52e7f7b09e4251c8eeee` | MIT |
@@ -33,10 +33,12 @@ build systems.
   `internal_utils.cmake`: the executable, test and install helpers removed.
 - `openxr`: `include/`, `specification/registry/xr.xml` (for `tools/gen_trace.py` and
   `tools/gen_profiles.py`), the loader (`src/loader/`, `src/common/`, the pregenerated dispatch
-  tables, the CMake modules it uses, jsoncpp's three sources, sanitizers-cmake). No code
+  tables, the CMake modules it uses, jsoncpp's three sources, sanitizers-cmake; for the Android
+  loader of `tools/recorder` jnipp's `jnipp.cpp`, `jnipp.h`, `LICENSE` and android-jni-wrappers'
+  `wrap/`). No code
   generation scripts: the headers and loader sources are pregenerated upstream.
   `CMakeLists.txt`: `BUILD_FORCE_GENERATION`, the uninstall target and the specification build
-  removed. `src/loader/CMakeLists.txt`: the Android sources and Android packaging removed.
+  removed. `src/loader/CMakeLists.txt`: the Android packaging (AAR, prefab, install) removed.
 - `vulkan-headers`: the C headers of `include/vulkan/` and `include/vk_video/`; no Vulkan-Hpp,
   registry or tests. `CMakeLists.txt`: the C++ module, tests and install removed.
 - `volk`: `volk.c`, `volk.h`. `CMakeLists.txt`: install removed.

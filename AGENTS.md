@@ -99,6 +99,7 @@ per layer so a change recompiles only the layers above it.
 Details: `docs/architecture.md`. Per-layer docs: `docs/openxr.md`, `docs/compositor.md`, `docs/shaders.md`, `docs/world.md`, `docs/room-format.md`,
 `docs/recording-format.md`, `docs/control-api.md`, `docs/control-cli.md`, `docs/determinism.md`, `docs/anchors.md`, `docs/props.md`, `docs/profiling.md`.
 `tools/puppetxrctl.cpp` is the control CLI; it builds only the platform and base layers.
+`tools/recorder/` is the motion recorder (`docs/recorder.md`), an OpenXR app on libc, OpenXR and Vulkan only, so it also builds for Android.
 `tools/hlsl_compile.cpp` is a Windows build tool compiling the shaders to DXBC.
 `tools/dist/dist.sh` builds the Linux release in the container of `tools/dist/Dockerfile`, `tools/dist/dist.ps1` the Windows release, `tools/dist/dist-macos.sh` the macOS release, `tools/dist/dist-src.sh` the source tarballs.
 `tools/release.sh <version>` tags a release; `.github/workflows/release.yml` builds all three on the tag and drafts the GitHub release.

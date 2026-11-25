@@ -8,13 +8,16 @@ add_executable(puppetxr_tests
     tests_render.cpp
     tests_rec.cpp
     tests_api.cpp
+    tests_recorder.cpp
+    ${CMAKE_SOURCE_DIR}/tools/recorder/recorder.cpp
     puppetxr_header.c
 )
+target_include_directories(puppetxr_tests PRIVATE ${CMAKE_SOURCE_DIR}/tools/recorder)
 if (NOT PUPPETXR_HEADLESS_ONLY)
     target_sources(puppetxr_tests PRIVATE tests_ui.cpp)
 endif ()
 target_link_libraries(puppetxr_tests PRIVATE puppetxr_core GTest::gtest_main ${CMAKE_DL_LIBS})
-target_compile_definitions(puppetxr_tests PRIVATE PUPPETXR_SOURCE_ROOMS_DIR="${CMAKE_SOURCE_DIR}/rooms" PUPPETXR_SOURCE_MODELS_DIR="${CMAKE_SOURCE_DIR}/models" PUPPETXR_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}" PUPPETXR_CTL_PATH="$<TARGET_FILE:puppetxrctl>" PUPPETXR_TESTS_PATH="$<TARGET_FILE:puppetxr_tests>" PUPPETXR_TEST_VULKAN_LOADER="$<$<BOOL:${PUPPETXR_VULKAN_LOADER}>:${PUPPETXR_VULKAN_LOADER}>")
+target_compile_definitions(puppetxr_tests PRIVATE PUPPETXR_SOURCE_DIR="${CMAKE_SOURCE_DIR}" PUPPETXR_SOURCE_ROOMS_DIR="${CMAKE_SOURCE_DIR}/rooms" PUPPETXR_SOURCE_MODELS_DIR="${CMAKE_SOURCE_DIR}/models" PUPPETXR_TEST_OUTPUT_DIR="${CMAKE_BINARY_DIR}" PUPPETXR_CTL_PATH="$<TARGET_FILE:puppetxrctl>" PUPPETXR_TESTS_PATH="$<TARGET_FILE:puppetxr_tests>" PUPPETXR_TEST_VULKAN_LOADER="$<$<BOOL:${PUPPETXR_VULKAN_LOADER}>:${PUPPETXR_VULKAN_LOADER}>")
 add_dependencies(puppetxr_tests puppetxrctl)
 if (MSVC)
     # MSVC has no C89 mode; the GCC and clang builds check that

@@ -614,6 +614,7 @@ objects must look at the surface, as a user would.
 | `apps/puppetxr_example` | all modes, record and replay e2e |
 | `apps/body_dump` | body tracking skeleton and joints of both joint sets; ctest `body_dump` compares a fixed-step run with `tests/body_dump_puppetxr.json` (`docs/body-tracking.md`) |
 | `apps/eye_dump` | the eye gaze action space, the per-eye poses and the face weights, in the stage and the view space; ctest `eye_dump` compares a fixed-step run with `tests/eye_dump_puppetxr.json` (`docs/face-tracking.md`) |
+| `tools/recorder` | the motion recorder; `RecorderTest` runs it in `puppetxr_tests` on the runtime in the process and checks its takes against the simulated hands (`docs/recorder.md`) |
 | Meta OpenXR SDK samples | 12 of 20 under test, `docs/samples.md` |
 | Godot 4.7.2 XR demos | 8 demos on the compatibility (GLX) and mobile (Vulkan) renderers, `docs/samples.md` |
 | Godot OpenXR vendors 5.1.0 samples | 8 samples (Meta scene, passthrough, hands, layers, space warp, metrics), `docs/samples.md` |

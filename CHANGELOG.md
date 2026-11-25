@@ -7,6 +7,7 @@ config start with **Breaking:**.
 
 ## Unreleased
 
+- `puppetxr_recorder`: a minimal OpenXR app that records tracked hands, head and the runtime's pinch strengths into JSON takes, step by step through a protocol of calibration motions and gestures, with a panel poked by the index tip (`docs/recorder.md`); `tools/recorder/build_apk.sh` builds it as an APK for Meta Quest without Gradle.
 - macOS: a new instance the main thread creates after the last one ended on another thread keeps its mirror window; the stop the old one left queued runs before the new video starts.
 - macOS: an app that destroys its last instance on another thread while the main thread is busy no longer leaves the mirror window open; it closes once the main thread comes by.
 - The Blender room exporter (`tools/blender/puppetxr_room_export.py`) loads again: three string literals were broken across lines, a syntax error.

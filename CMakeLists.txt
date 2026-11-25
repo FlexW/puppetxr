@@ -424,4 +424,5 @@ endif ()
 
 if (PUPPETXR_BUILD_APPS)
     add_subdirectory(apps)
+    add_subdirectory(tools/recorder)
 endif ()

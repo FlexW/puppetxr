@@ -293,6 +293,31 @@ if(DYNAMIC_LOADER AND (CMAKE_GENERATOR MATCHES "^Visual Studio.*"))
     )
 endif()
 
+# jnipp - android only
+if(ANDROID)
+    set(JNIPP_ROOT "${PROJECT_SOURCE_DIR}/src/external/jnipp")
+    set(JNIWRAPPER_ROOT
+        "${PROJECT_SOURCE_DIR}/src/external/android-jni-wrappers"
+    )
+    file(
+        GLOB
+        ANDROID_WRAP_SOURCES
+        CONFIGURE_DEPENDS
+        ${JNIWRAPPER_ROOT}/wrap/*.cpp
+    )
+    target_sources(
+        openxr_loader
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/android_utilities.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/android_utilities.h
+            ${ANDROID_WRAP_SOURCES}
+            ${JNIPP_ROOT}/jnipp.cpp
+    )
+    target_include_directories(
+        openxr_loader PRIVATE ${JNIPP_ROOT} ${JNIWRAPPER_ROOT}
+    )
+endif()
+
 # Make pkg-config file
 if(NOT MSVC)
     set(XR_API_VERSION "${MAJOR}.${MINOR}")

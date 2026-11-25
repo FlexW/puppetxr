@@ -17,3 +17,5 @@
 | `samples.md` | running or fixing a sample app test |
 | `body-tracking.md` | simulated body tracking |
 | `face-tracking.md` | simulated face and eye tracking |
+| `recorder.md` | the motion recorder (`tools/recorder`) and its take format |
+| `hand-motion.md` | realistic simulated hands and gestures (planned) |
