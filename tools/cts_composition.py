@@ -151,7 +151,7 @@ class Shell:
     """One puppetxrctl shell, the only client of a paused simulator. Closing it would resume it."""
 
     def __init__(self, puppetxrctl, pid):
-        self.proc = subprocess.Popen([puppetxrctl, "--target", str(pid), "shell"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        self.proc = subprocess.Popen([puppetxrctl, "--target", str(pid), "shell", "once"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
 
     def run(self, line):
         try:

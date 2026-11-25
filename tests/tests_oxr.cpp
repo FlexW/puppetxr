@@ -15667,6 +15667,12 @@ TEST_F(OxrTest, d3d_extensions_are_offered_where_the_build_has_d3d)
     EXPECT_EQ(extension_offered(xr, "XR_KHR_D3D12_enable"), r_backend_available(R_Backend::D3D12));
 }
 
+// Regression: the CTS enables XR_EXT_uuid with the render model extensions, whose instance was refused
+TEST_F(OxrTest, uuid_is_offered_for_the_render_model_extensions)
+{
+    EXPECT_TRUE(extension_offered(xr, XR_EXT_UUID_EXTENSION_NAME));
+}
+
 TEST_F(OxrTest, gl_extensions_are_offered_where_the_build_has_gl)
 {
     EXPECT_EQ(extension_offered(xr, "XR_KHR_opengl_enable"), r_backend_available(R_Backend::OpenGL));

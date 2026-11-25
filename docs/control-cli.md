@@ -124,7 +124,7 @@ puppetxrctl [--target <pid|app|host:port>] [--json] [--timeout <ms>] <command> [
 | `drift reset` | no drift and no rate |
 | `exit` | the session goes to STOPPING |
 | `send <json>` | one raw request |
-| `shell` | commands or raw JSON lines from stdin, JSON replies on stdout; one connection, made once the target listens and moved to its next instance's server when the first goes away, each within `--timeout` (Unreal makes two instances, with no simulator between them); it gives up at once when a process id target has exited, whose discovery file may outlive it |
+| `shell [once]` | commands or raw JSON lines from stdin, JSON replies on stdout; one connection, made once the target listens and moved to its next instance's server when the first goes away, each within `--timeout` (Unreal makes two instances, with no simulator between them); it gives up at once when a process id target has exited, whose discovery file may outlive it; `once` ends with its instance instead, for scripts that set up each one |
 
 - Without `--target` (or `PUPPETXR_TARGET`), the only running simulator is used. With several, the
   CLI lists them and fails. A number picks a pid, `host:port` connects directly (remote

@@ -1894,6 +1894,43 @@ TEST_F(ApiControlTest, puppetxrctl_fails_frame_calls)
 
 // Unreal destroys its first instance and creates another of the same name, so its control server
 // moves to another port; a shell connected to the first follows the process to the second
+// Regression: the CTS harness sets up each instance anew when its shell ends, and since shells
+// follow the app to its next instance none ended: later scenes ran without their setup
+TEST_F(ApiControlTest, puppetxrctl_shell_once_ends_with_its_instance)
+{
+    start();
+    char target[16];
+    cstr_format(target, sizeof(target), "%u", os_process_id());
+    char input_path[OS_MAX_PATH];
+    char name[64];
+    cstr_format(name, sizeof(name), "puppetxrctl_once_in_%u.txt", os_process_id());
+    api_path(input_path, sizeof(input_path), name);
+    const char* input = "input left trigger/value 0.25\nwait 5\ninput left trigger/value 0.5\n";
+    ASSERT_TRUE(os_write_file(input_path, input, cstr_length(input)));
+    const char* argv[] = { PUPPETXR_CTL_PATH, "--target", target, "shell", "once", nullptr };
+    OS_Process* process = os_process_spawn(argv, input_path, nullptr);
+    ASSERT_NE(process, nullptr);
+    i32 exit_code = -1;
+    b8  exited    = false;
+    for (u32 i = 0; i < 2000 && sim_get_input(oxr_get_sim(), SIM_Device::LeftHand, SIM_Input::TriggerValue).value.x != 0.25f; i++)
+    {
+        frame();
+        exited = os_process_wait(process, 1, exit_code);
+    }
+    ASSERT_FALSE(exited);
+    stop();
+    start();
+    for (u32 i = 0; i < 4000 && !exited; i++)
+    {
+        frame();
+        exited = os_process_wait(process, 1, exit_code);
+    }
+    os_process_release(process);
+    EXPECT_TRUE(exited);
+    EXPECT_NE(exit_code, 0);
+    EXPECT_NE(sim_get_input(oxr_get_sim(), SIM_Device::LeftHand, SIM_Input::TriggerValue).value.x, 0.5f) << "the next instance is left alone";
+}
+
 TEST_F(ApiControlTest, puppetxrctl_shell_follows_the_app_to_its_next_instance)
 {
     start();

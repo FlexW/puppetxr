@@ -109,7 +109,7 @@ Ordered: real takes first, then the model fitted to them, then gestures.
 - [ ] scenario tests of extensions once they land: palm_pose, maintenance1 GripSurface, eye gaze, dpad, plane detection, spatial anchors
 - [ ] the hand tracking scenarios take no screenshot of the hands; add one each with references made on Mesa 26.2.4 lavapipe (`--update`, then review)
 
-CTS results (1.1.63, non-interactive, `-H -T`, 2026-10-20):
+CTS results (1.1.63, non-interactive, `-H -T`, 2026-11-24 on an AMD Radeon RX 6700 XT; lavapipe 26.2.4 crashes in SwapchainsUnorderedAccess, the CTS's compute clear):
 
 | pass | command | result |
 |---|---|---|

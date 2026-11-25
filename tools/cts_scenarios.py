@@ -49,9 +49,9 @@ def pose(device, position, orientation=(0.0, 0.0, 0.0, 1.0)):
 class Shell:
     """One puppetxrctl shell, the only client of a paused simulator."""
 
-    def __init__(self, puppetxrctl, pid, timeout_ms=None):
+    def __init__(self, puppetxrctl, pid, timeout_ms=None, once=False):
         timeout = ["--timeout", str(timeout_ms)] if timeout_ms else []
-        self.proc = subprocess.Popen([puppetxrctl, "--target", str(pid)] + timeout + ["shell"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        self.proc = subprocess.Popen([puppetxrctl, "--target", str(pid)] + timeout + ["shell"] + (["once"] if once else []), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         self.alive = True
         self.pid = pid
         # Device commands refused by a live simulator (a misspelt input, a missing device)
@@ -116,20 +116,22 @@ def haptic(shell, device):
 
 
 def script_haptic_interrupt(shell, capture):
-    # Spec 11.7 xrApplyHapticFeedback: a new event on the same action replaces the running one
+    # Spec 11.7 xrApplyHapticFeedback: a new event on the same action replaces the running one. The
+    # CTS means to alternate 0.25 and 0.75 by a bool it never initialises, so either may come
+    # Only the left Touch has a menu button, which the simple profile's menu is bound to
     problems = []
     shell.frames(30)
-    press(shell, "right", "menu/click")
-    first = haptic(shell, "right")
-    if not first.get("active") or abs(first.get("amplitude", 0) - 0.25) > 1e-3 or not 1.8 < first.get("remaining_s", 0) <= 2.0:
-        problems.append(f"first press: expected a 2 s haptic at 0.25, got {first}")
+    press(shell, "left", "menu/click")
+    first = haptic(shell, "left")
+    if not first.get("active") or min(abs(first.get("amplitude", 0) - a) for a in (0.25, 0.75)) > 1e-3 or not 1.8 < first.get("remaining_s", 0) <= 2.0:
+        problems.append(f"first press: expected a 2 s haptic at 0.25 or 0.75, got {first}")
     shell.frames(45)
-    press(shell, "right", "menu/click")
-    second = haptic(shell, "right")
-    if not second.get("active") or abs(second.get("amplitude", 0) - 0.75) > 1e-3 or not 1.8 < second.get("remaining_s", 0) <= 2.0:
-        problems.append(f"second press: expected the haptic restarted for 2 s at 0.75, got {second}")
+    press(shell, "left", "menu/click")
+    second = haptic(shell, "left")
+    if not second.get("active") or min(abs(second.get("amplitude", 0) - a) for a in (0.25, 0.75)) > 1e-3 or not 1.8 < second.get("remaining_s", 0) <= 2.0:
+        problems.append(f"second press: expected the haptic restarted for 2 s at 0.25 or 0.75, got {second}")
     shell.frames(int(2.1 * FRAME_RATE))
-    if haptic(shell, "right").get("active"):
+    if haptic(shell, "left").get("active"):
         problems.append("the haptic still runs after 2 s")
     press(shell, "right", "trigger/value")
     return problems
@@ -194,6 +196,8 @@ def script_hand_poses(shell, capture):
     # A person checks that what is drawn at the grip, aim or grip surface pose sits in the hand like
     # the spec diagrams; here the hands hold the thumbs-up pose the CTS describes, turned a little
     # so all three axes show, and the result is compared with a reviewed reference
+    # The menu button of the hand shown swaps it with the other; the right Touch has none
+    shell.run("controller khr_simple")
     shell.run(pose("left", (-0.15, 1.35, -0.45), quat_mul(quat_axis_angle((0.0, 1.0, 0.0), 0.4), THUMBS_UP)))
     shell.run(pose("right", (0.15, 1.35, -0.45), quat_mul(quat_axis_angle((0.0, 1.0, 0.0), -0.4), THUMBS_UP)))
     shell.frames(60)
@@ -201,7 +205,7 @@ def script_hand_poses(shell, capture):
     press(shell, "right", "menu/click")
     shell.frames(30)
     capture("swapped")
-    press(shell, "right", "trigger/value")
+    press(shell, "right", "select/click")
     return []
 
 
@@ -293,7 +297,7 @@ def run_test(name, opts, env):
         if not os.path.exists(discovery_file(proc.pid)):
             time.sleep(0.05)
             continue
-        shell = Shell(opts.puppetxrctl, proc.pid)
+        shell = Shell(opts.puppetxrctl, proc.pid, once=True)
         shell.run("controls off")
         def capture(label):
             shot = os.path.join(opts.out, f"{name}_{label}.png")
@@ -311,7 +315,7 @@ def run_test(name, opts, env):
                 shell.frames(30)
         if shell.alive:
             problems.append("the scenario did not end after its script")
-            press(shell, "right", "menu/click")
+            press(shell, "left", "menu/click")
         while shell.alive and proc.poll() is None and time.time() < deadline:
             shell.frames(30)
         shell.close()

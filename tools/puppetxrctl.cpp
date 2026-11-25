@@ -132,7 +132,8 @@ static const char* ctl_usage =
     "  drift rate <x y z> [yaw]             drift every frame by m/s and degrees/s; drift rate 0 0 0 stops\n"
     "  exit                                 ask the app to end its session\n"
     "  send <json>                          one raw request\n"
-    "  shell                                commands or raw JSON lines from stdin, JSON replies on stdout\n"
+    "  shell [once]                         commands or raw JSON lines from stdin, JSON replies on stdout;\n"
+    "                                       once ends with the instance instead of following the app to its next\n"
     "\n"
     "Simulators listen only when started with PUPPETXR_CONTROL=1. Client and simulator must be the same version.\n";
 
@@ -1501,7 +1502,7 @@ static b8 follow_target (const CTL_Options& options, CTL_Simulator& inout_simula
     return connect_when_listening(options, inout_simulator.port, inout_simulator, connection);
 }
 
-static i32 run_shell (CTL_Connection& connection, CTL_Simulator& simulator, const CTL_Options& options)
+static i32 run_shell (CTL_Connection& connection, CTL_Simulator& simulator, const CTL_Options& options, b8 once)
 {
     char line[CTL_MAX_REQUEST];
     i32  status = CTL_EXIT_OK;
@@ -1550,7 +1551,7 @@ static i32 run_shell (CTL_Connection& connection, CTL_Simulator& simulator, cons
         }
         char reply[CTL_MAX_REPLY];
         if (!request(connection, request_line, timeout, reply, sizeof(reply)) &&
-            (!follow_target(options, simulator, connection) || !request(connection, request_line, timeout, reply, sizeof(reply))))
+            (once || !follow_target(options, simulator, connection) || !request(connection, request_line, timeout, reply, sizeof(reply))))
         {
             return CTL_EXIT_CONNECT;
         }
@@ -1634,7 +1635,7 @@ int main (int argc, char** argv) // NOLINT(misc-const-correctness): the signatur
     };
     if (cstr_equal(command, "shell"))
     {
-        return connect_when_listening(options, 0, simulator, *connection) ? run_shell(*connection, simulator, options) : CTL_EXIT_CONNECT;
+        return connect_when_listening(options, 0, simulator, *connection) ? run_shell(*connection, simulator, options, count == 2 && cstr_equal(words[1], "once")) : CTL_EXIT_CONNECT;
     }
     if (!resolve_target(options.target, simulator, true) || !connect(simulator, options.timeout_ms, *connection))
     {

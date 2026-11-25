@@ -158,6 +158,7 @@
     X(KHR_binding_modification,               XR_KHR_BINDING_MODIFICATION_EXTENSION_NAME,               XR_KHR_binding_modification_SPEC_VERSION)               \
     X(EXT_dpad_binding,                       XR_EXT_DPAD_BINDING_EXTENSION_NAME,                       XR_EXT_dpad_binding_SPEC_VERSION)                       \
     X(VALVE_analog_threshold,                 XR_VALVE_ANALOG_THRESHOLD_EXTENSION_NAME,                 XR_VALVE_analog_threshold_SPEC_VERSION)                 \
+    X(EXT_uuid,                               XR_EXT_UUID_EXTENSION_NAME,                               XR_EXT_uuid_SPEC_VERSION)                               \
     X(EXT_render_model,                       XR_EXT_RENDER_MODEL_EXTENSION_NAME,                       XR_EXT_render_model_SPEC_VERSION)                       \
     X(EXT_interaction_render_model,           XR_EXT_INTERACTION_RENDER_MODEL_EXTENSION_NAME,           XR_EXT_interaction_render_model_SPEC_VERSION)           \
     X(FB_foveation,                           XR_FB_FOVEATION_EXTENSION_NAME,                           XR_FB_foveation_SPEC_VERSION)                           \

@@ -81,7 +81,7 @@ Totals: 99 done, 1 partial, 147 no, 16 n/a; effort S 105, M 88, L 43, XL 8, plat
 | `XR_EXT_stationary_reference_space` | done | S | the LOCAL origin at sim creation, never recentered; one constant generation id (no tracking loss); `docs/openxr.md` |
 | `XR_EXT_thermal_query` | no | S | fixed nominal thermal state |
 | `XR_EXT_user_presence` | no | S | presence events, toggled from the UI and the control API |
-| `XR_EXT_uuid` | no | S | core in 1.1; types only |
+| `XR_EXT_uuid` | done | S | core in 1.1; types only, offered as the render model extensions are used with it |
 | `XR_EXT_view_configuration_depth_range` | no | S | fixed depth range |
 | `XR_EXT_view_configuration_views_change` | no | S | event struct |
 | `XR_EXT_active_action_set_priority` | no | M | priority masking of shared inputs in xrSyncActions |
