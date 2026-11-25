@@ -80,6 +80,10 @@ puppetxrctl [--target <pid|app|host:port>] [--json] [--timeout <ms>] <command> [
 | `controller [meta_touch_plus\|meta_touch_pro\|oculus_touch\|khr_simple]` | get or set |
 | `hand left\|right [controller\|hand]` | get or set what tracks the hand (`get_hand_source`, `set_hand_source`); a tracked hand pinches with `input <hand> trigger/value`, grabs with `squeeze/value` |
 | `body` | the 84 body tracking joints: name, position and orientation in stage space, tracked, confidence (`get_body_joints`, `docs/body-tracking.md`) |
+| `gesture list`, `gesture show <name>` | the loaded gestures' names, a gesture's JSON (`docs/hand-motion.md`) |
+| `gesture check <file>`, `gesture load <file\|dir>` | check a file of this machine (exit 1 with the error and its JSON path), load a file or every `.json` of a directory into the simulator by its path (made absolute here), named by the file |
+| `gesture play <name\|file.json> [left\|right] [k=v ...]` | play a loaded gesture or a file (sent inline, not kept) on that hand as its primary one (default the active hand) with params: `v` a number, `x,y,z` a point, else an expression (`target=head+forward*0.4`); prints the play id (`play`). An inline file must fit in a request line (16 KB); load larger ones |
+| `gesture wait <id>`, `gesture events <id>`, `gesture stop` | reply once the play ended, with `playing`, its `events` (name, frame, `time_ns`) and the frame (timeout at least 660 s); the same at once; stop the playing gesture |
 | `body get`, `body set <json>`, `body reset` | the body as JSON, JSON merged onto it, back to the configured body (`get_body`, `set_body`, `reset_body`) |
 | `body save <file>`, `body load <file>` | the body as JSON into a file of this machine; the configured body with the file's on top, in one request |
 | `body height <m>`, `body pose stand\|t_pose\|a_pose\|arms_forward\|sit`, `body bone <joint> <scale>` | the shape and the pose; a bone scale lengthens the bones from the joint to its children |

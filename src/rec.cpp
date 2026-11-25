@@ -337,6 +337,29 @@ static void put_state (REC_Out& out, const SIM_FrameState& state, b8 with_props,
         if (device.source == SIM_HandSource::Hand)
         {
             put_pose(out, device.detached);
+            put_u8(out, device.shaped ? 1 : 0);
+            if (device.shaped)
+            {
+                for (const f32 curl : device.shape.curls)
+                {
+                    put_f32(out, curl);
+                }
+                put_f32(out, device.shape.pinch);
+                put_f32(out, device.shape.open);
+                u8 mask = 0;
+                for (u32 r = 0; r < SIM_HAND_RECORDED_POSES; r++)
+                {
+                    mask |= device.shape.recorded[r] != 0.0f ? (u8)(1u << r) : 0u;
+                }
+                put_u8(out, mask);
+                for (const f32 weight : device.shape.recorded)
+                {
+                    if (weight != 0.0f)
+                    {
+                        put_f32(out, weight);
+                    }
+                }
+            }
         }
         put_pose(out, device.pose);
 
@@ -610,6 +633,33 @@ static b8 get_state (REC_In& in, u32 version, const REC_Layout& layout, SIM_Fram
         {
             device.detached = get_pose(in);
             if (!pose_valid(device.detached))
+            {
+                return false;
+            }
+            const u8 shaped = version >= 6 ? get_u8(in) : 0;
+            device.shaped   = shaped == 1;
+            if (shaped == 1)
+            {
+                b8 finite = true;
+                for (f32& curl : device.shape.curls)
+                {
+                    curl   = get_f32(in);
+                    finite = finite && zm::is_finite(curl);
+                }
+                device.shape.pinch = get_f32(in);
+                device.shape.open  = get_f32(in);
+                const u8 mask      = get_u8(in);
+                for (u32 r = 0; r < SIM_HAND_RECORDED_POSES; r++)
+                {
+                    device.shape.recorded[r] = (mask >> r) & 1u ? get_f32(in) : 0.0f;
+                    finite                   = finite && zm::is_finite(device.shape.recorded[r]);
+                }
+                if (!finite || !zm::is_finite(device.shape.pinch) || !zm::is_finite(device.shape.open) || mask >> SIM_HAND_RECORDED_POSES != 0)
+                {
+                    return false;
+                }
+            }
+            if (shaped > 1)
             {
                 return false;
             }
@@ -1015,6 +1065,7 @@ static b8 read_header (u32 version, REC_In& in, REC_Header& out, REC_Layout& lay
     case 3:
     case 4:
     case 5:
+    case 6:
         return get_header(version, in, out, layout);
     default:
         return false;
@@ -1030,6 +1081,7 @@ static b8 read_state (u32 version, REC_In& in, const REC_Layout& layout, SIM_Fra
     case 3:
     case 4:
     case 5:
+    case 6:
         return get_state(in, version, layout, out);
     default:
         return false;

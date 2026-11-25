@@ -1,0 +1,21 @@
+{
+ "format": "puppetxr-gesture",
+ "version": 1,
+ "name": "wave",
+ "description": "Raise the open hand beside the head and wave three times",
+ "hands": ["right"],
+ "params": {
+  "width": { "type": "number", "default": 0.12, "min": 0, "max": 0.5 }
+ },
+ "steps": [
+  { "anchor": "palm", "to": "head + outward * 0.14 + forward * 0.3 + down * 0.1", "palm": "wave", "duration": 0.5 },
+  { "shape": "wave", "duration": 0.3, "with": "previous" },
+  { "anchor": "palm", "to": "head + outward * (0.14 + width) + forward * 0.3 + down * 0.1", "duration": 0.2, "ease": "linear" },
+  { "anchor": "palm", "to": "head + outward * (0.14 - width) + forward * 0.3 + down * 0.1", "duration": 0.35 },
+  { "anchor": "palm", "to": "head + outward * (0.14 + width) + forward * 0.3 + down * 0.1", "duration": 0.35 },
+  { "anchor": "palm", "to": "head + outward * (0.14 - width) + forward * 0.3 + down * 0.1", "duration": 0.35 },
+  { "anchor": "palm", "to": "head + outward * 0.14 + forward * 0.3 + down * 0.1", "duration": 0.2 },
+  { "path": "home", "duration": 0.6 },
+  { "shape": "idle", "duration": 0.4, "with": "previous" }
+ ]
+}

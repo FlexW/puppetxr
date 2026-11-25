@@ -1,0 +1,8 @@
+{
+ "format": "puppetxr-gesture",
+ "version": 1,
+ "name": "fist",
+ "description": "Close a fist and keep it",
+ "hands": ["right"],
+ "steps": [ { "shape": "fist", "duration": 0.25, "hold": true, "event": "fist" } ]
+}

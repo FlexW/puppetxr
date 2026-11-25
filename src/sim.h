@@ -321,13 +321,32 @@ struct SIM_HandJoints
     f32  radii[SIM_HAND_JOINT_COUNT];
 };
 
+#define SIM_GESTURE_NAME       64
+#define SIM_MAX_GESTURE_PATHS  8
+#define SIM_GESTURE_ERROR      256
+#define SIM_MAX_GESTURE_EVENTS 64
+
+// A step's event, or "end" when a gesture finished, "stopped" when it was stopped
+struct SIM_GestureEvent
+{
+    u32  play;
+    char name[32];
+    u64  frame; // the frame it happened in, as sim_frame_index during that frame
+    i64  time;  // that frame's display time
+};
+
+// The hand poses of recorded gestures a shape can go toward, in this order: thumbs_up, point,
+// poke, grasp, wave (motion/hand_model.json)
+#define SIM_HAND_RECORDED_POSES 5
+
 // A hand shape by finger, thumb to little: 0 the base pose, 1 the recorded fist; neighbours follow
 // as measured (docs/hand-motion.md, Hand model), values beyond [0, 1] are clamped
 struct SIM_HandCurls
 {
     f32 curls[5];
     f32 pinch;     // toward the recorded pinch, before the curls
-    b8  base_open; // from the open hand instead of the relaxed one
+    f32 open;      // from the relaxed hand toward the open one, before the pinch
+    f32 recorded[SIM_HAND_RECORDED_POSES]; // toward recorded gestures, whole hand, after the curls
 };
 
 // XR_META_body_tracking_full_body order; the first 70 are XR_FB_body_tracking's. The 26 joints of
@@ -753,6 +772,8 @@ struct SIM_DeviceFrame
     b8             active;
     SIM_HandSource source;   // always Controller for the head
     Pose           detached; // the controller put down while the hand is tracked (source Hand)
+    b8             shaped;   // a gesture shapes the tracked hand (source Hand)
+    SIM_HandCurls  shape;
     SIM_InputValue inputs[(u32)SIM_Input::Count]; // always zero for the head
 };
 
@@ -921,6 +942,8 @@ struct SIM_Config
     char             screenshot_dir[OS_MAX_PATH];
     char             profile_path[OS_MAX_PATH]; // a profile capture from xrCreateInstance to the runtime's shutdown; empty for none
     char             room[SIM_MAX_NAME];     // empty means no room
+    char             gesture_paths[SIM_MAX_GESTURE_PATHS][OS_MAX_PATH]; // users' gesture files or directories (docs/hand-motion.md, Loading)
+    u32              gesture_paths_count;
     b8               room_explicit;          // set by the config file or the environment, so the remembered room does not apply
     char             rooms_dir[OS_MAX_PATH]; // empty means the built-in rooms
 
@@ -1047,7 +1070,23 @@ b8                sim_slot_from_name         (const char* name, SIM_Slot& out_sl
 
 SIM_HandSource    sim_get_hand_source        (const SIM_Sim* sim, SIM_Device hand);
 void              sim_curled_hand_joints     (const SIM_Sim* sim, SIM_Device hand, const Pose& grip, const SIM_HandCurls& curls, SIM_HandJoints& out_joints); // a shape of single fingers, coupled and limited as measured
+void              sim_set_hand_shape         (SIM_Sim* sim, SIM_Device hand, const SIM_HandCurls* shape); // a tracked hand takes this shape instead of its pinch and grab; null gives them back
+b8                sim_get_hand_shape         (const SIM_Sim* sim, SIM_Device hand, SIM_HandCurls& out_shape);
 SIM_InputValue    sim_reported_input         (const SIM_Sim* sim, SIM_Device device, SIM_Input input); // what apps read: a tracked hand's pinch and grasp from its joints, else the input
+
+// Gestures (docs/hand-motion.md): JSON files of timed steps that move and shape the hands. Errors
+// name the JSON path; a play id is never 0
+b8                sim_gesture_check          (const char* json, char* error, u32 error_size);
+b8                sim_gesture_load           (SIM_Sim* sim, const char* name, const char* json, char* error, u32 error_size); // checked and kept, replacing one of the name
+u32               sim_gesture_load_path      (SIM_Sim* sim, const char* path, char* error, u32 error_size); // a .json file or every .json of a directory, named by the file; the number loaded, the last error in error
+u32               sim_gesture_count          (const SIM_Sim* sim);
+const char*       sim_gesture_name           (const SIM_Sim* sim, u32 index);
+const char*       sim_gesture_json           (const SIM_Sim* sim, const char* name);
+u32               sim_gesture_play           (SIM_Sim* sim, const char* name, SIM_Device hand, const char* params_json, char* error, u32 error_size); // hand: the primary one, Count for the active hand; 0 on error
+u32               sim_gesture_play_json      (SIM_Sim* sim, const char* json, SIM_Device hand, const char* params_json, char* error, u32 error_size); // a gesture not kept
+void              sim_gesture_stop           (SIM_Sim* sim); // the hands stay where they are and go back to their inputs
+u32               sim_gesture_playing        (const SIM_Sim* sim); // the id of the gesture playing, else 0
+u32               sim_gesture_events         (const SIM_Sim* sim, u32 play, SIM_GestureEvent* out_events, u32 capacity); // of the last SIM_MAX_GESTURE_EVENTS; returns the count
 void              sim_set_hand_source        (SIM_Sim* sim, SIM_Device hand, SIM_HandSource source); // zeroes inputs the source lacks
 const char*       sim_hand_source_name       (SIM_HandSource source); // "controller", "hand"; stable, used by recordings
 b8                sim_hand_source_from_name  (const char* name, SIM_HandSource& out_source);

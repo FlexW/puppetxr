@@ -1,0 +1,19 @@
+{
+ "format": "puppetxr-gesture",
+ "version": 1,
+ "name": "poke",
+ "description": "Point, press the index tip 2 cm past a point along the head's forward, back off, return",
+ "hands": ["right"],
+ "params": {
+  "target": { "type": "point", "default": "head + forward * 0.58 + down * 0.19 + outward * 0.03" },
+  "depth": { "type": "number", "default": 0.02, "min": 0, "max": 0.2 }
+ },
+ "steps": [
+  { "anchor": "index_tip", "to": "target - forward * 0.05", "duration": 0.5, "palm": "poke" },
+  { "shape": "poke", "duration": 0.3, "with": "previous" },
+  { "anchor": "index_tip", "to": "target + forward * depth", "duration": 0.2, "event": "press" },
+  { "anchor": "index_tip", "to": "target - forward * 0.05", "duration": 0.2, "event": "release" },
+  { "path": "home", "duration": 0.5 },
+  { "shape": "idle", "duration": 0.3, "with": "previous" }
+ ]
+}

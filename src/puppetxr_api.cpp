@@ -33,6 +33,9 @@ struct API_Client
     u64         wait_frame;
     u64         reached_ns;   // when wait_frame was reached, 0 before
     i64         wait_id;
+    u32         wait_gesture; // a wait_gesture reply is due once this play ended
+    u32         reply_gesture; // the play whose events the due reply carries
+    char        message[SIM_GESTURE_ERROR]; // what the failing command says, else its name
 };
 
 struct API_Server
@@ -1153,6 +1156,186 @@ static PUPPETXR_Result api_load_model (const char* name, const char* path)
     return control_result(oxr_load_model(name, path));
 }
 
+
+//
+// Gestures (docs/hand-motion.md)
+//
+
+static void copy_error (char* out_error, uint32_t error_size, const char* message)
+{
+    if (out_error && error_size > 0)
+    {
+        cstr_copy(out_error, error_size, message);
+    }
+}
+
+static PUPPETXR_Result api_load_gesture (const char* path, char* out_error, uint32_t error_size)
+{
+    if (!path || !path[0])
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    oxr_lock();
+    defer { oxr_unlock(); };
+    SIM_Sim* sim = oxr_get_sim();
+    if (!sim)
+    {
+        return PUPPETXR_ERROR_NO_INSTANCE;
+    }
+    char error[SIM_GESTURE_ERROR] = {};
+    const u32 loaded              = sim_gesture_load_path(sim, path, error, sizeof(error));
+    copy_error(out_error, error_size, error);
+    return error[0] || loaded == 0 ? PUPPETXR_ERROR_INVALID_ARGUMENT : PUPPETXR_SUCCESS;
+}
+
+static PUPPETXR_Result api_check_gesture (const char* json, char* out_error, uint32_t error_size)
+{
+    if (!json)
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    char error[SIM_GESTURE_ERROR] = {};
+    const b8 valid                = sim_gesture_check(json, error, sizeof(error));
+    copy_error(out_error, error_size, error);
+    return valid ? PUPPETXR_SUCCESS : PUPPETXR_ERROR_INVALID_ARGUMENT;
+}
+
+static PUPPETXR_Result reply_text (const char* text, char* out_json, uint32_t size, uint32_t* out_length)
+{
+    const usize length = cstr_length(text);
+    *out_length        = (u32)length + 1;
+    if (length + 1 > size)
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    memory_copy(out_json, text, length + 1);
+    *out_length = (u32)length;
+    return PUPPETXR_SUCCESS;
+}
+
+static PUPPETXR_Result api_list_gestures (char* out_json, uint32_t size, uint32_t* out_length)
+{
+    if (!out_length || (size > 0 && !out_json))
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    oxr_lock();
+    defer { oxr_unlock(); };
+    const SIM_Sim* sim = oxr_get_sim();
+    if (!sim)
+    {
+        return PUPPETXR_ERROR_NO_INSTANCE;
+    }
+    Array<char> text = {};
+    defer { text.release(); };
+    text.add('[');
+    for (u32 i = 0; i < sim_gesture_count(sim); i++)
+    {
+        const char* name = sim_gesture_name(sim, i);
+        if (i > 0)
+        {
+            text.add(',');
+        }
+        text.add('"');
+        for (const char* c = name; *c; c++)
+        {
+            text.add(*c);
+        }
+        text.add('"');
+    }
+    text.add(']');
+    text.add('\0');
+    return reply_text(text.data, out_json, size, out_length);
+}
+
+static PUPPETXR_Result api_get_gesture (const char* name, char* out_json, uint32_t size, uint32_t* out_length)
+{
+    if (!name || !out_length || (size > 0 && !out_json))
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    oxr_lock();
+    defer { oxr_unlock(); };
+    const SIM_Sim* sim = oxr_get_sim();
+    if (!sim)
+    {
+        return PUPPETXR_ERROR_NO_INSTANCE;
+    }
+    const char* json = sim_gesture_json(sim, name);
+    return json ? reply_text(json, out_json, size, out_length) : PUPPETXR_ERROR_INVALID_ARGUMENT;
+}
+
+static PUPPETXR_Result api_play_gesture (const char* name_or_json, PUPPETXR_Device hand, const char* params_json, uint32_t* out_id, char* out_error, uint32_t error_size)
+{
+    if (!name_or_json || !out_id || (hand != PUPPETXR_DEVICE_HEAD && hand != PUPPETXR_DEVICE_LEFT_HAND && hand != PUPPETXR_DEVICE_RIGHT_HAND))
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    *out_id = 0;
+    if (replaying())
+    {
+        return PUPPETXR_ERROR_REPLAYING;
+    }
+    oxr_lock();
+    defer { oxr_unlock(); };
+    SIM_Sim* sim = oxr_get_sim();
+    if (!sim)
+    {
+        return PUPPETXR_ERROR_NO_INSTANCE;
+    }
+    const SIM_Device device             = hand == PUPPETXR_DEVICE_LEFT_HAND ? SIM_Device::LeftHand : hand == PUPPETXR_DEVICE_RIGHT_HAND ? SIM_Device::RightHand : SIM_Device::Count;
+    char             error[SIM_GESTURE_ERROR] = {};
+    const char*      start              = name_or_json;
+    while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r')
+    {
+        start++;
+    }
+    *out_id = *start == '{' ? sim_gesture_play_json(sim, name_or_json, device, params_json, error, sizeof(error)) : sim_gesture_play(sim, name_or_json, device, params_json, error, sizeof(error));
+    copy_error(out_error, error_size, error);
+    return *out_id != 0 ? PUPPETXR_SUCCESS : PUPPETXR_ERROR_INVALID_ARGUMENT;
+}
+
+static PUPPETXR_Result api_stop_gesture ()
+{
+    if (replaying())
+    {
+        return PUPPETXR_ERROR_REPLAYING;
+    }
+    oxr_lock();
+    defer { oxr_unlock(); };
+    SIM_Sim* sim = oxr_get_sim();
+    if (!sim)
+    {
+        return PUPPETXR_ERROR_NO_INSTANCE;
+    }
+    sim_gesture_stop(sim);
+    return PUPPETXR_SUCCESS;
+}
+
+static PUPPETXR_Result api_get_gesture_state (uint32_t id, int32_t* out_playing, PUPPETXR_GestureEvent* out_events, uint32_t capacity, uint32_t* out_count)
+{
+    if (!out_playing || !out_count || (capacity > 0 && !out_events))
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    oxr_lock();
+    defer { oxr_unlock(); };
+    const SIM_Sim* sim = oxr_get_sim();
+    if (!sim)
+    {
+        return PUPPETXR_ERROR_NO_INSTANCE;
+    }
+    SIM_GestureEvent events[SIM_MAX_GESTURE_EVENTS] = {};
+    *out_count   = sim_gesture_events(sim, id, events, SIM_MAX_GESTURE_EVENTS);
+    *out_playing = sim_gesture_playing(sim) == id && id != 0 ? 1 : 0;
+    for (u32 i = 0; i < *out_count && i < capacity && i < SIM_MAX_GESTURE_EVENTS; i++)
+    {
+        out_events[i] = { .play = events[i].play, .frame = events[i].frame, .time_ns = events[i].time };
+        cstr_copy(out_events[i].name, sizeof(out_events[i].name), events[i].name);
+    }
+    return PUPPETXR_SUCCESS;
+}
+
 static PUPPETXR_Result api_add_prop (const PUPPETXR_Prop* prop, uint32_t* out_id)
 {
     SIM_Prop sim_prop = {};
@@ -2216,6 +2399,172 @@ static PUPPETXR_Result command_get_body_joints (const JsonValue&, API_Reply& rep
     return PUPPETXR_SUCCESS;
 }
 
+//
+// Gestures
+//
+
+static PUPPETXR_Result command_load_gesture (const JsonValue& request, API_Reply&, API_Client& client)
+{
+    char path[OS_MAX_PATH] = {};
+    if (!json_find_string(request, "path", path, nullptr, sizeof(path)))
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    return api_load_gesture(path, client.message, sizeof(client.message));
+}
+
+// A JSON object of the request as text, for the gesture and params given inline
+static b8 request_object (const JsonValue& request, const char* key, Array<char>& out_text)
+{
+    const JsonValue value = json_find(request, key);
+    const char*     text  = nullptr;
+    usize           length = 0;
+    if (!json_is_object(value) || !json_raw(value, text, length))
+    {
+        return false;
+    }
+    out_text.resize(length + 1);
+    memory_copy(out_text.data, text, length);
+    out_text.data[length] = 0;
+    return true;
+}
+
+static PUPPETXR_Result command_check_gesture (const JsonValue& request, API_Reply&, API_Client& client)
+{
+    Array<char> json = {};
+    defer { json.release(); };
+    if (!request_object(request, "gesture", json))
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    return api_check_gesture(json.data, client.message, sizeof(client.message));
+}
+
+static PUPPETXR_Result command_list_gestures (const JsonValue&, API_Reply& reply, API_Client&)
+{
+    char           json[API_MAX_LINE];
+    u32            length = 0;
+    const PUPPETXR_Result result = api_list_gestures(json, sizeof(json), &length);
+    if (result == PUPPETXR_SUCCESS)
+    {
+        reply_key(reply, "gestures");
+        reply_append(reply, "%s", json);
+    }
+    return result;
+}
+
+static PUPPETXR_Result command_get_gesture (const JsonValue& request, API_Reply& reply, API_Client&)
+{
+    char name[SIM_GESTURE_NAME] = {};
+    if (!json_find_string(request, "name", name, nullptr, sizeof(name)))
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    oxr_lock();
+    defer { oxr_unlock(); };
+    const SIM_Sim* sim = oxr_get_sim();
+    if (!sim)
+    {
+        return PUPPETXR_ERROR_NO_INSTANCE;
+    }
+    const char* json = sim_gesture_json(sim, name);
+    if (!json)
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    // The file as it was loaded, a JSON object
+    reply_key(reply, "gesture");
+    reply_append(reply, "%s", json);
+    return PUPPETXR_SUCCESS;
+}
+
+static void reply_gesture_events (API_Reply& reply, u32 id)
+{
+    PUPPETXR_GestureEvent events[SIM_MAX_GESTURE_EVENTS] = {};
+    i32                   playing = 0;
+    u32                   count   = 0;
+    if (api_get_gesture_state(id, &playing, events, SIM_MAX_GESTURE_EVENTS, &count) != PUPPETXR_SUCCESS)
+    {
+        return;
+    }
+    reply_u64(reply, "play", id);
+    reply_key(reply, "playing");
+    reply_append(reply, "%s", playing ? "true" : "false");
+    reply_key(reply, "events");
+    reply_append(reply, "[");
+    for (u32 i = 0; i < count && i < SIM_MAX_GESTURE_EVENTS; i++)
+    {
+        reply_append(reply, "%s{\"name\":\"%s\",\"frame\":%llu,\"time_ns\":%lld}", i ? "," : "", events[i].name, (unsigned long long)events[i].frame, (long long)events[i].time_ns);
+    }
+    reply_append(reply, "]");
+}
+
+// "name" of a loaded gesture or "gesture", one inline; "hand" left or right, else the active
+// one; "params" an object
+static PUPPETXR_Result command_play_gesture (const JsonValue& request, API_Reply& reply, API_Client& client)
+{
+    char        name[SIM_GESTURE_NAME] = {};
+    char        hand[16]               = {};
+    Array<char> json                   = {};
+    Array<char> params                 = {};
+    defer { json.release(); params.release(); };
+    const b8 named  = json_find_string(request, "name", name, nullptr, sizeof(name));
+    const b8 inline_ = request_object(request, "gesture", json);
+    if (named == inline_ || (json_is_valid(json_find(request, "params")) && !request_object(request, "params", params)))
+    {
+        cstr_copy(client.message, sizeof(client.message), "play_gesture needs a name or a gesture, and params as an object");
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    json_find_string(request, "hand", hand, nullptr, sizeof(hand));
+    const PUPPETXR_Device device = cstr_equal(hand, "left") ? PUPPETXR_DEVICE_LEFT_HAND : cstr_equal(hand, "right") ? PUPPETXR_DEVICE_RIGHT_HAND : PUPPETXR_DEVICE_HEAD;
+    u32                   id     = 0;
+    const PUPPETXR_Result result = api_play_gesture(named ? name : json.data, device, params.length ? params.data : nullptr, &id, client.message, sizeof(client.message));
+    if (result == PUPPETXR_SUCCESS)
+    {
+        reply_u64(reply, "play", id);
+    }
+    return result;
+}
+
+static PUPPETXR_Result command_stop_gesture (const JsonValue&, API_Reply&, API_Client&)
+{
+    return api_stop_gesture();
+}
+
+static PUPPETXR_Result command_get_gesture_state (const JsonValue& request, API_Reply& reply, API_Client&)
+{
+    // "play", as "id" numbers the request
+    u32 id = 0;
+    if (!json_find_uint(request, "play", id))
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    if (!oxr_get_sim())
+    {
+        return PUPPETXR_ERROR_NO_INSTANCE;
+    }
+    reply_gesture_events(reply, id);
+    return PUPPETXR_SUCCESS;
+}
+
+// Replies once the play ended, with its events
+static PUPPETXR_Result command_wait_gesture (const JsonValue& request, API_Reply&, API_Client& client)
+{
+    u32 id = 0;
+    if (!json_find_uint(request, "play", id) || id == 0)
+    {
+        return PUPPETXR_ERROR_INVALID_ARGUMENT;
+    }
+    if (!oxr_get_sim())
+    {
+        return PUPPETXR_ERROR_NO_INSTANCE;
+    }
+    client.waiting      = true;
+    client.wait_gesture = id;
+    client.wait_frame   = UINT64_MAX;
+    return PUPPETXR_SUCCESS;
+}
+
 static PUPPETXR_Result command_get_body (const JsonValue&, API_Reply& reply, API_Client&)
 {
     char               json[API_MAX_BODY_JSON];
@@ -2727,6 +3076,14 @@ const static struct
     { "get_body",        command_get_body },
     { "set_body",        command_set_body },
     { "reset_body",      command_reset_body },
+    { "load_gesture",    command_load_gesture },
+    { "check_gesture",   command_check_gesture },
+    { "list_gestures",   command_list_gestures },
+    { "get_gesture",     command_get_gesture },
+    { "play_gesture",    command_play_gesture },
+    { "stop_gesture",    command_stop_gesture },
+    { "get_gesture_state", command_get_gesture_state },
+    { "wait_gesture",    command_wait_gesture },
     { "get_face_frame",  command_get_face_frame },
     { "get_face",        command_get_face },
     { "set_face",        command_set_face },
@@ -2810,7 +3167,8 @@ static void handle_line (API_Client& client, const char* line)
         const PUPPETXR_Result result = command.run(request, reply, client);
         if (result != PUPPETXR_SUCCESS)
         {
-            reply_error(client, has_id, id, result_name(result), cmd);
+            reply_error(client, has_id, id, result_name(result), client.message[0] ? client.message : cmd);
+            client.message[0] = 0;
         }
         else if (client.waiting)
         {
@@ -2874,6 +3232,12 @@ static void client_poll (API_Client& client)
     // for them (Unreal's render thread) has the last one in flight when the reply would be due,
     // and a screenshot after it showed the frame before in some runs
     const SIM_Sim* sim = oxr_get_sim();
+    if (client.waiting && client.wait_gesture != 0 && sim && sim_gesture_playing(sim) != client.wait_gesture)
+    {
+        client.reply_gesture = client.wait_gesture;
+        client.wait_gesture  = 0;
+        client.wait_frame    = sim_frame_index(sim);
+    }
     if (client.waiting && sim && sim_frame_index(sim) >= client.wait_frame && client.reached_ns == 0)
     {
         client.reached_ns = os_monotonic_ns();
@@ -2885,6 +3249,11 @@ static void client_poll (API_Client& client)
         API_Reply reply = {};
         reply_begin(reply, client.wait_id >= 0, client.wait_id, true);
         reply_u64(reply, "frame", sim_frame_index(sim));
+        if (client.reply_gesture != 0)
+        {
+            reply_gesture_events(reply, client.reply_gesture);
+            client.reply_gesture = 0;
+        }
         reply_finish(client, reply);
     }
 
@@ -3088,6 +3457,8 @@ static usize api_table_size (u32 version)
         return offsetof(PUPPETXR_Api, set_frame_fault) + sizeof(void*);
     case 2:
         return offsetof(PUPPETXR_Api, load_model) + sizeof(void*);
+    case 3:
+        return offsetof(PUPPETXR_Api, get_gesture_state) + sizeof(void*);
     default:
         return 0;
     }
@@ -3172,6 +3543,13 @@ PUPPETXR_Result puppetxr_get_api (uint32_t version, PUPPETXR_Api* out_api)
         .get_tracking_drift       = api_get_tracking_drift,
         .set_frame_fault          = api_set_frame_fault,
         .load_model               = api_load_model,
+        .load_gesture             = api_load_gesture,
+        .check_gesture            = api_check_gesture,
+        .list_gestures            = api_list_gestures,
+        .get_gesture              = api_get_gesture,
+        .play_gesture             = api_play_gesture,
+        .stop_gesture             = api_stop_gesture,
+        .get_gesture_state        = api_get_gesture_state,
     };
     memory_copy(out_api, &table, api_table_size(filled));
     return PUPPETXR_SUCCESS;

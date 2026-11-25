@@ -5,8 +5,9 @@
 #
 #   python3 tools/hand_fit.py <takes dir>... -o motion/hand_model.json
 #
-# A take is used by its step name: still_open, still_relaxed, fist, pinch_tap_* and pinch_hold_*
-# for the poses, the takes with XR_EXT_hand_interaction values for the pinch and grasp curves.
+# A take is used by its step name: still_open, still_relaxed, fist, pinch_tap_*, pinch_hold_*, poses
+# (its thumbs-up and point), poke_*, grab_ball_* and wave for the poses, and with palm_up for the
+# facings, the takes with XR_EXT_hand_interaction values for the pinch and grasp curves.
 # Both hands go into one right hand, the left mirrored across its wrist's X; the simulator mirrors
 # it back. Standard library only.
 
@@ -33,6 +34,16 @@ PARENTS = [WRIST, None, 1, 2, 3, 4, 1, 6, 7, 8, 9, 1, 11, 12, 13, 14, 1, 16, 17,
 POSITION_VALID = 2
 PINCH_GAP = 0.008     # thumb and index tips closer than this make the pinch pose
 FIST_SHARE = 0.1      # the most curled tenth of the fist take's frames make the fist pose
+THUMBS_UP_CURL = 0.04 # in the poses take, fingers this curled with the thumb this far from the
+THUMBS_UP_GAP = 0.06  # index make the thumbs-up; the fist keeps the thumb closer, the point the fingers looser
+POINT_CURL = (0.045, 0.065) # in the poses take, the point; OK and victory curl the fingers less
+POINT_GAP = 0.09
+GRASP_HELD = 0.75     # grab_ball frames with the runtime's grasp_ext/value at least this: the hand closed around the ball
+WAVE_RISE = -0.25     # wave frames with the palm less than this below the head: the hand raised
+PALM_UP = -0.5        # palm_up frames with the back of the hand pointing down at least this much
+TWO_HAND_GAP = 0.012  # two_hand_scale frames pinched: the right hand closed to 8.5 mm at best there
+SWIPE_SPEED = 0.8     # swipe frames with the palm moving sideways at least this fast in m/s, and
+SWIPE_LEVEL = 2.0     # this many times faster sideways than up or down
 
 
 def q_mul(a, b):
@@ -57,6 +68,51 @@ def mirror(joint):
     # The left hand's joints mirrored across X: positions negate x, rotations keep x and w
     x, y, z, qx, qy, qz, qw = joint[:7]
     return (-x, y, z, qx, -qy, -qz, qw)
+
+
+def facing_frames(path):
+    # The palm joint's orientation in the head's level frame (-Z its level forward, +Y up), the
+    # left hand mirrored onto the right, of the hands the take is for, with its joints, how far the index tip is ahead of the
+    # head, and where the palm is from the head in that frame (x mirrored for the left hand), when,
+    # which hand and its XR_EXT_hand_interaction values
+    with open(path) as f:
+        take = json.load(f)
+    for frame in take["frames"]:
+        head = frame.get("head")
+        if not head:
+            continue
+        ahead = q_rotate(tuple(head[3:7]), (0.0, 0.0, -1.0))
+        level = math.hypot(ahead[0], ahead[2])
+        if level < 1e-3:
+            continue
+        yaw = math.atan2(-ahead[0] / level, -ahead[2] / level)
+        head_frame = q_axis_angle((0.0, 1.0, 0.0), yaw)
+        for side in ("right", "left"):
+            hand = frame[side]
+            if take.get("hands", "both") not in (side, "both") or not hand.get("active") or not all(flag & POSITION_VALID for flag in hand.get("flags", [0])):
+                continue
+            joints = [tuple(j) for j in hand["joints"]]
+            relative = q_mul(q_conj(head_frame), joints[PALM][3:7])
+            if side == "left":
+                relative = (relative[0], -relative[1], -relative[2], relative[3])
+            forward = q_rotate(q_conj(head_frame), (joints[INDEX_TIP][0] - head[0], joints[INDEX_TIP][1] - head[1], joints[INDEX_TIP][2] - head[2]))
+            palm = q_rotate(q_conj(head_frame), (joints[PALM][0] - head[0], joints[PALM][1] - head[1], joints[PALM][2] - head[2]))
+            if side == "left":
+                joints = [mirror(j) + (j[7],) for j in joints]
+                palm = (-palm[0], palm[1], palm[2])
+            yield joints, relative, -forward[2], (palm, frame["t"] * 1e-9, side, hand.get("interaction"))
+
+
+def q_average(quats):
+    # Sign-aligned mean; the orientations of one facing lie close together
+    total = [0.0, 0.0, 0.0, 0.0]
+    for q in quats:
+        sign = 1.0 if sum(a * b for a, b in zip(q, quats[0])) >= 0.0 else -1.0
+        for i in range(4):
+            total[i] += sign * q[i]
+    length = math.sqrt(sum(c * c for c in total))
+    q = tuple(c / length for c in total)
+    return q if q[3] >= 0.0 else tuple(-c for c in q)
 
 
 def frames_of(path, use_left=True):
@@ -269,8 +325,46 @@ def main():
     pinching = [wrist_local(j) for j, _ in collect(["pinch_tap", "pinch_hold"]) if gap(j, THUMB_TIP, INDEX_TIP) < PINCH_GAP]
     fisted = sorted((wrist_local(j) for j, _ in collect(["fist"])), key=curl)
     fisted = fisted[: max(1, int(len(fisted) * FIST_SHARE))]
-    if not (opened and relaxed and pinching and fisted):
-        sys.exit("hand_fit.py: needs still_open, still_relaxed, pinch_tap or pinch_hold, and fist takes")
+    def takes_of(prefixes):
+        return [path for step, paths in takes.items() if any(step.startswith(p) for p in prefixes) for path in paths]
+
+    def held(prefixes, keep):
+        return [(joints, relative, ahead, at) for path in takes_of(prefixes) for joints, relative, ahead, at in facing_frames(path) if keep(joints, relative, ahead, at[0][1])]
+
+    def swiping(sign):
+        # Frames of the swipe takes whose palm moves sideways fast, outward (sign 1) or inward
+        out = []
+        for path in takes_of(["swipe"]):
+            last = {}
+            for frame in facing_frames(path):
+                (palm, t, side, _) = frame[3]
+                if side in last and t > last[side][1]:
+                    vx = (palm[0] - last[side][0][0]) / (t - last[side][1])
+                    vy = (palm[1] - last[side][0][1]) / (t - last[side][1])
+                    if vx * sign > SWIPE_SPEED and abs(vx) > SWIPE_LEVEL * abs(vy):
+                        out.append(frame)
+                last[side] = (palm, t)
+        return out
+
+    def share(frames, key, fraction):
+        return sorted(frames, key=key)[: max(1, int(len(frames) * fraction))]
+
+    # The recorded gestures, by how the hand is shaped and held: the frames of each pose and facing
+    gestures = {
+        "pinch": held(["pinch_tap", "pinch_hold"], lambda j, r, a, h: gap(j, THUMB_TIP, INDEX_TIP) < PINCH_GAP),
+        "poke": share(held(["poke"], lambda j, r, a, h: True), lambda f: -f[2], 0.1),
+        "thumbs_up": held(["poses"], lambda j, r, a, h: curl(j) < THUMBS_UP_CURL and gap(j, THUMB_TIP, INDEX_TIP) > THUMBS_UP_GAP),
+        "point": held(["poses"], lambda j, r, a, h: POINT_CURL[0] < curl(j) < POINT_CURL[1] and gap(j, THUMB_TIP, INDEX_TIP) > POINT_GAP),
+        "grasp": [f for path in takes_of(["grab_ball"]) for f in facing_frames(path) if f[3][3] and f[3][3]["grasp"] >= GRASP_HELD],
+        "palm_up": held(["palm_up"], lambda j, r, a, h: q_rotate(r, (0.0, 1.0, 0.0))[1] < PALM_UP),
+        "wave": held(["wave"], lambda j, r, a, h: h > WAVE_RISE),
+        "swipe_in": swiping(-1.0),
+        "swipe_out": swiping(1.0),
+        "two_hand_pinch": held(["two_hand_scale"], lambda j, r, a, h: gap(j, THUMB_TIP, INDEX_TIP) < TWO_HAND_GAP),
+    }
+    recorded = {name: [wrist_local(f[0]) for f in gestures[name]] for name in ("thumbs_up", "point", "poke", "grasp", "wave")}
+    if not (opened and relaxed and pinching and fisted and all(gestures.values())):
+        sys.exit("hand_fit.py: needs still_open, still_relaxed, pinch_tap or pinch_hold, fist, poses, poke, grab_ball, palm_up and wave takes with the head located")
 
     # Bone offsets in the parent's frame, fixed on a Quest 3 (bones vary by under 0.3 mm)
     offsets = []
@@ -286,17 +380,21 @@ def main():
         values = sorted(f[0][j][7] for f in collect(["still_open"]))
         radii.append(values[len(values) // 2])
 
-    poses = {name: local_rotations(medoid(samples)) for name, samples in (("open", opened), ("relaxed", relaxed), ("pinch", pinching), ("fist", fisted))}
+    poses = {name: local_rotations(medoid(samples)) for name, samples in (("open", opened), ("relaxed", relaxed), ("pinch", pinching), ("fist", fisted)) + tuple(recorded.items())}
     pinch_gaps = sorted(gap(s, THUMB_TIP, INDEX_TIP) for s in pinching)
     poses["pinch"] = close_pinch(offsets, poses["pinch"], pinch_gaps[len(pinch_gaps) // 2])
 
     # How well each averaged pose reproduces its frames, the tips in the wrist frame
     report = {}
-    for name, samples in (("open", opened), ("relaxed", relaxed), ("pinch", pinching), ("fist", fisted)):
+    for name, samples in (("open", opened), ("relaxed", relaxed), ("pinch", pinching), ("fist", fisted)) + tuple(recorded.items()):
         fk = forward(offsets, poses[name])
         errors = sorted(max(math.dist(fk[t][0], s[t][:3]) for t in TIPS) for s in samples)
         tip_gap = math.dist(fk[THUMB_TIP][0], fk[INDEX_TIP][0])
         report[name] = (len(samples), errors[len(errors) // 2], errors[len(errors) * 9 // 10], tip_gap)
+
+    # How the hand is held for each recorded gesture
+    facings = {name: q_average([f[1] for f in frames]) for name, frames in gestures.items()}
+    facing_counts = {name: len(frames) for name, frames in gestures.items()}
 
     pinch_pairs, grasp_pairs = [], []
     for joints, interaction in collect([""]):
@@ -319,6 +417,7 @@ def main():
         ],
         "poses": {name: [rounded(q, 5) for q in rotations] for name, rotations in poses.items()},
         "coupling": coupling(offsets, poses, [wrist_local(j) for j, _ in collect(COUPLING_TAKES)]),
+        "facings": {name: [round(c, 5) for c in q] for name, q in facings.items()},
         "pinch_curve": curve(pinch_pairs, 0.002, 0.06),
         "grasp_curve": curve(grasp_pairs, 0.005, 0.12),
     }
@@ -329,6 +428,10 @@ def main():
         print(f"{name:8} {count:6d} frames, the others' tips off by median {median * 1000:5.1f} mm, 90% {p90 * 1000:5.1f} mm; thumb to index {tip_gap * 1000:5.1f} mm")
     print(f"pinch curve from {len(pinch_pairs)} hand frames, grasp curve from {len(grasp_pairs)}")
     print("coupling (row curled, column following, index to little):", model["coupling"])
+    for name, q in facings.items():
+        back = q_rotate(q, (0.0, 1.0, 0.0))
+        fingers = q_rotate(q, (0.0, 0.0, -1.0))
+        print(f"{name} facing: back of the hand rolled {math.degrees(math.atan2(back[0], back[1])):.0f} degrees outward, fingers {math.degrees(math.asin(fingers[1])):.0f} degrees up ({facing_counts[name]} frames)")
 
 
 if __name__ == "__main__":

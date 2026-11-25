@@ -1,0 +1,8 @@
+{
+ "format": "puppetxr-gesture",
+ "version": 1,
+ "name": "thumbs_up",
+ "description": "Curl the fingers, thumb up, palm inward, and keep it",
+ "hands": ["right"],
+ "steps": [ { "palm": "thumbs_up", "shape": "thumbs_up", "duration": 0.3, "hold": true, "event": "thumbs_up" } ]
+}

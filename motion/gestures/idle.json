@@ -1,0 +1,10 @@
+{
+ "format": "puppetxr-gesture",
+ "version": 1,
+ "name": "idle",
+ "description": "The hands rest where they are; an app should see no pinch, grab or poke",
+ "params": {
+  "seconds": { "type": "seconds", "default": 3, "min": 0, "max": 600 }
+ },
+ "steps": [ { "wait": "seconds" } ]
+}

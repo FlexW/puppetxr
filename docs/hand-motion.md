@@ -44,17 +44,21 @@ python3 tools/hand_fit.py <takes dir>... -o motion/hand_model.json
   radius, the median. A Quest 3's skeleton is fixed (a bone varies by under 0.3 mm), and its
   left hand mirrors the right within a millimetre, so both hands go into one right hand that
   `hand_local` mirrors for the left. Its joints point up to 5 degrees off their bones.
-- **Key poses**: every joint's rotation relative to its parent in four poses, each the medoid
+- **Key poses**: every joint's rotation relative to its parent in nine poses, each the medoid
   of its frames (the recorded frame closest to all others; an average of the rotations opens a
   pinch that closes in every frame): `open` (`still_open`), `relaxed` (`still_relaxed`), `pinch`
-  (frames of `pinch_tap` and `pinch_hold` with the thumb and index tips under 8 mm apart) and
-  `fist` (the tenth of `fist` with the fingertips closest to the palm). The pinch's thumb comes
+  (frames of `pinch_tap` and `pinch_hold` with the thumb and index tips under 8 mm apart),
+  `fist` (the tenth of `fist` with the fingertips closest to the palm), and the recorded
+  gestures `thumbs_up`, `point`, `poke`, `grasp` and `wave` (Recorded gestures). The pinch's thumb comes
   from another session than the bones, so the fit turns its four thumb joints until the tips are
   as far apart as the median of the recorded pinches (7.5 mm).
 - **Shape**: `SIM_HandShape` holds per finger, thumb to little, how far it goes from the base
-  pose toward `open`, then `pinch`, then `fist` (nlerp per joint), and thumb turns on top
-  (microgestures). The base is `relaxed` for a tracked hand at rest and `open` for the hand
-  mesh's bind pose and the body skeleton's T-pose. `hand_shape(pinch, grab)`: all fingers toward
+  pose toward `open`, then `pinch`, then `fist` (nlerp per joint), the whole hand toward each
+  recorded gesture's pose by its weight (`recorded`, in the order above), and thumb turns on top
+  (microgestures). A thumb curl of 0 is the relaxed or open thumb, which lies ahead along the
+  index; only the recorded thumbs-up raises it to the side. The base is `relaxed` for a tracked
+  hand at rest and `open` for the hand mesh's bind pose and the body skeleton's T-pose.
+  `hand_shape(pinch, grab)`: all fingers toward
   the pinch by `pinch * (1 - grab)` and toward the fist by `grab`, except the index, which goes
   to the fist only with the pinch and straightens to the open pose with grab alone (pointing).
 - **Coupling and limits**: `coupling`, index to little, how far each finger curls at least
@@ -66,7 +70,31 @@ python3 tools/hand_fit.py <takes dir>... -o motion/hand_model.json
   hold no tight point to measure it by. Every weight is clamped to [0, 1], so no finger curls past
   the recorded fist (no frame of the takes curls more than 5 to 12 % past it). `couple_shape` in
   `hand_local` applies both to every shape. `sim_curled_hand_joints` (`SIM_HandCurls`: a curl per
-  finger, a pinch, the open or relaxed base) gives the joints of such a shape for gestures.
+  finger, a pinch, how far open from relaxed, a weight per recorded pose) gives the joints of such a shape for gestures.
+- **Facings**: `facings`, how people hold the hand, as the palm joint's orientation in the head's
+  level frame (-Z its level forward, +Y up) of a right hand, the mean over a recorded gesture's
+  frames (Recorded gestures). Only the hands a take is for go in, the left mirrored; the sim
+  mirrors it back. Gestures take them as palm facings of the same names (Gesture format).
+- **Recorded gestures**: the frames of each, from the takes of `docs/recorder.md`; the pose is
+  their medoid, the facing their mean (the back of the hand rolled outward from up, the fingers
+  up from level):
+
+  | Name | Frames | Pose | Facing |
+  |---|---|---|---|
+  | `pinch` | `pinch_tap`, `pinch_hold`, the thumb and index tips under 8 mm apart | key pose `pinch` | 38, 28 degrees |
+  | `poke` | `poke_right`, the tenth with the index tip farthest ahead | yes | 12, 18 |
+  | `thumbs_up` | `poses`, the fingertips under 4 cm from the palm, the thumb tip over 6 cm from the index tip | yes | 98, 13: the palm in, the thumb 45 degrees from up |
+  | `point` | `poses`, the fingertips 4.5 to 6.5 cm from the palm, the thumb tip over 9 cm from the index tip | yes | 22, 10 |
+  | `grasp` | `grab_ball_right`, `grasp_ext/value` at least 0.75 | yes | 37, 23 |
+  | `palm_up` | `palm_up`, the back of the hand pointing down by more than half | | 139, -15 |
+  | `wave` | `wave`, the palm less than 25 cm below the head | yes, also the open hand of the swipes | 54, 71 |
+  | `swipe_in`, `swipe_out` | `swipe_right`, the palm moving sideways over 0.8 m/s and twice as fast as up or down, toward the body's middle or away | | 52, 13; -23, 13 |
+  | `two_hand_pinch` | `two_hand_scale`, both hands, the thumb and index tips under 12 mm apart (the right closed to 8.5 mm at best there) | | 23, 33: more upright than one hand's pinch |
+
+  The point holds the other fingers loosely (5.5 cm from the palm) and the thumb out, the poke
+  curls them less (7 cm) with the thumb in; the grasp closes around a ball (7 cm), not to a fist
+  (2.5 cm); in `palm_up` the palm turns up and toward the body's middle. `swipe_right` asks for
+  four directions; only the sideways strokes are used.
 - **Curves**: `pinch_curve` (thumb to index tip in m to `pinch_ext/value`) and `grasp_curve`
   (mean of the middle, ring and little tips to the palm to `grasp_ext/value`), medians of 2 and
   5 mm bins, non-increasing.
@@ -87,6 +115,11 @@ within 65 mm of the palm; pinch and grasp inputs read back as reported strengths
 
 ## Gesture format
 
+Built: the format, its checker and the player (`src/sim.cpp`, section Gestures; `sim_gesture_*`),
+tests `SimGesture.*`. Not yet: the paths `circle`, `twist`, `shake`, `swing`, `curve`, `throw`,
+solved shapes, noise, clip steps, controllers (a controller-held hand moves, its shape waits for
+Controllers), loading from disk and the CLI.
+
 ```json
 {
   "format": "puppetxr-gesture",
@@ -99,42 +132,63 @@ within 65 mm of the palm; pinch and grasp inputs read back as reported strengths
     "hold":   { "type": "seconds", "default": 0.2, "min": 0, "max": 10 }
   },
   "steps": [
-    { "hand": "right", "anchor": "pinch", "to": "target", "bow": 0.03, "duration": 0.6,
-      "palm": "down", "shape": "idle" },
-    { "hand": "right", "shape": { "pinch": "index" }, "duration": 0.12, "event": "pinch" },
+    { "anchor": "pinch", "to": "target", "bow": 0.03, "duration": 0.6, "palm": "down" },
+    { "shape": "pinch", "duration": 0.12, "event": "pinch" },
     { "wait": "hold" },
-    { "hand": "right", "shape": "idle", "duration": 0.15, "event": "release" },
-    { "hand": "right", "path": "home", "duration": 0.7 }
-  ],
-  "noise": { "jitter": 1, "tremor": 0, "sloppiness": 0 }
+    { "shape": "idle", "duration": 0.15, "event": "release" },
+    { "path": "home", "speed": 0.5 }
+  ]
 }
 ```
 
-- **Steps** run in order; `"with": "previous"` runs a step alongside the one before (two hands,
-  or a shape change during a path). A step has a `duration` in seconds or a `speed` in m/s.
-- **Expressions** for points, directions, numbers: `+ - * /`, parentheses, `vec(x, y, z)`,
-  params and built-ins: `head`, `forward`, `up`, `down`, `outward`, `inward` (per hand), `home`
-  (the hand's rest place before the gesture), `start` (where the step starts), `left.<anchor>`,
-  `right.<anchor>`. All are evaluated once when the gesture starts, so the whole motion is known
-  up front and a replayed or reseeded run moves the same way apart from noise.
-- **Anchor**: the point of the hand that follows the path: `grip`, `palm`, `pinch`, `index_tip`,
-  `wrist`.
-- **Paths**: `to` a point with an optional `bow` (metres, sideways and up), `circle` (centre,
-  axis, turns), `twist` (degrees about the anchor's axis), `shake` and `swing` (pivot, amplitude,
-  frequency), `curve` (points walked at an even pace, Catmull-Rom), `throw` (below), `home`.
-- **Orientation**: `palm` `down`, `up`, `in`, `out`, `forward`, `toward:<point>`, or a quaternion;
-  slerped over the step. Unset, the hand keeps its orientation.
-- **Easing**: minimum jerk for reaches (default), `linear`, `ease_in`, `ease_out`.
-- **Events**: a named event at a step's start or end; the player reports it with its frame.
+- Top level: `format` (`puppetxr-gesture`), `version` (1), `steps` (1 to 64); optional `name`,
+  `description`, `hands` (informational), `params`. Any other key is an error.
+- **Params** (up to 16): `type` `point`, `number` or `seconds`, `default`, for numbers `min` and
+  `max`. A play may give values (a JSON object: numbers, `[x, y, z]` or expressions); a value of
+  no param, or outside min and max, is an error.
+- **Steps** run one after the other; `"with": "previous"` starts a step with the one before
+  (another hand, or a shape during a move). Keys: `hand` (`primary`, default, the hand the play
+  names; `other`; `left`; `right`), `anchor` (`grip`, default, `aim`, `palm`, `pinch`,
+  `index_tip`: the point that follows the path), `to` (a point) or `path` (`home`: where the
+  anchor and the hand's orientation were when the gesture started), `bow` (metres the middle of
+  a move rises, as a sine of the eased progress, perpendicular to the path), `palm` (`down`,
+  `up`, `in`, `out` toward the body's middle, `forward`, or as recorded: `pinch`, `poke`,
+  `thumbs_up`, `point`, `grasp`, `palm_up`, `wave`, `swipe_in`, `swipe_out`, `two_hand_pinch` (Hand model,
+  Recorded gestures); the palm joint's facing relative to the head's level forward, slerped),
+  `shape` (`idle`, `open`, `fist`, `pinch`, a recorded pose: `thumbs_up`, `point`, `poke`,
+  `grasp`, `wave`, or `{ "curls": [5 numbers 0..1], "pinch": 0..1, "base": "relaxed"|"open",
+  "<recorded pose>": 0..1 }`, every number interpolated, the base too),
+  `duration` (seconds) or `speed` (m/s, for moves), `ease` (`min_jerk`, default, `linear`,
+  `ease_in`, `ease_out`), `event` (a name reported when the step ends), `hold` (true keeps the
+  last shape after the gesture). `{"wait": seconds}` waits and has no other key but `hand` and
+  `with`. Durations are 0 to 600 s.
+- **Expressions** for points and numbers: numbers, `+ - * /`, unary minus, parentheses,
+  `vec(x, y, z)`, params and `head`, `forward` (the head's, level), `up`, `down`, `outward`,
+  `inward` (of the step's hand), `home` (the step's anchor when the gesture started),
+  `left.<anchor>`, `right.<anchor>`. A number times a point scales it; adding a number to a point
+  is an error. Everything is evaluated once when the gesture starts, so the whole motion is known
+  up front, and a speed's duration comes from the distance planned so far.
+- **Errors** name the JSON path: `steps[1].to: unknown name targte`, `params given.nope: the
+  gesture has no such param`.
 
-### Shapes
+### Player
 
-`"idle"`, `"open"`, `"fist"`, `"point"`, `{ "pinch": "index" }`, `{ "curls": [i, m, r, l],
-"thumb": "pinch:index" }`, and solved shapes: `{ "around": "handle", "radius": 0.02 }` (cylinder
-along the palm's width), `{ "around": "ball", "radius": 0.05 }`, `{ "around": "dial", "radius":
-0.03 }`: each finger curls until its tip touches the surface, then a small search places the
-thumb against it. A solved shape has a `contact` value 0..1 (how much of each tip touches), so a
-solved grasp reads as a firm grab.
+- One gesture plays at a time; playing another stops it. It starts in the frame after the play,
+  in `sim_begin_frame` after the controls (keys cannot move a hand it moves), never in a replay:
+  recordings hold the poses and shapes it made (Recording).
+- Slow frames skip no step: when a frame's step of time would run a step that also ends in the
+  frame the one before it ended in (on the realtime clock, a screenshot can stall a frame by
+  hundreds of ms), it waits a frame, so the end of the one before shows, and the rest of the
+  timeline moves on with it. Under the fixed step, steps at least a frame long run as planned.
+- A step takes its start (anchor position, palm orientation, shape) in its first frame, then
+  each frame eases from there: the shape by `sim_set_hand_shape`, the palm by turning the grip
+  (the palm joint's offset from the grip is fixed), the anchor by moving the grip under it.
+  Velocities come from the frame-to-frame motion, as for keys.
+- Events: a step's when it ends, `end` when the gesture ends, `stopped` for `sim_gesture_stop`;
+  each with the frame (`sim_frame_index` during it) and its display time, the last 64 kept
+  (`sim_gesture_events`).
+- At the end, and at a stop, the hands keep their poses and go back to their inputs, unless the
+  last shaping step of a hand holds.
 
 ### Throw
 
@@ -170,19 +224,20 @@ later use the same step with `"body"` instead of `"hand"`.
 
 ## Loading
 
-Built-ins and users' gestures are the same JSON, loaded by the same `sim_gesture_load`; a
-user's file of a built-in's name replaces it for that run.
+Built. Built-ins and users' gestures are the same JSON, loaded by `sim_gesture_load`; a user's file
+of a built-in's name replaces it for that run.
 
-- At startup: every `*.json` of the directories in `gestures.paths` (config, `docs/config.md`) and
-  `PUPPETXR_GESTURE_PATH` (separated by `:`, `;` on Windows), in that order, after the built-ins. A
-  file that fails the checker is logged with its errors and skipped; the others load.
-- At runtime: `puppetxrctl gesture load <file|dir>` (`load_gesture` in the C API), `gesture play
-  <file>` loads and plays a file once without keeping it. Relative paths are made absolute by the
-  CLI, as for `model load`.
-- Takes (`docs/recorder.md`) load the same way and are named by their file name, so a clip step
-  finds them; `gesture play <take.json>` plays a take on its recorded hands.
-- Names are `[a-z0-9_-]`, at most 63 bytes, from the file name without `.json`.
-- A recording stores the joints a gesture made, not the gesture, so it replays without the files.
+- Built-ins: every `motion/gestures/*.json`, embedded by `cmake/embed_motion.cmake` with the hand
+  model and loaded at `sim_create`; an invalid one fails there (`SimGesture.every_built_in_gesture_plays_to_its_end`).
+- At startup, after the built-ins: the files and directories of `gestures.paths` (config,
+  `docs/config.md`), then those of `PUPPETXR_GESTURE_PATH` (`:` apart, `;` on Windows,
+  `os_path_list_separator`), up to 8 in all. A directory loads its `.json` files sorted by name. A
+  file that fails the checker is logged with its path and error and skipped; the others load.
+- At runtime: `sim_gesture_load_path` (a file or a directory; the CLI and C API come next).
+- Names are the file name without `.json`: 1 to 63 of `[a-z0-9_-]`. Files are at most 256 KB,
+  up to 128 gestures in all.
+- A recording stores the poses and shapes a gesture made, not the gesture, so it replays without
+  the files.
 
 ## Controllers
 
@@ -199,48 +254,59 @@ grasp, `point`, a microgesture) on a controller hand is a checker error unless t
 
 ## Library (built-ins)
 
-Each built-in is `motion/gestures/<name>.json`, has params with defaults that work in front of
-the head, and is checked against at least one take of the same motion (Tests).
+Built (`motion/gestures/`), each with defaults that work in front of the head. Where a gesture
+reaches, its default target puts the palm where the recorded takes put it (within 5 cm), and the
+recorded gestures hold the hand as in the takes; `SimGesture.built_in_gestures_look_like_their_recordings`
+holds both to the measured values:
 
-| Group | Gestures |
-|---|---|
-| select | `pinch_tap`, `pinch_hold`, `double_pinch`, `middle_pinch`, `poke` (press a point with the index tip), `double_poke`, `point_and_pinch` (aim then select, as Meta's system pointer) |
-| drag | `pinch_drag` (pinch, move to a point, release), `pinch_scroll` (vertical), `swipe_left`, `_right`, `_up`, `_down` (open hand, quick) |
-| grab | `grab` (solved around a ball or handle at a point), `grab_move`, `release`, `throw_overhand`, `throw_underhand`, `pull_lever`, `turn_wheel`, `turn_dial` |
-| two hands | `two_hand_scale`, `two_hand_rotate`, `clap` |
-| poses | `fist`, `open_palm`, `point`, `thumbs_up`, `ok`, `victory`, `palm_up` (wrist menus), `look_at_palm` |
-| social | `wave`, `beckon` |
-| system | `system_gesture` (palm toward the face, pinch: Meta's menu gesture), microgestures (`thumb_tap`, `thumb_swipe_*` on the index) |
-| must trigger nothing | `idle`, `talking_hands`, `scratch_head`, `hands_down`: an app test asserts no pinch, grab or poke event fires |
+| Gesture | What | Events |
+|---|---|---|
+| `pinch_tap` | pinch anchor to `target`, pinch, `hold`, release, home | `pinch`, `release` |
+| `pinch_hold` | pinch where the hand is for `hold` (1.5 s) | `pinch`, `release` |
+| `poke` | the recorded poke, the index tip `depth` (2 cm) past `target` along forward and back, home | `press`, `release` |
+| `grab` | palm to `target`, open, the recorded grasp, `hold`, open, home | `grab`, `release` |
+| `point`, `thumbs_up` | the recorded pose and facing, kept (`hold`) where the hand is | the name |
+| `fist`, `open_palm` | the shape, kept (`hold`); `open_palm` turns the palm forward, fingers up | the name |
+| `palm_up` | the left palm up in front of the body for `hold`, home | `up`, `down` |
+| `wave` | the recorded wave beside the head, three swings of `width` | |
+| `swipe_left`, `swipe_right` | the open hand across `distance` (50 cm) on the hand's side of the body | `swipe` |
+| `two_hand_scale` | both hands pinch in front, pull `apart` (80 cm), release | `pinch`, `scaled`, `release` |
+| `idle` | the hands rest for `seconds`; nothing should trigger | |
+
+Planned, with the paths and solved shapes they need: `double_pinch`, `middle_pinch`,
+`point_and_pinch`, `pinch_drag`, `pinch_scroll`, `grab_move`, `throw_overhand`,
+`throw_underhand`, `pull_lever`, `turn_wheel`, `turn_dial`, `two_hand_rotate`, `clap`, `ok`,
+`victory`, `look_at_palm`, `beckon`, `system_gesture`, microgestures, `talking_hands`,
+`scratch_head`, `hands_down`; and checks against the takes of each.
 
 ## Recording (rec)
 
-Recordings store the resulting joints, so a replay needs neither the gesture nor the motion
-layer, and a later change to the player cannot change an old replay. Format version 6: per hand
-device, after `source`, when `source` is 1: `u8 shape present` (1 when the joints changed since
-the last frame written) and then 26 joint rotations relative to their parents (`f32` x, y, z, w)
-plus `f32` pinch and grab strengths. The wrist is the existing `pose` field. Versions 1 to 5 read
-as today, the joints from the inputs. About 840 bytes a frame while both hands move.
+Built (format 6). A gesture sets a tracked hand's shape (`sim_set_hand_shape`, `SIM_HandCurls`: a
+curl per finger, a pinch, how far open, a weight per recorded pose); while it is set, the joints and the reported
+strengths come from it instead of the pinch and grab inputs. Recordings store the shape per frame
+after the hand's detached controller pose, as they store the inputs: both replay through the hand
+model, so a replay needs neither the gesture nor the player, and 30 bytes a frame against 840 for
+the joints. Versions 1 to 5 read with every hand unshaped.
 
 ## Control API and CLI
 
-| `puppetxrctl` | C API (`src/puppetxr.h`, appended) | does |
+Built (API version 3, docs/control-api.md, docs/control-cli.md):
+
+| `puppetxrctl` | C API | does |
 |---|---|---|
-| `gesture list` | `list_gestures` | built-ins and loaded files, their params |
-| `gesture show <name>` | `get_gesture` | the JSON |
+| `gesture list`, `gesture show <name>` | `list_gestures`, `get_gesture` | the loaded names, a gesture's JSON |
+| `gesture check <file>` | `check_gesture` | errors with JSON paths |
 | `gesture load <file\|dir>` | `load_gesture` | adds or replaces users' gestures (Loading) |
-| `gesture check <file>` | `check_gesture` | errors with JSON paths: `steps[2].to: unknown name 'targte'` |
-| `gesture play <name\|file> [hand] [k=v ...] [seed <n>]` | `play_gesture` | starts at the next frame; prints the play id |
-| `gesture wait <id>` | (poll `get_gesture_state`) | returns when the play ends, with its events |
-| `gesture stop [hand]` | `stop_gesture` | the hand keeps its place, returns to the keyboard |
-| `gesture events <id>` | `get_gesture_events` | authored events and observed edges (pinch strength crossing 0.5 up and down, grab, tracking lost and found), each with its frame and time, to match against an app's log |
+| `gesture play <name\|file.json> [left\|right] [k=v ...]` | `play_gesture` | starts at the next frame; prints the play id |
+| `gesture wait <id>`, `gesture events <id>` | `get_gesture_state` | the play's events (authored, `end`, `stopped`) with frames, once it ended or now |
+| `gesture stop` | `stop_gesture` | the hands stay and go back to their inputs |
 
-While a gesture plays a hand, keys and `pose` for that hand are ignored and reported as busy.
-A gesture plays on whatever tracks the hand (Controllers), unless it names a `source`.
-The UI gets a Gestures panel: the list, params as fields, Play and Stop.
-
-Sweeping seeds (`gesture play ... seed <n>` in a loop with `reset hands`) shows which thresholds
-are fragile; a `tools/` script for it comes once a sample test needs it.
+The server's requests are `load_gesture`, `check_gesture`, `list_gestures`, `get_gesture`,
+`play_gesture` (`name` or an inline `gesture` object, `hand`, `params` object), `stop_gesture`,
+`get_gesture_state` and `wait_gesture` (`play`: the play id; `id` numbers requests), which replies once the play ended; replies give the play id as `play`. A failing request's
+`message` carries the checker's error. While a gesture plays a hand, the keys cannot move it. Not
+yet: observed edges in the events (a pinch strength crossing 0.5 up and down, tracking lost and
+found), a UI Gestures panel, a `tools/` script sweeping seeds once noise exists.
 
 ## Tests
 

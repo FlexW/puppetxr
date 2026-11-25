@@ -232,6 +232,11 @@ b8 os_file_exists (const char* path)
     return path && stat(path, &info) == 0 && S_ISREG(info.st_mode);
 }
 
+char os_path_list_separator ()
+{
+    return ':';
+}
+
 b8 os_directory_exists (const char* path)
 {
     struct stat info = {};

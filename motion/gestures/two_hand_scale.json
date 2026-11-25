@@ -1,0 +1,22 @@
+{
+ "format": "puppetxr-gesture",
+ "version": 1,
+ "name": "two_hand_scale",
+ "description": "Pinch with both hands in front of the body, pull them apart, release",
+ "hands": ["left", "right"],
+ "params": {
+  "apart": { "type": "number", "default": 0.8, "min": 0.1, "max": 1 }
+ },
+ "steps": [
+  { "hand": "left", "anchor": "pinch", "to": "head + forward * 0.4 + down * 0.15 - sideways * 0.045", "palm": "two_hand_pinch", "duration": 0.5 },
+  { "hand": "right", "anchor": "pinch", "to": "head + forward * 0.4 + down * 0.15 + sideways * 0.045", "palm": "two_hand_pinch", "duration": 0.5, "with": "previous" },
+  { "hand": "left", "shape": "pinch", "duration": 0.12 },
+  { "hand": "right", "shape": "pinch", "duration": 0.12, "with": "previous", "event": "pinch" },
+  { "hand": "left", "anchor": "pinch", "to": "head + forward * 0.4 + down * 0.15 - sideways * (apart * 0.5)", "duration": 0.6 },
+  { "hand": "right", "anchor": "pinch", "to": "head + forward * 0.4 + down * 0.15 + sideways * (apart * 0.5)", "duration": 0.6, "with": "previous", "event": "scaled" },
+  { "hand": "left", "shape": "idle", "duration": 0.15 },
+  { "hand": "right", "shape": "idle", "duration": 0.15, "with": "previous", "event": "release" },
+  { "hand": "left", "path": "home", "duration": 0.5 },
+  { "hand": "right", "path": "home", "duration": 0.5, "with": "previous" }
+ ]
+}

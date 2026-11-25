@@ -1,6 +1,6 @@
 # Recording format
 
-`src/rec.h`, `src/rec.cpp`. Format version 5; versions 1 to 4 still read. File extension `.xrrec` by convention.
+`src/rec.h`, `src/rec.cpp`. Format version 6; versions 1 to 5 still read. File extension `.xrrec` by convention.
 
 A recording stores the simulator state an app observes, once per `xrWaitFrame`, not
 the keyboard and mouse events that produced it. Replays therefore do not depend on
@@ -68,6 +68,15 @@ per table device:
   u8   active
   u8   source               SIM_HandSource: 0 controller, 1 tracked hand; 0 for the head
   Pose detached             only when source is 1: where its controller was put down
+  u8   shaped               from version 6, only when source is 1: 1 when a gesture shapes the
+                            hand (docs/hand-motion.md), else 0
+  if shaped:
+    f32  curls[5]           thumb to little, finite (SIM_HandCurls)
+    f32  pinch              finite
+    f32  open               finite: from the relaxed hand toward the open one
+    u8   recorded mask      bit i set when the weight toward recorded pose i is non-zero:
+                            thumbs_up, point, poke, grasp, wave
+    per set bit: f32        that weight, finite
   Pose pose                 grip pose for hands, view pose for the head
   u8   mask bytes (0..32)
   mask                      bit i set when table input i is non-zero

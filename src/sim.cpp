@@ -24,6 +24,8 @@ struct SIM_DeviceData
     b8             active;
     SIM_HandSource source;
     Pose           detached_pose; // see SIM_DeviceFrame::detached
+    b8             shaped;        // see SIM_DeviceFrame::shaped
+    SIM_HandCurls  shape;
     SIM_InputValue inputs[(u32)SIM_Input::Count];
     SIM_Haptic     haptics[(u32)SIM_HapticOutput::Count];
 };
@@ -35,10 +37,12 @@ enum class SIM_HandKey : u8
     Relaxed,
     Pinch,
     Fist,
-    Count,
+    Recorded, // SIM_HAND_RECORDED_POSES of them
+    Count = Recorded + SIM_HAND_RECORDED_POSES,
 };
 
 #define SIM_HAND_CURVE_MAX 64
+#define SIM_HAND_FACINGS   10
 
 // The right hand fitted to a Quest 3 (tools/hand_fit.py): bone offsets in the parent's frame, the
 // key poses the shapes blend, and what XR_EXT_hand_interaction reports for a tip gap or a curl
@@ -53,6 +57,7 @@ struct SIM_HandModel
     Vec2 grasp_curve[SIM_HAND_CURVE_MAX]; // middle, ring and little tips to the palm in m, grasp_ext/value
     u32  grasp_curve_count;
     f32  coupling[4][4]; // index to little: how far the column's finger curls at least, per curl of the row's
+    Quat facings[SIM_HAND_FACINGS]; // the right palm joint as people hold it for the recorded gestures (sim_hand_facings), in the head's level frame
 };
 
 // A body joint of the T-pose: where it is and how its axes lie
@@ -70,7 +75,117 @@ struct SIM_HandShape
     f32         open[5];  // toward the open pose first: the index straightens to point
     f32         pinch[5];
     f32         fist[5];
+    f32         recorded[SIM_HAND_RECORDED_POSES]; // the whole hand toward recorded gestures, on top of the fist
     f32         thumb[5]; // yaw, pitch, roll of the metacarpal, then proximal and distal flexion, radians
+};
+
+#define SIM_MAX_GESTURES        128
+#define SIM_MAX_GESTURE_STEPS   64
+#define SIM_MAX_GESTURE_PARAMS  16
+#define SIM_MAX_GESTURE_SECONDS 600.0f
+#define SIM_GESTURE_ANCHORS     5
+#define SIM_GESTURE_EXPR_SIZE   256
+#define SIM_GESTURE_PALM_KEEP   0xffu
+
+enum class SIM_GestureEase : u8
+{
+    MinJerk,
+    Linear,
+    In,
+    Out,
+};
+
+// A step of a playing gesture, resolved when it started: times in ns from the gesture's start
+struct SIM_GestureStep
+{
+    u32             hand;   // 0 left, 1 right
+    u32             anchor; // sim_gesture_anchors
+    i64             start;
+    i64             duration;
+    b8              waits;
+    b8              head;   // starts its group: not "with" the step before
+    b8              moves;
+    b8              home;
+    Vec3            target;
+    f32             bow;
+    u32             palm;   // sim_gesture_palm_names, SIM_GESTURE_PALM_KEEP
+    Quat            palm_target;
+    b8              shapes;
+    SIM_HandCurls   shape;
+    SIM_GestureEase ease;
+    b8              hold;
+    char            event[32];
+    b8              began;  // where the step started from, taken at its first frame
+    b8              ended;
+    Vec3            from;
+    Quat            from_palm;
+    b8              from_shaped;
+    SIM_HandCurls   from_shape;
+};
+
+struct SIM_GesturePlay
+{
+    u32             id;
+    b8              active;
+    b8              started;
+    i64             start;
+    i64             length;
+    i64             offset;      // how much later than planned the steps from here on start
+    u64             ended_frame; // the frame the last step ended in
+    b8              deferred;    // a group waits a frame so the end of the one before shows
+    b8              uses[2];
+    Quat            home_palm[2]; // each grip's orientation when the gesture started
+    Vec3            right;        // the head's, level
+    SIM_GestureStep steps[SIM_MAX_GESTURE_STEPS];
+    u32             steps_count;
+};
+
+// A gesture from motion/ or a user's file, kept as its text and compiled when it plays
+struct SIM_GestureFile
+{
+    char  name[SIM_GESTURE_NAME];
+    char* json;
+};
+
+#define SIM_GESTURE_EXPR_DEPTH 32
+
+// Values of a gesture expression: a number or a point or direction in stage space
+struct SIM_GestureValue
+{
+    b8   vector;
+    f32  number;
+    Vec3 v;
+};
+
+// What an expression may name, fixed when the gesture starts
+struct SIM_GestureEnv
+{
+    char             param_names[SIM_MAX_GESTURE_PARAMS][SIM_GESTURE_NAME];
+    SIM_GestureValue params[SIM_MAX_GESTURE_PARAMS];
+    u32              params_count;
+    Vec3             head;
+    Vec3             forward; // the head's, level
+    Vec3             right;
+    Vec3             anchors[2][SIM_GESTURE_ANCHORS]; // each hand's anchors when the gesture starts
+    u32              hand;    // 0 left, 1 right: whose outward, inward and home
+    u32              anchor;  // the step's: what home means
+};
+
+struct SIM_GestureParser
+{
+    const char*           text;
+    u32                   at;
+    const SIM_GestureEnv* env;
+    u32                   depth;
+    char*                 error;
+    u32                   error_size;
+    b8                    failed;
+};
+
+struct SIM_GestureListing
+{
+    char names[SIM_MAX_GESTURES][SIM_GESTURE_NAME + 5];
+    u32  count;
 };
 
 enum class SIM_HapticKind : u8
@@ -128,6 +243,12 @@ struct SIM_Sim
     i64            local_origin_change_time;
     SIM_Controller controller;
     SIM_HandModel  hand_model;
+    SIM_GestureFile  gesture_files[SIM_MAX_GESTURES];
+    u32              gesture_files_count;
+    SIM_GesturePlay  gesture;
+    u32              next_gesture_id;
+    SIM_GestureEvent gesture_events[SIM_MAX_GESTURE_EVENTS];
+    u32              gesture_events_next;
     SIM_HandMesh   hand_meshes[2];
     b8             gesture_seen[2][SIM_MICROGESTURES];      // a pulse was visible for a frame and ends at the next
     b8             gesture_keys[2][SIM_MICROGESTURES];      // held by a key last frame, so holding does not repeat
@@ -905,7 +1026,8 @@ static const Vec3 SIM_PALM_FROM_HANDLE        = { 0.0f, 0.025f, 0.015f };    // 
 #define SIM_HELD_GRAB                           0.7f  // a held controller keeps the fingers at least this curled
 #define SIM_HELD_PINCH                          0.35f
 
-static const char* const sim_hand_keys[(u32)SIM_HandKey::Count] = { "open", "relaxed", "pinch", "fist" };
+static const char* const sim_hand_keys[(u32)SIM_HandKey::Count] = { "open", "relaxed", "pinch", "fist", "thumbs_up", "point", "poke", "grasp", "wave" };
+static const char* const sim_hand_facings[SIM_HAND_FACINGS]  = { "pinch", "poke", "thumbs_up", "point", "grasp", "palm_up", "wave", "swipe_in", "swipe_out", "two_hand_pinch" };
 
 // Planes a palm is shown in; spec grip +X points out of the back of the right hand and into the
 // back of the left one, grip -Y runs along the metacarpals of a held controller
@@ -1010,6 +1132,17 @@ static b8 load_hand_model (const char* json, SIM_HandModel& out)
             r = zm::normalize(r);
         }
     }
+    const JsonValue facings = json_find(root, "facings");
+    for (u32 f = 0; f < SIM_HAND_FACINGS; f++)
+    {
+        const JsonValue q = json_find(facings, sim_hand_facings[f]);
+        Quat&           r = out.facings[f];
+        if (!json_as_float(json_at(q, 0), r.x) || !json_as_float(json_at(q, 1), r.y) || !json_as_float(json_at(q, 2), r.z) || !json_as_float(json_at(q, 3), r.w) || zm::abs(zm::length(r) - 1.0f) > 1e-3f)
+        {
+            return false;
+        }
+        r = zm::normalize(r);
+    }
     const JsonValue coupling = json_find(root, "coupling");
     if (json_length(coupling) != 4)
     {
@@ -1040,6 +1173,10 @@ static SIM_HandShape couple_shape (const SIM_HandModel& model, const SIM_HandSha
         out.open[f]  = zm::clamp(shape.open[f], 0.0f, 1.0f);
         out.pinch[f] = zm::clamp(shape.pinch[f], 0.0f, 1.0f);
         out.fist[f]  = zm::clamp(shape.fist[f], 0.0f, 1.0f);
+    }
+    for (f32& weight : out.recorded)
+    {
+        weight = zm::clamp(weight, 0.0f, 1.0f);
     }
     const SIM_HandShape clamped = out;
     for (u32 g = 1; g < 5; g++)
@@ -1084,7 +1221,7 @@ static f32 hand_curve (const Vec2* curve, u32 count, f32 x)
     return curve[count - 1].y;
 }
 
-static void hand_local (const SIM_HandModel& model, const SIM_HandShape& shape, b8 left, Pose (&out)[SIM_HAND_JOINT_COUNT]);
+static void hand_local (const SIM_HandModel& model, const SIM_HandShape& unclamped, b8 left, Pose (&out)[SIM_HAND_JOINT_COUNT]);
 
 // What XR_EXT_hand_interaction reports for these joints on a Quest 3
 static f32 joints_pinch (const SIM_HandModel& model, const Pose (&joints)[SIM_HAND_JOINT_COUNT])
@@ -1126,7 +1263,28 @@ static f32 solve_weight (f32 target, F strength)
     return high;
 }
 
-static SIM_HandShape hand_shape (f32 pinch, f32 grab);
+static b8 hand_curls_valid (const SIM_HandCurls& curls)
+{
+    b8 valid = zm::is_finite(curls.pinch);
+    for (const f32 c : curls.curls)
+    {
+        valid = valid && zm::is_finite(c);
+    }
+    return valid;
+}
+
+static SIM_HandShape curls_shape (const SIM_HandCurls& curls)
+{
+    SIM_HandShape shape = { .base = SIM_HandKey::Relaxed };
+    memory_copy(shape.recorded, curls.recorded, sizeof(shape.recorded));
+    for (u32 f = 0; f < 5; f++)
+    {
+        shape.open[f]  = curls.open;
+        shape.pinch[f] = curls.pinch;
+        shape.fist[f]  = curls.curls[f];
+    }
+    return shape;
+}
 
 // A tracked hand's inputs are the strengths it is to report: the shape whose joints give them
 static SIM_HandShape solve_hand_shape (const SIM_HandModel& model, f32 pinch, f32 grab)
@@ -1165,6 +1323,13 @@ static void hand_local (const SIM_HandModel& model, const SIM_HandShape& unclamp
             rotation = zm::nlerp(rotation, open[j], shape.open[f]);
             rotation = zm::nlerp(rotation, pinch[j], shape.pinch[f]);
             rotation = zm::nlerp(rotation, fist[j], shape.fist[f]);
+        }
+        for (u32 r = 0; r < SIM_HAND_RECORDED_POSES; r++)
+        {
+            if (shape.recorded[r] > 0.0f)
+            {
+                rotation = zm::nlerp(rotation, model.poses[(u32)SIM_HandKey::Recorded + r][j], shape.recorded[r]);
+            }
         }
         const f32* t = shape.thumb;
         if (j == (u32)SIM_HandJoint::ThumbMetacarpal)
@@ -3037,6 +3202,16 @@ b8 sim_parse_config (SIM_Config& config, const char* json)
     read_device(devices, "left", config.devices[(u32)SIM_Device::LeftHand]);
     read_device(devices, "right", config.devices[(u32)SIM_Device::RightHand]);
 
+    const JsonValue gestures = json_find(root, "gestures");
+    const JsonValue paths    = json_find(gestures, "paths");
+    for (u32 i = 0; i < json_length(paths) && config.gesture_paths_count < SIM_MAX_GESTURE_PATHS; i++)
+    {
+        char* path = config.gesture_paths[config.gesture_paths_count];
+        if (json_as_string(json_at(paths, i), path, nullptr, OS_MAX_PATH) && path[0])
+        {
+            config.gesture_paths_count++;
+        }
+    }
     const JsonValue hands = json_find(root, "hands");
     json_find_float(hands, "tracking_fov_degrees", config.hand_tracking_fov_degrees, config.hand_tracking_fov_degrees);
     config.hand_tracking_fov_degrees = zm::clamp(config.hand_tracking_fov_degrees, 1.0f, 360.0f);
@@ -3537,6 +3712,27 @@ void sim_apply_env (SIM_Config& config)
         }
         json_release(parser);
     }
+    // Directories or files after the config's, ':' apart (';' on Windows, where ':' is in paths)
+    if (const char* value = os_env("PUPPETXR_GESTURE_PATH"); value && value[0])
+    {
+        const char separator = os_path_list_separator();
+        const char* at       = value;
+        while (*at && config.gesture_paths_count < SIM_MAX_GESTURE_PATHS)
+        {
+            const char* end    = at;
+            while (*end && *end != separator)
+            {
+                end++;
+            }
+            const usize length = (usize)(end - at);
+            if (length > 0 && length < OS_MAX_PATH)
+            {
+                memory_copy(config.gesture_paths[config.gesture_paths_count], at, length);
+                config.gesture_paths[config.gesture_paths_count++][length] = 0;
+            }
+            at = *end ? end + 1 : end;
+        }
+    }
     if (const char* value = os_env("PUPPETXR_HAND_TRACKING_FOV"); value && parse_u64(value) > 0)
     {
         config.hand_tracking_fov_degrees = (f32)zm::min(parse_u64(value), (u64)360);
@@ -3962,6 +4158,1034 @@ void sim_apply_state (SIM_Config& config, const SIM_State& state)
     LOG_INFO("Config: room '%s' from the last choice in the UI", state.room[0] ? state.room : "none");
 }
 
+static Pose hand_pose (const SIM_Sim* sim, SIM_Device hand, const Pose& grip, SIM_HandPose kind);
+
+//
+// Gestures (docs/hand-motion.md)
+//
+
+static const char* const sim_gesture_anchor_names[] = { "grip", "aim", "palm", "pinch", "index_tip" };
+static const SIM_HandPose sim_gesture_anchors[]     = { SIM_HandPose::Grip, SIM_HandPose::Aim, SIM_HandPose::Palm, SIM_HandPose::Pinch, SIM_HandPose::Poke };
+static const char* const sim_gesture_palm_names[]   = { "down", "up", "in", "out", "forward", "pinch", "poke", "thumbs_up", "point", "grasp", "palm_up", "wave", "swipe_in", "swipe_out", "two_hand_pinch" };
+static const char* const sim_gesture_ease_names[]   = { "min_jerk", "linear", "ease_in", "ease_out" };
+static const char* const sim_gesture_bases[]        = { "relaxed", "open" };
+static const char* const sim_gesture_hands[]        = { "left", "right", "primary", "other" };
+static const char* const sim_gesture_with[]         = { "previous" };
+static const char* const sim_gesture_paths[]        = { "home" };
+
+
+
+
+static b8 gesture_fail_at (char* error, u32 error_size, const char* path, const char* what)
+{
+    (void)cstr_format(error, error_size, "%s: %s", path, what);
+    return false;
+}
+
+static void gesture_fail (SIM_GestureParser& p, const char* what, const char* detail = "")
+{
+    if (!p.failed)
+    {
+        (void)cstr_format(p.error, p.error_size, "%s%s%s", what, detail[0] ? " " : "", detail);
+    }
+    p.failed = true;
+}
+
+static void gesture_skip_space (SIM_GestureParser& p)
+{
+    while (p.text[p.at] == ' ' || p.text[p.at] == '\t')
+    {
+        p.at++;
+    }
+}
+
+static b8 gesture_ident_char (char c, b8 first)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (!first && c >= '0' && c <= '9');
+}
+
+static SIM_GestureValue gesture_expr (SIM_GestureParser& p);
+
+static SIM_GestureValue gesture_name (SIM_GestureParser& p, const char* name)
+{
+    const SIM_GestureEnv& e = *p.env;
+    const f32             side = e.hand == 0 ? -1.0f : 1.0f;
+    for (u32 i = 0; i < e.params_count; i++)
+    {
+        if (cstr_equal(e.param_names[i], name))
+        {
+            return e.params[i];
+        }
+    }
+    struct Builtin
+    {
+        const char* name;
+        Vec3        v;
+    };
+    const Builtin builtins[] = {
+        { "head", e.head },
+        { "forward", e.forward },
+        { "up", { 0.0f, 1.0f, 0.0f } },
+        { "down", { 0.0f, -1.0f, 0.0f } },
+        { "outward", e.right * side },
+        { "inward", e.right * -side },
+        { "sideways", e.right },
+        { "home", e.anchors[e.hand][e.anchor] },
+    };
+    for (const Builtin& b : builtins)
+    {
+        if (cstr_equal(b.name, name))
+        {
+            return { .vector = true, .v = b.v };
+        }
+    }
+    gesture_fail(p, "unknown name", name);
+    return {};
+}
+
+static SIM_GestureValue gesture_primary (SIM_GestureParser& p)
+{
+    gesture_skip_space(p);
+    const char c = p.text[p.at];
+    if ((c >= '0' && c <= '9') || c == '.')
+    {
+        // Digits, a fraction and an exponent; in f64, so the same on every platform
+        f64 value  = 0.0;
+        u32 digits = 0;
+        while (p.text[p.at] >= '0' && p.text[p.at] <= '9')
+        {
+            value = value * 10.0 + (f64)(p.text[p.at++] - '0');
+            digits++;
+        }
+        if (p.text[p.at] == '.')
+        {
+            p.at++;
+            f64 scale = 0.1;
+            while (p.text[p.at] >= '0' && p.text[p.at] <= '9')
+            {
+                value += (f64)(p.text[p.at++] - '0') * scale;
+                scale *= 0.1;
+                digits++;
+            }
+        }
+        if (digits > 0 && (p.text[p.at] == 'e' || p.text[p.at] == 'E'))
+        {
+            p.at++;
+            const b8 negative = p.text[p.at] == '-';
+            p.at += (p.text[p.at] == '-' || p.text[p.at] == '+') ? 1u : 0u;
+            i32 exponent = 0;
+            while (p.text[p.at] >= '0' && p.text[p.at] <= '9' && exponent < 100)
+            {
+                exponent = exponent * 10 + (p.text[p.at++] - '0');
+            }
+            for (i32 i = 0; i < exponent; i++)
+            {
+                value = negative ? value / 10.0 : value * 10.0;
+            }
+        }
+        if (digits == 0 || !(value < 1e30))
+        {
+            gesture_fail(p, "a bad number");
+            return {};
+        }
+        return { .number = (f32)value };
+    }
+    if (c == '(')
+    {
+        p.at++;
+        const SIM_GestureValue inner = gesture_expr(p);
+        gesture_skip_space(p);
+        if (p.text[p.at] != ')')
+        {
+            gesture_fail(p, "a missing ')'");
+            return {};
+        }
+        p.at++;
+        return inner;
+    }
+    if (!gesture_ident_char(c, true))
+    {
+        const char at[2] = { c, 0 };
+        gesture_fail(p, "unexpected", c ? at : "end");
+        return {};
+    }
+    char name[SIM_GESTURE_NAME] = {};
+    u32  n                      = 0;
+    while (gesture_ident_char(p.text[p.at], n == 0) && n + 1 < sizeof(name))
+    {
+        name[n++] = p.text[p.at++];
+    }
+    if (cstr_equal(name, "vec"))
+    {
+        gesture_skip_space(p);
+        f32 xyz[3] = {};
+        for (u32 i = 0; i < 3; i++)
+        {
+            if (p.text[p.at] != (i == 0 ? '(' : ','))
+            {
+                gesture_fail(p, "vec needs (x, y, z)");
+                return {};
+            }
+            p.at++;
+            const SIM_GestureValue v = gesture_expr(p);
+            if (v.vector)
+            {
+                gesture_fail(p, "vec takes numbers");
+            }
+            xyz[i] = v.number;
+            gesture_skip_space(p);
+        }
+        if (p.text[p.at] != ')')
+        {
+            gesture_fail(p, "vec needs (x, y, z)");
+            return {};
+        }
+        p.at++;
+        return { .vector = true, .v = { xyz[0], xyz[1], xyz[2] } };
+    }
+    if ((cstr_equal(name, "left") || cstr_equal(name, "right")) && p.text[p.at] == '.')
+    {
+        p.at++;
+        char anchor[SIM_GESTURE_NAME] = {};
+        u32  m                        = 0;
+        while (gesture_ident_char(p.text[p.at], m == 0) && m + 1 < sizeof(anchor))
+        {
+            anchor[m++] = p.text[p.at++];
+        }
+        for (u32 a = 0; a < SIM_GESTURE_ANCHORS; a++)
+        {
+            if (cstr_equal(anchor, sim_gesture_anchor_names[a]))
+            {
+                return { .vector = true, .v = p.env->anchors[cstr_equal(name, "left") ? 0 : 1][a] };
+            }
+        }
+        gesture_fail(p, "unknown anchor", anchor);
+        return {};
+    }
+    return gesture_name(p, name);
+}
+
+static SIM_GestureValue gesture_unary (SIM_GestureParser& p)
+{
+    gesture_skip_space(p);
+    if (p.text[p.at] == '-')
+    {
+        p.at++;
+        if (++p.depth > SIM_GESTURE_EXPR_DEPTH)
+        {
+            gesture_fail(p, "nested too deep");
+            return {};
+        }
+        SIM_GestureValue v = gesture_unary(p);
+        p.depth--;
+        v.number = -v.number;
+        v.v      = -v.v;
+        return v;
+    }
+    return gesture_primary(p);
+}
+
+static SIM_GestureValue gesture_term (SIM_GestureParser& p)
+{
+    SIM_GestureValue left = gesture_unary(p);
+    for (;;)
+    {
+        gesture_skip_space(p);
+        const char op = p.text[p.at];
+        if (op != '*' && op != '/')
+        {
+            return left;
+        }
+        p.at++;
+        const SIM_GestureValue right = gesture_unary(p);
+        if (right.vector && (left.vector || op == '/'))
+        {
+            gesture_fail(p, op == '*' ? "'*' needs a number on its right" : "'/' needs a number on its right");
+            return {};
+        }
+        if (op == '/' && right.number == 0.0f)
+        {
+            gesture_fail(p, "a division by zero");
+            return {};
+        }
+        const f32 factor = op == '*' ? right.number : 1.0f / right.number;
+        if (right.vector)
+        {
+            left = { .vector = true, .v = right.v * left.number };
+        }
+        else if (left.vector)
+        {
+            left.v = left.v * factor;
+        }
+        else
+        {
+            left.number = op == '*' ? left.number * right.number : left.number / right.number;
+        }
+    }
+}
+
+static SIM_GestureValue gesture_expr (SIM_GestureParser& p)
+{
+    if (++p.depth > SIM_GESTURE_EXPR_DEPTH)
+    {
+        gesture_fail(p, "nested too deep");
+        return {};
+    }
+    SIM_GestureValue left = gesture_term(p);
+    for (;;)
+    {
+        gesture_skip_space(p);
+        const char op = p.text[p.at];
+        if (op != '+' && op != '-')
+        {
+            p.depth--;
+            return left;
+        }
+        p.at++;
+        const SIM_GestureValue right = gesture_term(p);
+        if (left.vector != right.vector)
+        {
+            gesture_fail(p, "a number and a point added");
+            p.depth--;
+            return {};
+        }
+        left.number = op == '+' ? left.number + right.number : left.number - right.number;
+        left.v      = op == '+' ? left.v + right.v : left.v - right.v;
+    }
+}
+
+// A JSON number, a [x, y, z] array or an expression string; `path` names it in errors
+static b8 gesture_value (const JsonValue& value, const SIM_GestureEnv& env, b8 want_vector, const char* path, SIM_GestureValue& out, char* error, u32 error_size)
+{
+    out = {};
+    if (json_is_number(value) && !want_vector)
+    {
+        if (json_as_float(value, out.number))
+        {
+            return true;
+        }
+        return gesture_fail_at(error, error_size, path, "not a number");
+    }
+    if (json_is_array(value) && want_vector && json_length(value) == 3)
+    {
+        out.vector = true;
+        if (json_as_float(json_at(value, 0), out.v.x) && json_as_float(json_at(value, 1), out.v.y) && json_as_float(json_at(value, 2), out.v.z))
+        {
+            return true;
+        }
+    }
+    char text[SIM_GESTURE_EXPR_SIZE] = {};
+    if (!json_is_string(value) || !json_as_string(value, text, nullptr, sizeof(text)))
+    {
+        (void)cstr_format(error, error_size, "%s: needs %s", path, want_vector ? "a point: an expression or [x, y, z]" : "a number or an expression");
+        return false;
+    }
+    char              message[SIM_GESTURE_ERROR] = {};
+    SIM_GestureParser p                          = { .text = text, .env = &env, .error = message, .error_size = sizeof(message) };
+    out = gesture_expr(p);
+    gesture_skip_space(p);
+    if (!p.failed && p.text[p.at] != 0)
+    {
+        gesture_fail(p, "unexpected", p.text + p.at);
+    }
+    if (!p.failed && out.vector != want_vector)
+    {
+        gesture_fail(p, want_vector ? "a number where a point is wanted" : "a point where a number is wanted");
+    }
+    if (p.failed)
+    {
+        (void)cstr_format(error, error_size, "%s: %s", path, message);
+        return false;
+    }
+    return true;
+}
+
+static i32 gesture_choice (const JsonValue& value, const char* const* names, u32 count)
+{
+    char name[SIM_GESTURE_NAME] = {};
+    if (!json_as_string(value, name, nullptr, sizeof(name)))
+    {
+        return -1;
+    }
+    for (u32 i = 0; i < count; i++)
+    {
+        if (cstr_equal(name, names[i]))
+        {
+            return (i32)i;
+        }
+    }
+    return -1;
+}
+
+static b8 gesture_shape (const JsonValue& value, const char* path, SIM_HandCurls& out, char* error, u32 error_size)
+{
+    struct Preset
+    {
+        const char*   name;
+        SIM_HandCurls curls;
+    };
+    static const Preset presets[] = {
+        { "idle", {} },
+        { "open", { .open = 1.0f } },
+        { "fist", { .curls = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f } } },
+        { "pinch", { .pinch = 1.0f } },
+    };
+    const char* const* recorded = sim_hand_keys + (u32)SIM_HandKey::Recorded;
+    out                         = {};
+    if (json_is_string(value))
+    {
+        char name[SIM_GESTURE_NAME] = {};
+        (void)json_as_string(value, name, nullptr, sizeof(name));
+        for (const Preset& preset : presets)
+        {
+            if (cstr_equal(name, preset.name))
+            {
+                out = preset.curls;
+                return true;
+            }
+        }
+        for (u32 r = 0; r < SIM_HAND_RECORDED_POSES; r++)
+        {
+            if (cstr_equal(name, recorded[r]))
+            {
+                out.recorded[r] = 1.0f;
+                return true;
+            }
+        }
+        (void)cstr_format(error, error_size, "%s: unknown shape '%s' (idle, open, fist, pinch, thumbs_up, point, poke, grasp, wave)", path, name);
+        return false;
+    }
+    if (!json_is_object(value))
+    {
+        (void)cstr_format(error, error_size, "%s: needs a shape name or { \"curls\": [5 numbers], \"pinch\": n, \"point\": n, \"base\": \"open\" }", path);
+        return false;
+    }
+    for (const JsonMember member : json_members(value))
+    {
+        char key[SIM_GESTURE_NAME] = {};
+        (void)json_as_string(member.key, key, nullptr, sizeof(key));
+        const i32 pose = gesture_choice(member.key, recorded, SIM_HAND_RECORDED_POSES);
+        if (cstr_equal(key, "curls") && json_length(member.value) == 5)
+        {
+            for (u32 f = 0; f < 5; f++)
+            {
+                if (!json_as_float(json_at(member.value, f), out.curls[f]) || !(out.curls[f] >= 0.0f && out.curls[f] <= 1.0f))
+                {
+                    (void)cstr_format(error, error_size, "%s.curls[%u]: needs a number from 0 to 1", path, f);
+                    return false;
+                }
+            }
+        }
+        else if (cstr_equal(key, "pinch") && json_as_float(member.value, out.pinch) && out.pinch >= 0.0f && out.pinch <= 1.0f)
+        {
+        }
+        else if (pose >= 0)
+        {
+            f32& weight = out.recorded[pose];
+            if (!json_as_float(member.value, weight) || !(weight >= 0.0f && weight <= 1.0f))
+            {
+                (void)cstr_format(error, error_size, "%s.%s: needs a number from 0 to 1", path, key);
+                return false;
+            }
+        }
+        else if (cstr_equal(key, "base") && gesture_choice(member.value, sim_gesture_bases, 2) >= 0)
+        {
+            out.open = gesture_choice(member.value, sim_gesture_bases, 2) == 1 ? 1.0f : 0.0f;
+        }
+        else
+        {
+            (void)cstr_format(error, error_size, "%s.%s: unknown or invalid (curls: 5 numbers from 0 to 1, pinch, thumbs_up, point, poke, grasp, wave: 0 to 1, base: relaxed or open)", path, key);
+            return false;
+        }
+    }
+    return true;
+}
+
+// The palm joint's orientation for a facing: -Z along the fingers, +Y out of the back of the
+// hand; pinch, poke and thumbs_up as measured (the hand model's facings, the left hand mirrored)
+static Quat gesture_palm (const SIM_HandModel* model, u32 facing, u32 hand, const SIM_GestureEnv& env)
+{
+    const Vec3 up      = { 0.0f, 1.0f, 0.0f };
+    const Vec3 outward = env.right * (hand == 0 ? -1.0f : 1.0f);
+    if (facing >= 5)
+    {
+        Quat measured = model ? model->facings[facing - 5] : zm::QUAT_IDENTITY;
+        if (hand == 0)
+        {
+            measured = { measured.x, -measured.y, -measured.z, measured.w };
+        }
+        return zm::normalize(zm::quat_look_rotation(env.forward, up) * measured);
+    }
+    switch (facing)
+    {
+    case 0: return zm::quat_look_rotation(env.forward, up);
+    case 1: return zm::quat_look_rotation(env.forward, -up);
+    case 2: return zm::quat_look_rotation(env.forward, outward);
+    case 3: return zm::quat_look_rotation(env.forward, -outward);
+    default: return zm::quat_look_rotation(up, -env.forward);
+    }
+}
+
+static f32 gesture_ease (SIM_GestureEase ease, f32 t)
+{
+    switch (ease)
+    {
+    case SIM_GestureEase::MinJerk:
+        return t * t * t * (10.0f + t * (-15.0f + 6.0f * t));
+    case SIM_GestureEase::Linear:
+        return t;
+    case SIM_GestureEase::In:
+        return t * t;
+    case SIM_GestureEase::Out:
+        return 1.0f - (1.0f - t) * (1.0f - t);
+    }
+    return t;
+}
+
+static void gesture_env (const SIM_Sim* sim, SIM_GestureEnv& out)
+{
+    out              = {};
+    const Pose head  = sim->devices[(u32)SIM_Device::Head].pose;
+    Vec3       ahead = zm::rotate(head.orientation, { 0.0f, 0.0f, -1.0f });
+    ahead.y          = 0.0f;
+    out.head         = head.position;
+    out.forward      = zm::length(ahead) > 1e-4f ? zm::normalize(ahead) : Vec3{ 0.0f, 0.0f, -1.0f };
+    out.right        = zm::cross(out.forward, { 0.0f, 1.0f, 0.0f });
+    for (u32 h = 0; h < 2; h++)
+    {
+        for (u32 a = 0; a < SIM_GESTURE_ANCHORS; a++)
+        {
+            out.anchors[h][a] = hand_pose(sim, hand_device(h), sim->devices[(u32)hand_device(h)].pose, sim_gesture_anchors[a]).position;
+        }
+    }
+}
+
+// Checks a gesture and, against the sim's state now, resolves it into steps with times; `sim`
+// null only checks, with the head at the origin and the hands ahead of it
+static b8 gesture_compile (const SIM_Sim* sim, const char* json, SIM_Device primary, const char* params_json, SIM_GesturePlay& out, char* error, u32 error_size)
+{
+    out = {};
+    JsonParser* parser = json_parse_from_string(json);
+    if (!parser)
+    {
+        return gesture_fail_at(error, error_size, "gesture", "not valid JSON");
+    }
+    defer { json_release(parser); };
+    JsonParser* overrides = params_json && params_json[0] ? json_parse_from_string(params_json) : nullptr;
+    defer { if (overrides) { json_release(overrides); } };
+    if (params_json && params_json[0] && (!overrides || !json_is_object(json_get_root(overrides))))
+    {
+        return gesture_fail_at(error, error_size, "params", "not a JSON object");
+    }
+    const JsonValue root = json_get_root(parser);
+    if (!json_is_object(root))
+    {
+        return gesture_fail_at(error, error_size, "gesture", "not a JSON object");
+    }
+
+    SIM_GestureEnv env = {};
+    if (sim)
+    {
+        gesture_env(sim, env);
+    }
+    else
+    {
+        env.head    = { 0.0f, 1.6f, 0.0f };
+        env.forward = { 0.0f, 0.0f, -1.0f };
+        env.right   = { 1.0f, 0.0f, 0.0f };
+        for (u32 h = 0; h < 2; h++)
+        {
+            for (u32 a = 0; a < SIM_GESTURE_ANCHORS; a++)
+            {
+                env.anchors[h][a] = { h == 0 ? -0.2f : 0.2f, 1.3f, -0.35f };
+            }
+        }
+    }
+    // Params evaluate for the primary hand: outward and home in a default follow it
+    env.hand = primary == SIM_Device::LeftHand ? 0u : 1u;
+
+    char        format[SIM_GESTURE_NAME] = {};
+    f32         version                  = 0.0f;
+    JsonValue   steps                    = {};
+    JsonValue   params                   = {};
+    for (const JsonMember member : json_members(root))
+    {
+        char key[SIM_GESTURE_NAME] = {};
+        (void)json_as_string(member.key, key, nullptr, sizeof(key));
+        if (cstr_equal(key, "format"))
+        {
+            (void)json_as_string(member.value, format, nullptr, sizeof(format));
+        }
+        else if (cstr_equal(key, "version"))
+        {
+            (void)json_as_float(member.value, version);
+        }
+        else if (cstr_equal(key, "steps"))
+        {
+            steps = member.value;
+        }
+        else if (cstr_equal(key, "params"))
+        {
+            params = member.value;
+        }
+        else if (!cstr_equal(key, "name") && !cstr_equal(key, "description") && !cstr_equal(key, "hands"))
+        {
+            return gesture_fail_at(error, error_size, key, "unknown key (format, version, name, description, hands, params, steps)");
+        }
+    }
+    if (!cstr_equal(format, "puppetxr-gesture"))
+    {
+        return gesture_fail_at(error, error_size, "format", "must be \"puppetxr-gesture\"");
+    }
+    if (version != 1.0f)
+    {
+        return gesture_fail_at(error, error_size, "version", "must be 1");
+    }
+
+    if (json_is_valid(params))
+    {
+        if (!json_is_object(params))
+        {
+            return gesture_fail_at(error, error_size, "params", "not an object");
+        }
+        for (const JsonMember member : json_members(params))
+        {
+            char name[SIM_GESTURE_NAME] = {};
+            (void)json_as_string(member.key, name, nullptr, sizeof(name));
+            char path[SIM_GESTURE_ERROR] = {};
+            (void)cstr_format(path, sizeof(path), "params.%s", name);
+            if (env.params_count == SIM_MAX_GESTURE_PARAMS || !gesture_ident_char(name[0], true))
+            {
+                return gesture_fail_at(error, error_size, path, "too many params, or a name that is no identifier");
+            }
+            char type[SIM_GESTURE_NAME] = {};
+            if (!json_find_string(member.value, "type", type, nullptr, sizeof(type)) || !(cstr_equal(type, "point") || cstr_equal(type, "number") || cstr_equal(type, "seconds")))
+            {
+                return gesture_fail_at(error, error_size, path, "needs a type: point, number or seconds");
+            }
+            const b8  vector   = cstr_equal(type, "point");
+            const JsonValue given  = overrides ? json_find(json_get_root(overrides), name) : JsonValue{};
+            const JsonValue source = json_is_valid(given) ? given : json_find(member.value, "default");
+            char      at[SIM_GESTURE_ERROR] = {};
+            (void)cstr_format(at, sizeof(at), "%s.%s%s", json_is_valid(given) ? "params given" : "params", name, json_is_valid(given) ? "" : ".default");
+            if (!json_is_valid(source))
+            {
+                return gesture_fail_at(error, error_size, path, "needs a default");
+            }
+            SIM_GestureValue value = {};
+            if (!gesture_value(source, env, vector, at, value, error, error_size))
+            {
+                return false;
+            }
+            f32 low  = -1e30f;
+            f32 high = 1e30f;
+            (void)json_find_float(member.value, "min", low, low);
+            (void)json_find_float(member.value, "max", high, high);
+            if (!vector && !(value.number >= low && value.number <= high))
+            {
+                return gesture_fail_at(error, error_size, at, "outside the param's min and max");
+            }
+            cstr_copy(env.param_names[env.params_count], SIM_GESTURE_NAME, name);
+            env.params[env.params_count++] = value;
+        }
+    }
+    if (overrides)
+    {
+        for (const JsonMember member : json_members(json_get_root(overrides)))
+        {
+            char name[SIM_GESTURE_NAME] = {};
+            (void)json_as_string(member.key, name, nullptr, sizeof(name));
+            b8 known = false;
+            for (u32 i = 0; i < env.params_count; i++)
+            {
+                known = known || cstr_equal(env.param_names[i], name);
+            }
+            if (!known)
+            {
+                char path[SIM_GESTURE_ERROR] = {};
+                (void)cstr_format(path, sizeof(path), "params given.%s", name);
+                return gesture_fail_at(error, error_size, path, "the gesture has no such param");
+            }
+        }
+    }
+
+    if (!json_is_array(steps) || json_length(steps) == 0 || json_length(steps) > SIM_MAX_GESTURE_STEPS)
+    {
+        return gesture_fail_at(error, error_size, "steps", "needs 1 to 64 steps");
+    }
+    const u32 primary_index = primary == SIM_Device::LeftHand ? 0u : 1u;
+    Vec3      planned[2][SIM_GESTURE_ANCHORS];
+    memory_copy(planned, env.anchors, sizeof(planned));
+    i64 cursor      = 0; // where the next sequential step starts
+    i64 group_start = 0;
+    for (u32 s = 0; s < json_length(steps); s++)
+    {
+        const JsonValue  step     = json_at(steps, s);
+        SIM_GestureStep& out_step = out.steps[out.steps_count];
+        out_step                  = { .hand = primary_index, .anchor = 0, .palm = SIM_GESTURE_PALM_KEEP, .ease = SIM_GestureEase::MinJerk };
+        char base[32]             = {};
+        (void)cstr_format(base, sizeof(base), "steps[%u]", s);
+        if (!json_is_object(step))
+        {
+            return gesture_fail_at(error, error_size, base, "not an object");
+        }
+        b8        with     = false;
+        b8        has_wait     = false;
+        b8        has_duration = false;
+        b8        has_speed    = false;
+        b8        has_to       = false;
+        b8        home         = false;
+        JsonValue wait         = {};
+        JsonValue duration     = {};
+        JsonValue speed        = {};
+        JsonValue to           = {};
+        JsonValue bow          = {};
+        for (const JsonMember member : json_members(step))
+        {
+            char key[SIM_GESTURE_NAME] = {};
+            (void)json_as_string(member.key, key, nullptr, sizeof(key));
+            char path[SIM_GESTURE_ERROR] = {};
+            (void)cstr_format(path, sizeof(path), "%s.%s", base, key);
+            if (cstr_equal(key, "hand"))
+            {
+                const i32 hand = gesture_choice(member.value, sim_gesture_hands, 4);
+                if (hand < 0)
+                {
+                    return gesture_fail_at(error, error_size, path, "needs left, right, primary or other");
+                }
+                out_step.hand = hand < 2 ? (u32)hand : hand == 2 ? primary_index : 1u - primary_index;
+            }
+            else if (cstr_equal(key, "with"))
+            {
+                if (gesture_choice(member.value, sim_gesture_with, 1) != 0 || s == 0)
+                {
+                    return gesture_fail_at(error, error_size, path, "needs \"previous\", and a step before");
+                }
+                with = true;
+            }
+            else if (cstr_equal(key, "anchor"))
+            {
+                const i32 anchor = gesture_choice(member.value, sim_gesture_anchor_names, SIM_GESTURE_ANCHORS);
+                if (anchor < 0)
+                {
+                    return gesture_fail_at(error, error_size, path, "needs grip, aim, palm, pinch or index_tip");
+                }
+                out_step.anchor = (u32)anchor;
+            }
+            else if (cstr_equal(key, "palm"))
+            {
+                const i32 palm = gesture_choice(member.value, sim_gesture_palm_names, ARRAY_SIZE(sim_gesture_palm_names));
+                if (palm < 0)
+                {
+                    return gesture_fail_at(error, error_size, path, "needs down, up, in, out, forward, pinch or poke");
+                }
+                out_step.palm = (u32)palm;
+            }
+            else if (cstr_equal(key, "ease"))
+            {
+                const i32 ease = gesture_choice(member.value, sim_gesture_ease_names, ARRAY_SIZE(sim_gesture_ease_names));
+                if (ease < 0)
+                {
+                    return gesture_fail_at(error, error_size, path, "needs min_jerk, linear, ease_in or ease_out");
+                }
+                out_step.ease = (SIM_GestureEase)ease;
+            }
+            else if (cstr_equal(key, "shape"))
+            {
+                if (!gesture_shape(member.value, path, out_step.shape, error, error_size))
+                {
+                    return false;
+                }
+                out_step.shapes = true;
+            }
+            else if (cstr_equal(key, "event"))
+            {
+                if (!json_as_string(member.value, out_step.event, nullptr, sizeof(out_step.event)) || !out_step.event[0])
+                {
+                    return gesture_fail_at(error, error_size, path, "needs a name of at most 31 characters");
+                }
+            }
+            else if (cstr_equal(key, "hold"))
+            {
+                if (!json_as_bool(member.value, out_step.hold))
+                {
+                    return gesture_fail_at(error, error_size, path, "needs true or false");
+                }
+            }
+            else if (cstr_equal(key, "path"))
+            {
+                if (gesture_choice(member.value, sim_gesture_paths, 1) != 0)
+                {
+                    return gesture_fail_at(error, error_size, path, "needs \"home\"");
+                }
+                home = true;
+            }
+            else if (cstr_equal(key, "wait"))     { wait = member.value; has_wait = true; }
+            else if (cstr_equal(key, "duration")) { duration = member.value; has_duration = true; }
+            else if (cstr_equal(key, "speed"))    { speed = member.value; has_speed = true; }
+            else if (cstr_equal(key, "to"))       { to = member.value; has_to = true; }
+            else if (cstr_equal(key, "bow"))      { bow = member.value; }
+            else
+            {
+                return gesture_fail_at(error, error_size, path, "unknown key (hand, with, wait, anchor, to, path, bow, palm, shape, duration, speed, ease, event, hold)");
+            }
+        }
+        env.hand   = out_step.hand;
+        env.anchor = out_step.anchor;
+
+        char path[SIM_GESTURE_ERROR] = {};
+        f32  seconds                 = 0.0f;
+        if (has_wait)
+        {
+            (void)cstr_format(path, sizeof(path), "%s.wait", base);
+            SIM_GestureValue v = {};
+            if (has_to || home || has_duration || has_speed || out_step.shapes || out_step.palm != SIM_GESTURE_PALM_KEEP)
+            {
+                return gesture_fail_at(error, error_size, path, "a wait step only waits");
+            }
+            if (!gesture_value(wait, env, false, path, v, error, error_size))
+            {
+                return false;
+            }
+            seconds = v.number;
+        }
+        else
+        {
+            if (has_to && home)
+            {
+                (void)cstr_format(path, sizeof(path), "%s.path", base);
+                return gesture_fail_at(error, error_size, path, "a step goes to a point or home, not both");
+            }
+            if (has_to)
+            {
+                (void)cstr_format(path, sizeof(path), "%s.to", base);
+                SIM_GestureValue v = {};
+                if (!gesture_value(to, env, true, path, v, error, error_size))
+                {
+                    return false;
+                }
+                out_step.moves  = true;
+                out_step.target = v.v;
+            }
+            if (home)
+            {
+                out_step.moves  = true;
+                out_step.home   = true;
+                out_step.target = env.anchors[out_step.hand][out_step.anchor];
+            }
+            if (json_is_valid(bow))
+            {
+                (void)cstr_format(path, sizeof(path), "%s.bow", base);
+                SIM_GestureValue v = {};
+                if (!out_step.moves || !gesture_value(bow, env, false, path, v, error, error_size))
+                {
+                    return out_step.moves ? false : gesture_fail_at(error, error_size, path, "a bow needs a step that moves");
+                }
+                out_step.bow = v.number;
+            }
+            if (has_duration == has_speed || (has_speed && !out_step.moves))
+            {
+                cstr_copy(path, sizeof(path), base);
+                return gesture_fail_at(error, error_size, path, "needs a duration, or a speed when it moves (not both)");
+            }
+            (void)cstr_format(path, sizeof(path), "%s.%s", base, has_speed ? "speed" : "duration");
+            SIM_GestureValue v = {};
+            if (!gesture_value(has_speed ? speed : duration, env, false, path, v, error, error_size))
+            {
+                return false;
+            }
+            if (has_speed)
+            {
+                if (!(v.number > 0.0f))
+                {
+                    return gesture_fail_at(error, error_size, path, "needs a speed above 0");
+                }
+                seconds = zm::length(out_step.target - planned[out_step.hand][out_step.anchor]) / v.number;
+            }
+            else
+            {
+                seconds = v.number;
+            }
+            if (out_step.moves)
+            {
+                const Vec3 delta = out_step.target - planned[out_step.hand][out_step.anchor];
+                for (u32 a = 0; a < SIM_GESTURE_ANCHORS; a++)
+                {
+                    planned[out_step.hand][a] = planned[out_step.hand][a] + delta;
+                }
+            }
+        }
+        if (!(seconds >= 0.0f && seconds <= SIM_MAX_GESTURE_SECONDS))
+        {
+            return gesture_fail_at(error, error_size, path, "needs 0 to 600 seconds");
+        }
+        out_step.waits    = has_wait;
+        out_step.duration = (i64)((f64)seconds * 1e9);
+        out_step.head     = !with;
+        out_step.start    = with ? group_start : cursor;
+        group_start       = out_step.start;
+        cursor            = zm::max(cursor, out_step.start + out_step.duration);
+        out_step.palm_target = out_step.palm != SIM_GESTURE_PALM_KEEP ? gesture_palm(sim ? &sim->hand_model : nullptr, out_step.palm, out_step.hand, env) : zm::QUAT_IDENTITY;
+        out.uses[out_step.hand] = out.uses[out_step.hand] || !has_wait;
+        out.steps_count++;
+    }
+    out.length = cursor;
+    out.right  = env.right;
+    if (sim)
+    {
+        for (u32 h = 0; h < 2; h++)
+        {
+            out.home_palm[h] = sim->devices[(u32)hand_device(h)].pose.orientation;
+        }
+    }
+    return true;
+}
+
+// Where the palm joint of a hand lies relative to its grip: fixed, as the palm is no finger
+static Quat palm_in_grip (const SIM_Sim* sim, SIM_Device hand)
+{
+    const Pose     grip   = sim->devices[(u32)hand].pose;
+    SIM_HandJoints joints = {};
+    sim_hand_joints(sim, hand, grip, SIM_HandMotion::Unobstructed, joints);
+    return zm::conjugate(grip.orientation) * joints.poses[(u32)SIM_HandJoint::Palm].orientation;
+}
+
+static void gesture_event (SIM_Sim* sim, u32 play, const char* name)
+{
+    SIM_GestureEvent& event = sim->gesture_events[sim->gesture_events_next % SIM_MAX_GESTURE_EVENTS];
+    event                   = { .play = play, .frame = sim->frame_index, .time = sim->time };
+    cstr_copy(event.name, sizeof(event.name), name);
+    sim->gesture_events_next++;
+}
+
+// Once a frame after the controls: the steps under way set their hand's shape, palm and anchor
+static void update_gestures (SIM_Sim* sim)
+{
+    SIM_GesturePlay& play = sim->gesture;
+    if (!play.active)
+    {
+        return;
+    }
+    if (!play.started)
+    {
+        play.started = true;
+        play.start   = sim->time;
+    }
+    const i64 t    = sim->time - play.start;
+    b8        done = true;
+    for (u32 s = 0; s < play.steps_count; s++)
+    {
+        SIM_GestureStep& step = play.steps[s];
+        if (step.ended)
+        {
+            continue;
+        }
+        done = false;
+        i64 start = step.start + play.offset;
+        if (t < start)
+        {
+            continue;
+        }
+        const SIM_Device hand   = hand_device(step.hand);
+        const SIM_HandPose anchor = sim_gesture_anchors[step.anchor];
+        if (!step.began)
+        {
+            // A slow frame must not run a step that would end in the frame the one before ended
+            // in, or that one's end never shows; the rest of the timeline moves on with it
+            if (step.head && play.ended_frame == sim->frame_index && start + step.duration <= t)
+            {
+                play.deferred = true;
+                break;
+            }
+            if (step.head && play.deferred)
+            {
+                play.offset  += t - start;
+                play.deferred = false;
+                start         = t;
+            }
+            step.began     = true;
+            step.from_shaped = sim_get_hand_shape(sim, hand, step.from_shape);
+            step.from_palm = sim->devices[(u32)hand].pose.orientation * palm_in_grip(sim, hand);
+            step.from      = hand_pose(sim, hand, sim->devices[(u32)hand].pose, anchor).position;
+        }
+        const f32 u = step.duration > 0 ? zm::clamp((f32)((f64)(t - start) / (f64)step.duration), 0.0f, 1.0f) : 1.0f;
+        const f32 e = gesture_ease(step.ease, u);
+        if (!step.waits)
+        {
+            if (step.shapes)
+            {
+                SIM_HandCurls shape = step.shape;
+                for (u32 f = 0; f < 5; f++)
+                {
+                    shape.curls[f] = step.from_shape.curls[f] + (step.shape.curls[f] - step.from_shape.curls[f]) * e;
+                }
+                shape.pinch    = step.from_shape.pinch + (step.shape.pinch - step.from_shape.pinch) * e;
+                shape.open     = step.from_shape.open + (step.shape.open - step.from_shape.open) * e;
+                for (u32 r = 0; r < SIM_HAND_RECORDED_POSES; r++)
+                {
+                    shape.recorded[r] = step.from_shape.recorded[r] + (step.shape.recorded[r] - step.from_shape.recorded[r]) * e;
+                }
+                sim_set_hand_shape(sim, hand, &shape);
+            }
+            const b8 turns = step.palm != SIM_GESTURE_PALM_KEEP || step.home;
+            if (turns)
+            {
+                const Quat target_palm = step.home ? play.home_palm[step.hand] * palm_in_grip(sim, hand) : step.palm_target;
+                const Quat palm        = zm::slerp(step.from_palm, target_palm, e);
+                Pose       grip        = sim->devices[(u32)hand].pose;
+                grip.orientation       = zm::normalize(palm * zm::conjugate(palm_in_grip(sim, hand)));
+                sim_set_device_pose(sim, hand, grip);
+            }
+            if (step.moves || turns)
+            {
+                Vec3 at = step.from;
+                if (step.moves)
+                {
+                    const Vec3 along = step.target - step.from;
+                    at               = step.from + along * e;
+                    if (step.bow != 0.0f && zm::length(along) > 1e-4f)
+                    {
+                        const Vec3 d    = zm::normalize(along);
+                        Vec3       side = Vec3{ 0.0f, 1.0f, 0.0f } - d * d.y;
+                        side            = zm::length(side) > 1e-4f ? zm::normalize(side) : play.right;
+                        at              = at + side * (step.bow * 4.0f * e * (1.0f - e));
+                    }
+                }
+                Pose       grip  = sim->devices[(u32)hand].pose;
+                const Vec3 now   = hand_pose(sim, hand, grip, anchor).position;
+                grip.position    = grip.position + (at - now);
+                sim_set_device_pose(sim, hand, grip);
+            }
+        }
+        if (u >= 1.0f)
+        {
+            step.ended       = true;
+            play.ended_frame = sim->frame_index;
+            if (step.event[0])
+            {
+                gesture_event(sim, play.id, step.event);
+            }
+        }
+    }
+    if (done)
+    {
+        play.active = false;
+        for (u32 h = 0; h < 2; h++)
+        {
+            b8 hold = false;
+            for (u32 s = 0; s < play.steps_count; s++)
+            {
+                hold = play.steps[s].hand == h && play.steps[s].shapes ? play.steps[s].hold : hold;
+            }
+            if (play.uses[h] && !hold)
+            {
+                sim_set_hand_shape(sim, hand_device(h), nullptr);
+            }
+        }
+        gesture_event(sim, play.id, "end");
+    }
+}
+
 //
 // Lifecycle and frames
 //
@@ -4028,6 +5252,26 @@ SIM_Sim* sim_create (const SIM_Config& config)
     {
         FAIL_MSG("motion/hand_model.json is missing from the build or invalid");
     }
+    // The built-in gestures, then the users', which replace a built-in of their name
+    for (u32 i = 0; i < sim_embedded_motion_count; i++)
+    {
+        const char* name = sim_embedded_motion[i].name;
+        char        error[SIM_GESTURE_ERROR] = {};
+        if (name && cstr_starts_with(name, "gestures/") && !sim_gesture_load(sim, name + 9, sim_embedded_motion[i].json, error, sizeof(error)))
+        {
+            FAIL_MSG("built-in gesture %s is invalid: %s", name, error);
+        }
+    }
+    for (u32 i = 0; i < config.gesture_paths_count; i++)
+    {
+        char      error[SIM_GESTURE_ERROR] = {};
+        const u32 loaded                   = sim_gesture_load_path(sim, config.gesture_paths[i], error, sizeof(error));
+        if (error[0])
+        {
+            LOG_WARNING("Gestures: %s", error);
+        }
+        LOG_INFO("Gestures: %u from %s", loaded, config.gesture_paths[i]);
+    }
     build_hand_mesh(sim->hand_model, sim->hand_meshes[0], true);
     build_hand_mesh(sim->hand_model, sim->hand_meshes[1], false);
 
@@ -4050,6 +5294,10 @@ void sim_destroy (SIM_Sim* sim)
     for (u32 i = 0; i < sim->models_count; i++)
     {
         os_memory_release(sim->model_bytes[i]);
+    }
+    for (u32 i = 0; i < sim->gesture_files_count; i++)
+    {
+        os_memory_release(sim->gesture_files[i].json);
     }
     os_memory_release(sim);
 }
@@ -4120,6 +5368,7 @@ void sim_begin_frame (SIM_Sim* sim, u64 os_time_ns)
         sim->mouse_dy = 0.0f;
     }
     start_microgestures(sim);
+    update_gestures(sim);
 }
 
 static b8 pose_usable (const Pose& pose)
@@ -4321,6 +5570,8 @@ static void apply_state (SIM_Sim* sim, const SIM_FrameState& state)
         {
             device.detached_pose = frame.detached;
         }
+        device.shaped = device.source == SIM_HandSource::Hand && frame.shaped && hand_curls_valid(frame.shape);
+        device.shape  = device.shaped ? frame.shape : SIM_HandCurls{};
         for (u32 k = 0; k < (u32)SIM_Input::Count; k++)
         {
             const SIM_InputValue value  = frame.inputs[k];
@@ -4370,6 +5621,8 @@ void sim_capture_state (const SIM_Sim* sim, SIM_FrameState& out_state)
         out_state.devices[i].active = sim->devices[i].active;
         out_state.devices[i].source = sim->devices[i].source;
         out_state.devices[i].detached = sim->devices[i].source == SIM_HandSource::Hand ? sim->devices[i].detached_pose : zm::POSE_IDENTITY;
+        out_state.devices[i].shaped   = sim->devices[i].source == SIM_HandSource::Hand && sim->devices[i].shaped;
+        out_state.devices[i].shape    = out_state.devices[i].shaped ? sim->devices[i].shape : SIM_HandCurls{};
         memory_copy(out_state.devices[i].inputs, sim->devices[i].inputs, sizeof(sim->devices[i].inputs));
     }
     memory_copy(out_state.typed, sim->typed, sim->typed_length);
@@ -4863,13 +6116,8 @@ void sim_curled_hand_joints (const SIM_Sim* sim, SIM_Device hand, const Pose& gr
         ASSERT_MSG(false, "device %u is not a hand", (u32)hand);
         return;
     }
-    SIM_HandShape shape = { .base = curls.base_open ? SIM_HandKey::Open : SIM_HandKey::Relaxed };
-    for (u32 f = 0; f < 5; f++)
-    {
-        shape.pinch[f] = curls.pinch;
-        shape.fist[f]  = curls.curls[f];
-    }
-    const b8 left = hand == SIM_Device::LeftHand;
+    const SIM_HandShape shape = curls_shape(curls);
+    const b8            left  = hand == SIM_Device::LeftHand;
     Pose     local[SIM_HAND_JOINT_COUNT];
     hand_local(sim->hand_model, shape, left, local);
     const Pose wrist = zm::pose_mul(grip, wrist_in_grip(sim->hand_model, left));
@@ -4878,6 +6126,31 @@ void sim_curled_hand_joints (const SIM_Sim* sim, SIM_Device hand, const Pose& gr
         out_joints.poses[j] = zm::pose_mul(wrist, local[j]);
         out_joints.radii[j] = sim->hand_model.radii[j];
     }
+}
+
+void sim_set_hand_shape (SIM_Sim* sim, SIM_Device hand, const SIM_HandCurls* shape)
+{
+    ASSERT(sim);
+    if (!is_hand(hand) || (shape && !hand_curls_valid(*shape)))
+    {
+        ASSERT_MSG(false, "device %u is not a hand or the shape is not finite", (u32)hand);
+        return;
+    }
+    SIM_DeviceData& device = sim->devices[(u32)hand];
+    device.shaped          = shape != nullptr;
+    device.shape           = shape ? *shape : SIM_HandCurls{};
+}
+
+b8 sim_get_hand_shape (const SIM_Sim* sim, SIM_Device hand, SIM_HandCurls& out_shape)
+{
+    ASSERT(sim);
+    out_shape = {};
+    if (!is_hand(hand) || !sim->devices[(u32)hand].shaped)
+    {
+        return false;
+    }
+    out_shape = sim->devices[(u32)hand].shape;
+    return true;
 }
 
 SIM_InputValue sim_reported_input (const SIM_Sim* sim, SIM_Device device, SIM_Input input)
@@ -4889,7 +6162,7 @@ SIM_InputValue sim_reported_input (const SIM_Sim* sim, SIM_Device device, SIM_In
         return sim_get_input(sim, device, input);
     }
     const SIM_DeviceData& data  = sim->devices[(u32)device];
-    const SIM_HandShape   shape = solve_hand_shape(sim->hand_model, data.inputs[(u32)SIM_Input::TriggerValue].value.x, data.inputs[(u32)SIM_Input::SqueezeValue].value.x);
+    const SIM_HandShape   shape = data.shaped ? curls_shape(data.shape) : solve_hand_shape(sim->hand_model, data.inputs[(u32)SIM_Input::TriggerValue].value.x, data.inputs[(u32)SIM_Input::SqueezeValue].value.x);
     Pose                  joints[SIM_HAND_JOINT_COUNT];
     hand_local(sim->hand_model, shape, false, joints);
     const f32 value = input == SIM_Input::TriggerValue ? joints_pinch(sim->hand_model, joints) : joints_grasp(sim->hand_model, joints);
@@ -4914,7 +6187,8 @@ void sim_hand_joints (const SIM_Sim* sim, SIM_Device hand, const Pose& grip, SIM
         grab  = zm::max(grab, SIM_HELD_GRAB);
     }
     const b8      left  = hand == SIM_Device::LeftHand;
-    SIM_HandShape shape = device.source == SIM_HandSource::Hand ? solve_hand_shape(sim->hand_model, pinch, grab) : hand_shape(pinch, grab);
+    const b8      tracked = device.source == SIM_HandSource::Hand;
+    SIM_HandShape shape   = tracked && device.shaped ? curls_shape(device.shape) : tracked ? solve_hand_shape(sim->hand_model, pinch, grab) : hand_shape(pinch, grab);
     add_microgesture(sim, hand, shape);
     Pose local[SIM_HAND_JOINT_COUNT];
     hand_local(sim->hand_model, shape, left, local);
@@ -7085,6 +8359,13 @@ u64 sim_state_hash (const SIM_Sim* sim)
         {
             h = (h ^ hash((const u8*)&device.detached_pose, sizeof(device.detached_pose))) * 0x100000001B3ull;
         }
+        if (device.source == SIM_HandSource::Hand && device.shaped)
+        {
+            h = (h ^ hash((const u8*)device.shape.curls, sizeof(device.shape.curls))) * 0x100000001B3ull;
+            h = (h ^ hash((const u8*)&device.shape.pinch, sizeof(device.shape.pinch))) * 0x100000001B3ull;
+            h = (h ^ hash((const u8*)&device.shape.open, sizeof(device.shape.open))) * 0x100000001B3ull;
+            h = (h ^ hash((const u8*)device.shape.recorded, sizeof(device.shape.recorded))) * 0x100000001B3ull;
+        }
         h = (h ^ hash((const u8*)device.inputs, sizeof(device.inputs))) * 0x100000001B3ull;
     }
     if (sim->typed_length > 0)
@@ -7109,4 +8390,262 @@ u64 sim_state_hash (const SIM_Sim* sim)
         h = (h ^ hash((const u8*)&sim->face, sizeof(sim->face))) * 0x100000001B3ull;
     }
     return h;
+}
+
+//
+// Gestures
+//
+
+static b8 gesture_name_valid (const char* name)
+{
+    u32 n = 0;
+    for (; name && name[n]; n++)
+    {
+        const char c = name[n];
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-'))
+        {
+            return false;
+        }
+    }
+    return n > 0 && n < SIM_GESTURE_NAME;
+}
+
+static i32 find_gesture (const SIM_Sim* sim, const char* name)
+{
+    for (u32 i = 0; i < sim->gesture_files_count; i++)
+    {
+        if (cstr_equal(sim->gesture_files[i].name, name))
+        {
+            return (i32)i;
+        }
+    }
+    return -1;
+}
+
+b8 sim_gesture_check (const char* json, char* error, u32 error_size)
+{
+    SIM_GesturePlay* play = (SIM_GesturePlay*)os_memory_alloc(sizeof(SIM_GesturePlay));
+    defer { os_memory_release(play); };
+    return json && gesture_compile(nullptr, json, SIM_Device::RightHand, nullptr, *play, error, error_size);
+}
+
+b8 sim_gesture_load (SIM_Sim* sim, const char* name, const char* json, char* error, u32 error_size)
+{
+    ASSERT(sim);
+    if (!gesture_name_valid(name))
+    {
+        (void)cstr_format(error, error_size, "name: needs 1 to 63 of [a-z0-9_-]");
+        return false;
+    }
+    if (!sim_gesture_check(json, error, error_size))
+    {
+        return false;
+    }
+    const i32        found = find_gesture(sim, name);
+    SIM_GestureFile* file  = found >= 0 ? &sim->gesture_files[found] : nullptr;
+    if (!file && sim->gesture_files_count == SIM_MAX_GESTURES)
+    {
+        (void)cstr_format(error, error_size, "name: no room for more than %u gestures", SIM_MAX_GESTURES);
+        return false;
+    }
+    if (!file)
+    {
+        file = &sim->gesture_files[sim->gesture_files_count++];
+        cstr_copy(file->name, sizeof(file->name), name);
+    }
+    os_memory_release(file->json);
+    const usize length = cstr_length(json);
+    file->json         = (char*)os_memory_alloc(length + 1);
+    memory_copy(file->json, json, length + 1);
+    return true;
+}
+
+#define SIM_MAX_GESTURE_FILE ((usize)256 * 1024)
+
+
+static b8 name_after (const char* a, const char* b)
+{
+    while (*a && *a == *b)
+    {
+        a++;
+        b++;
+    }
+    return (u8)*a > (u8)*b;
+}
+
+static void collect_gesture_file (const char* name, void* user)
+{
+    SIM_GestureListing& listing = *(SIM_GestureListing*)user;
+    const usize         length  = cstr_length(name);
+    if (length > 5 && length < SIM_GESTURE_NAME + 5 && cstr_equal(name + length - 5, ".json") && listing.count < SIM_MAX_GESTURES)
+    {
+        cstr_copy(listing.names[listing.count++], sizeof(listing.names[0]), name);
+    }
+}
+
+static b8 load_gesture_file (SIM_Sim* sim, const char* path, const char* file_name, char* error, u32 error_size)
+{
+    char        name[SIM_GESTURE_NAME] = {};
+    const usize length                 = cstr_length(file_name);
+    if (length <= 5 || length - 5 >= sizeof(name))
+    {
+        (void)cstr_format(error, error_size, "%s: needs a name of 1 to 63 of [a-z0-9_-] and .json", path);
+        return false;
+    }
+    memory_copy(name, file_name, length - 5);
+    u8*   data = nullptr;
+    usize size = 0;
+    if (!os_read_file(path, &data, &size) || size > SIM_MAX_GESTURE_FILE)
+    {
+        os_memory_release(data);
+        (void)cstr_format(error, error_size, "%s: cannot read it, or it is over 256 KB", path);
+        return false;
+    }
+    char* json = (char*)os_memory_alloc(size + 1);
+    memory_copy(json, data, size);
+    json[size] = 0;
+    os_memory_release(data);
+    char      message[SIM_GESTURE_ERROR] = {};
+    const b8  loaded                     = sim_gesture_load(sim, name, json, message, sizeof(message));
+    os_memory_release(json);
+    if (!loaded)
+    {
+        (void)cstr_format(error, error_size, "%s: %s", path, message);
+    }
+    return loaded;
+}
+
+u32 sim_gesture_load_path (SIM_Sim* sim, const char* path, char* error, u32 error_size)
+{
+    ASSERT(sim);
+    if (!path || !path[0])
+    {
+        return 0;
+    }
+    if (!os_directory_exists(path))
+    {
+        const char* slash = path;
+        for (const char* c = path; *c; c++)
+        {
+            slash = *c == '/' || *c == '\\' ? c + 1 : slash;
+        }
+        return load_gesture_file(sim, path, slash, error, error_size) ? 1 : 0;
+    }
+    SIM_GestureListing* listing = (SIM_GestureListing*)os_memory_alloc(sizeof(SIM_GestureListing));
+    defer { os_memory_release(listing); };
+    if (!os_list_directory(path, collect_gesture_file, listing))
+    {
+        (void)cstr_format(error, error_size, "%s: cannot list it", path);
+        return 0;
+    }
+    // Sorted, so a directory loads the same way on every system
+    for (u32 i = 1; i < listing->count; i++)
+    {
+        for (u32 k = i; k > 0 && name_after(listing->names[k - 1], listing->names[k]); k--)
+        {
+            char swap[sizeof(listing->names[0])];
+            cstr_copy(swap, sizeof(swap), listing->names[k]);
+            cstr_copy(listing->names[k], sizeof(listing->names[k]), listing->names[k - 1]);
+            cstr_copy(listing->names[k - 1], sizeof(listing->names[k - 1]), swap);
+        }
+    }
+    u32 loaded = 0;
+    for (u32 i = 0; i < listing->count; i++)
+    {
+        char file[OS_MAX_PATH] = {};
+        (void)cstr_format(file, sizeof(file), "%s/%s", path, listing->names[i]);
+        loaded += load_gesture_file(sim, file, listing->names[i], error, error_size) ? 1u : 0u;
+    }
+    return loaded;
+}
+
+u32 sim_gesture_count (const SIM_Sim* sim)
+{
+    ASSERT(sim);
+    return sim->gesture_files_count;
+}
+
+const char* sim_gesture_name (const SIM_Sim* sim, u32 index)
+{
+    ASSERT(sim);
+    return index < sim->gesture_files_count ? sim->gesture_files[index].name : nullptr;
+}
+
+const char* sim_gesture_json (const SIM_Sim* sim, const char* name)
+{
+    ASSERT(sim);
+    const i32 found = name ? find_gesture(sim, name) : -1;
+    return found >= 0 ? sim->gesture_files[found].json : nullptr;
+}
+
+u32 sim_gesture_play_json (SIM_Sim* sim, const char* json, SIM_Device hand, const char* params_json, char* error, u32 error_size)
+{
+    ASSERT(sim);
+    const SIM_Device primary = is_hand(hand) ? hand : active_hand(sim);
+    SIM_GesturePlay* play    = (SIM_GesturePlay*)os_memory_alloc(sizeof(SIM_GesturePlay));
+    defer { os_memory_release(play); };
+    if (!json || !gesture_compile(sim, json, primary, params_json, *play, error, error_size))
+    {
+        return 0;
+    }
+    sim_gesture_stop(sim);
+    play->id          = ++sim->next_gesture_id;
+    play->active      = true;
+    play->ended_frame = UINT64_MAX;
+    sim->gesture = *play;
+    return play->id;
+}
+
+u32 sim_gesture_play (SIM_Sim* sim, const char* name, SIM_Device hand, const char* params_json, char* error, u32 error_size)
+{
+    ASSERT(sim);
+    const i32 found = name ? find_gesture(sim, name) : -1;
+    if (found < 0)
+    {
+        (void)cstr_format(error, error_size, "name: no gesture '%s' is loaded", name ? name : "");
+        return 0;
+    }
+    return sim_gesture_play_json(sim, sim->gesture_files[found].json, hand, params_json, error, error_size);
+}
+
+void sim_gesture_stop (SIM_Sim* sim)
+{
+    ASSERT(sim);
+    SIM_GesturePlay& play = sim->gesture;
+    if (!play.active)
+    {
+        return;
+    }
+    play.active = false;
+    for (u32 h = 0; h < 2; h++)
+    {
+        if (play.uses[h])
+        {
+            sim_set_hand_shape(sim, hand_device(h), nullptr);
+        }
+    }
+    gesture_event(sim, play.id, "stopped");
+}
+
+u32 sim_gesture_playing (const SIM_Sim* sim)
+{
+    ASSERT(sim);
+    return sim->gesture.active ? sim->gesture.id : 0;
+}
+
+u32 sim_gesture_events (const SIM_Sim* sim, u32 play, SIM_GestureEvent* out_events, u32 capacity)
+{
+    ASSERT(sim);
+    const u32 kept  = zm::min(sim->gesture_events_next, (u32)SIM_MAX_GESTURE_EVENTS);
+    u32       count = 0;
+    for (u32 i = sim->gesture_events_next - kept; i < sim->gesture_events_next; i++)
+    {
+        const SIM_GestureEvent& event = sim->gesture_events[i % SIM_MAX_GESTURE_EVENTS];
+        if (event.play == play && count < capacity && out_events)
+        {
+            out_events[count] = event;
+        }
+        count += event.play == play ? 1u : 0u;
+    }
+    return count;
 }

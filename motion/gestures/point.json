@@ -1,0 +1,8 @@
+{
+ "format": "puppetxr-gesture",
+ "version": 1,
+ "name": "point",
+ "description": "Point with the index and keep pointing",
+ "hands": ["right"],
+ "steps": [ { "palm": "point", "shape": "point", "duration": 0.25, "hold": true, "event": "point" } ]
+}

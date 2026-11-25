@@ -5,7 +5,7 @@
 
 // The version this build writes. Readers for older versions are kept forever once puppetxr
 // reaches 1.0; before that, a layout change may drop them.
-#define REC_FORMAT_VERSION 5
+#define REC_FORMAT_VERSION 6
 #define REC_ANCHOR_OPS     4 // OXR_AnchorOp::Count, which this layer cannot see
 #define REC_FRAME_OPS      4 // OXR_FrameOp::Count
 

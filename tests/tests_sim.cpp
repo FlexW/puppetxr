@@ -2941,8 +2941,8 @@ static f32 finger_curl (const SIM_Sim* sim, const SIM_HandJoints& joints, SIM_Ha
 {
     SIM_HandJoints open = {}, fist = {};
     const Pose     grip = sim_get_device_pose(sim, SIM_Device::RightHand);
-    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, .base_open = true }, open);
-    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, .base_open = true }, fist);
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, .open = 1.0f }, open);
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, .open = 1.0f }, fist);
     const f32 o = joint_distance(open, tip, SIM_HandJoint::Palm);
     const f32 f = joint_distance(fist, tip, SIM_HandJoint::Palm);
     return (o - joint_distance(joints, tip, SIM_HandJoint::Palm)) / (o - f);
@@ -2957,17 +2957,17 @@ TEST(Sim, single_finger_curls_drag_their_neighbours_as_measured)
     const Pose grip = sim_get_device_pose(sim, SIM_Device::RightHand);
 
     SIM_HandJoints middle = {};
-    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 0.0f, 0.0f, 1.0f, 0.0f, 0.0f }, .base_open = true }, middle);
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 0.0f, 0.0f, 1.0f, 0.0f, 0.0f }, .open = 1.0f }, middle);
     EXPECT_GT(finger_curl(sim, middle, SIM_HandJoint::MiddleTip), 0.95f);
     EXPECT_GT(finger_curl(sim, middle, SIM_HandJoint::RingTip), 0.4f) << "the ring follows the middle";
     EXPECT_LT(finger_curl(sim, middle, SIM_HandJoint::IndexTip), 0.05f) << "the index stays";
 
     SIM_HandJoints little = {};
-    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 0.0f, 0.0f, 0.0f, 0.0f, 1.0f }, .base_open = true }, little);
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 0.0f, 0.0f, 0.0f, 0.0f, 1.0f }, .open = 1.0f }, little);
     EXPECT_GT(finger_curl(sim, little, SIM_HandJoint::RingTip), 0.5f) << "the ring follows the little finger";
 
     SIM_HandJoints index = {};
-    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 0.0f, 1.0f, 0.0f, 0.0f, 0.0f }, .base_open = true }, index);
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 0.0f, 1.0f, 0.0f, 0.0f, 0.0f }, .open = 1.0f }, index);
     EXPECT_GT(finger_curl(sim, index, SIM_HandJoint::IndexTip), 0.95f);
     for (const SIM_HandJoint tip : { SIM_HandJoint::MiddleTip, SIM_HandJoint::RingTip, SIM_HandJoint::LittleTip })
     {
@@ -2983,14 +2983,14 @@ TEST(Sim, curls_point_and_stay_within_the_fist)
     const Pose grip = sim_get_device_pose(sim, SIM_Device::RightHand);
 
     SIM_HandJoints point = {};
-    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 1.0f, 0.0f, 1.0f, 1.0f, 1.0f }, .base_open = true }, point);
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 1.0f, 0.0f, 1.0f, 1.0f, 1.0f }, .open = 1.0f }, point);
     EXPECT_LT(finger_curl(sim, point, SIM_HandJoint::IndexTip), 0.05f);
     EXPECT_GT(finger_curl(sim, point, SIM_HandJoint::MiddleTip), 0.95f);
 
     SIM_HandJoints beyond = {};
-    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 3.0f, 3.0f, 3.0f, 3.0f, 3.0f }, .base_open = true }, beyond);
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 3.0f, 3.0f, 3.0f, 3.0f, 3.0f }, .open = 1.0f }, beyond);
     SIM_HandJoints fist = {};
-    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, .base_open = true }, fist);
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, grip, { .curls = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }, .open = 1.0f }, fist);
     for (u32 j = 0; j < SIM_HAND_JOINT_COUNT; j++)
     {
         EXPECT_TRUE(zm::near(beyond.poses[j].position, fist.poses[j].position, 1e-6f)) << j;
@@ -3136,6 +3136,60 @@ TEST(Sim, hand_source_is_part_of_the_frame_state)
     defer { sim_destroy(other); };
     sim_replay_frame(other, state);
     EXPECT_EQ(sim_get_hand_source(other, SIM_Device::LeftHand), SIM_HandSource::Hand);
+}
+
+// A gesture shapes a tracked hand finger by finger; while it does, the joints and what the hand
+// reports come from the shape, not from the pinch and grab inputs (docs/hand-motion.md)
+TEST(Sim, a_shape_drives_a_tracked_hand_instead_of_its_inputs)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+
+    sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
+    sim_set_input(sim, SIM_Device::RightHand, SIM_Input::TriggerValue, { .value = { 1.0f, 0.0f } });
+    const SIM_HandCurls point = { .curls = { 1.0f, 0.0f, 1.0f, 1.0f, 1.0f }, .open = 1.0f };
+    sim_set_hand_shape(sim, SIM_Device::RightHand, &point);
+    SIM_HandCurls got = {};
+    ASSERT_TRUE(sim_get_hand_shape(sim, SIM_Device::RightHand, got));
+    EXPECT_EQ(got.curls[2], 1.0f);
+
+    SIM_HandJoints expected = {};
+    sim_curled_hand_joints(sim, SIM_Device::RightHand, sim_get_device_pose(sim, SIM_Device::RightHand), point, expected);
+    const SIM_HandJoints joints = hand_joints(sim, SIM_Device::RightHand);
+    for (u32 j = 0; j < SIM_HAND_JOINT_COUNT; j++)
+    {
+        EXPECT_TRUE(zm::near(joints.poses[j].position, expected.poses[j].position, 1e-6f)) << j;
+    }
+    EXPECT_EQ(sim_reported_input(sim, SIM_Device::RightHand, SIM_Input::TriggerValue).value.x, 0.0f) << "a point does not pinch, whatever the trigger says";
+    EXPECT_GT(sim_reported_input(sim, SIM_Device::RightHand, SIM_Input::SqueezeValue).value.x, 0.9f);
+
+    sim_set_hand_shape(sim, SIM_Device::RightHand, nullptr);
+    EXPECT_FALSE(sim_get_hand_shape(sim, SIM_Device::RightHand, got));
+    EXPECT_NEAR(sim_reported_input(sim, SIM_Device::RightHand, SIM_Input::TriggerValue).value.x, 1.0f, 1e-3f) << "back to the inputs";
+}
+
+TEST(Sim, a_hand_shape_is_part_of_the_frame_state)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+
+    sim_set_hand_source(sim, SIM_Device::LeftHand, SIM_HandSource::Hand);
+    const u64           before = sim_state_hash(sim);
+    const SIM_HandCurls fist   = { .curls = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f } };
+    sim_set_hand_shape(sim, SIM_Device::LeftHand, &fist);
+    EXPECT_NE(sim_state_hash(sim), before);
+
+    SIM_FrameState state = {};
+    sim_capture_state(sim, state);
+    EXPECT_TRUE(state.devices[(u32)SIM_Device::LeftHand].shaped);
+    EXPECT_FALSE(state.devices[(u32)SIM_Device::RightHand].shaped);
+
+    SIM_Sim* other = make_sim();
+    defer { sim_destroy(other); };
+    sim_replay_frame(other, state);
+    SIM_HandCurls got = {};
+    ASSERT_TRUE(sim_get_hand_shape(other, SIM_Device::LeftHand, got));
+    EXPECT_EQ(got.curls[4], 1.0f);
 }
 
 //
@@ -5075,6 +5129,550 @@ TEST(SimDepth, no_data_near_and_the_uncovered_edge_have_their_values)
         {
             ASSERT_GT(image[i], 0);
             ASSERT_LT(image[i], 65535);
+        }
+    }
+}
+
+//
+// Gestures (docs/hand-motion.md)
+//
+
+static const char* gesture_reach = R"({
+    "format": "puppetxr-gesture", "version": 1, "name": "reach",
+    "params": { "target": { "type": "point", "default": "head + forward * 0.4 + down * 0.2" }, "time": { "type": "seconds", "default": 0.5, "min": 0.1, "max": 5 } },
+    "steps": [ { "hand": "right", "anchor": "pinch", "to": "target", "duration": "time" } ]
+})";
+
+static std::string gesture_error (const char* json)
+{
+    char error[SIM_GESTURE_ERROR] = {};
+    EXPECT_FALSE(sim_gesture_check(json, error, sizeof(error))) << json;
+    return error;
+}
+
+static void run_gesture (SIM_Sim* sim, u32 frames)
+{
+    for (u32 i = 0; i < frames; i++)
+    {
+        step(sim);
+    }
+}
+
+static Vec3 anchor_at (const SIM_Sim* sim, SIM_HandPose kind, SIM_Device hand = SIM_Device::RightHand)
+{
+    return sim_get_hand_pose(sim, hand, kind).position;
+}
+
+// Errors name the JSON path, so an agent can fix a file without guessing
+TEST(SimGesture, the_checker_names_the_path_of_each_error)
+{
+    char error[SIM_GESTURE_ERROR] = {};
+    EXPECT_TRUE(sim_gesture_check(gesture_reach, error, sizeof(error))) << error;
+
+    EXPECT_EQ(gesture_error(R"({"format": "gesture", "version": 1, "steps": []})").rfind("format:", 0), 0u);
+    EXPECT_NE(gesture_error(R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"duration": 1, "tooo": 1}]})").find("steps[0].tooo: unknown key"), std::string::npos);
+    EXPECT_NE(gesture_error(R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"wait": 1}, {"to": "head + targte", "duration": 1}]})").find("steps[1].to: unknown name targte"), std::string::npos);
+    EXPECT_NE(gesture_error(R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"to": "head"}]})").find("steps[0]: needs a duration"), std::string::npos);
+    EXPECT_NE(gesture_error(R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"anchor": "elbow", "duration": 1}]})").find("steps[0].anchor:"), std::string::npos);
+    EXPECT_NE(gesture_error(R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"to": "1 + 2", "duration": 1}]})").find("a number where a point is wanted"), std::string::npos);
+    EXPECT_NE(gesture_error(R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"to": "head * head", "duration": 1}]})").find("steps[0].to:"), std::string::npos);
+    EXPECT_NE(gesture_error(R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"wait": 1, "to": "head"}]})").find("a wait step only waits"), std::string::npos);
+    EXPECT_NE(gesture_error(R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"shape": "claw", "duration": 1}]})").find("steps[0].shape: unknown shape"), std::string::npos);
+    EXPECT_NE(gesture_error(R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"shape": {"curls": [0, 0, 2, 0, 0]}, "duration": 1}]})").find("steps[0].shape.curls[2]"), std::string::npos);
+    EXPECT_NE(gesture_error(R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"duration": 1, "with": "previous"}]})").find("steps[0].with"), std::string::npos);
+    EXPECT_NE(gesture_error("{ not json").find("not valid JSON"), std::string::npos);
+
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    ASSERT_TRUE(sim_gesture_load(sim, "reach", gesture_reach, error, sizeof(error))) << error;
+    EXPECT_EQ(sim_gesture_play(sim, "reach", SIM_Device::RightHand, R"({"nope": 1})", error, sizeof(error)), 0u);
+    EXPECT_NE(std::string(error).find("params given.nope"), std::string::npos) << error;
+    EXPECT_EQ(sim_gesture_play(sim, "reach", SIM_Device::RightHand, R"({"time": 9})", error, sizeof(error)), 0u) << "outside min and max";
+    EXPECT_EQ(sim_gesture_play(sim, "missing", SIM_Device::RightHand, nullptr, error, sizeof(error)), 0u);
+    EXPECT_FALSE(sim_gesture_load(sim, "Bad Name", gesture_reach, error, sizeof(error)));
+}
+
+// The anchor follows a minimum jerk path to where the expressions said when the gesture started
+TEST(SimGesture, a_reach_ends_at_its_target_along_a_minimum_jerk_path)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    char error[SIM_GESTURE_ERROR] = {};
+    ASSERT_TRUE(sim_gesture_load(sim, "reach", gesture_reach, error, sizeof(error))) << error;
+    sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
+    const Vec3 head   = sim_get_device_pose(sim, SIM_Device::Head).position;
+    const Vec3 target = head + Vec3{ 0.0f, -0.2f, -0.4f };
+    const Vec3 from   = anchor_at(sim, SIM_HandPose::Pinch);
+    const u32  id     = sim_gesture_play(sim, "reach", SIM_Device::RightHand, nullptr, error, sizeof(error));
+    ASSERT_NE(id, 0u) << error;
+    EXPECT_EQ(sim_gesture_playing(sim), id);
+
+    // 0.5 s at 90 Hz is 45 frames; the first frame is the gesture's start
+    run_gesture(sim, 12);
+    const f32 quarter = zm::length(anchor_at(sim, SIM_HandPose::Pinch) - from) / zm::length(target - from);
+    EXPECT_GT(quarter, 0.05f);
+    EXPECT_LT(quarter, 0.17f) << "a minimum jerk reach starts slow (0.10 at a quarter), not linear (0.25)";
+    run_gesture(sim, 11);
+    const f32 half = zm::length(anchor_at(sim, SIM_HandPose::Pinch) - from) / zm::length(target - from);
+    EXPECT_NEAR(half, 0.5f, 0.06f);
+    run_gesture(sim, 30);
+    EXPECT_TRUE(zm::near(anchor_at(sim, SIM_HandPose::Pinch), target, 1e-3f));
+    EXPECT_EQ(sim_gesture_playing(sim), 0u);
+
+    SIM_GestureEvent events[4] = {};
+    ASSERT_EQ(sim_gesture_events(sim, id, events, 4), 1u);
+    EXPECT_STREQ(events[0].name, "end");
+
+    const Vec3 given = { 0.1f, 1.2f, -0.45f };
+    ASSERT_NE(sim_gesture_play(sim, "reach", SIM_Device::RightHand, R"({"target": [0.1, 1.2, -0.45], "time": "0.1 * 2"})", error, sizeof(error)), 0u) << error;
+    run_gesture(sim, 25);
+    EXPECT_TRUE(zm::near(anchor_at(sim, SIM_HandPose::Pinch), given, 1e-3f)) << "params given override the defaults";
+}
+
+// A param's default was evaluated before the hand was known, as for the left hand: outward went
+// left for the right hand
+TEST(SimGesture, a_param_default_is_for_the_hand_that_plays)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    char error[SIM_GESTURE_ERROR] = {};
+    const char* json = R"({"format": "puppetxr-gesture", "version": 1, "params": {"target": {"type": "point", "default": "head + forward * 0.4 + outward * 0.2"}},
+                          "steps": [{"anchor": "pinch", "to": "target", "duration": 0.1}]})";
+    const Vec3 head = sim_get_device_pose(sim, SIM_Device::Head).position;
+    for (const SIM_Device hand : { SIM_Device::RightHand, SIM_Device::LeftHand })
+    {
+        sim_set_hand_source(sim, hand, SIM_HandSource::Hand);
+        ASSERT_NE(sim_gesture_play_json(sim, json, hand, nullptr, error, sizeof(error)), 0u) << error;
+        run_gesture(sim, 20);
+        const f32 outward = (anchor_at(sim, SIM_HandPose::Pinch, hand).x - head.x) * (hand == SIM_Device::RightHand ? 1.0f : -1.0f);
+        EXPECT_NEAR(outward, 0.2f, 1e-3f) << (u32)hand;
+    }
+}
+
+// The open base was a flag: a step to the open hand snapped it open in its first frame, and the
+// next step to idle snapped it back
+TEST(SimGesture, the_hand_opens_and_relaxes_over_the_step)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    char error[SIM_GESTURE_ERROR] = {};
+    sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
+    const f32 relaxed = joint_distance(hand_joints(sim, SIM_Device::RightHand), SIM_HandJoint::ThumbTip, SIM_HandJoint::IndexTip);
+    const char* json  = R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"shape": "open", "duration": 0.5}, {"shape": "idle", "duration": 0.5}]})";
+    ASSERT_NE(sim_gesture_play_json(sim, json, SIM_Device::RightHand, nullptr, error, sizeof(error)), 0u) << error;
+    run_gesture(sim, 3);
+    const f32 opening = joint_distance(hand_joints(sim, SIM_Device::RightHand), SIM_HandJoint::ThumbTip, SIM_HandJoint::IndexTip);
+    run_gesture(sim, 45);
+    const f32 open = joint_distance(hand_joints(sim, SIM_Device::RightHand), SIM_HandJoint::ThumbTip, SIM_HandJoint::IndexTip);
+    run_gesture(sim, 3);
+    const f32 relaxing = joint_distance(hand_joints(sim, SIM_Device::RightHand), SIM_HandJoint::ThumbTip, SIM_HandJoint::IndexTip);
+    EXPECT_GT(open - relaxed, 0.05f) << "the open thumb is far from the index";
+    EXPECT_LT(opening - relaxed, 0.1f * (open - relaxed)) << "three frames into the step the hand has barely opened";
+    EXPECT_GT(relaxing - relaxed, 0.9f * (open - relaxed)) << "three frames into the idle step the hand is still open";
+}
+
+TEST(SimGesture, a_bow_lifts_the_middle_of_a_reach)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    char       error[SIM_GESTURE_ERROR] = {};
+    const Vec3 from = anchor_at(sim, SIM_HandPose::Grip);
+    const char* bowed = R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"hand": "right", "to": "home + outward * 0.3", "bow": 0.1, "duration": 0.2, "ease": "linear"}]})";
+    ASSERT_NE(sim_gesture_play_json(sim, bowed, SIM_Device::RightHand, nullptr, error, sizeof(error)), 0u) << error;
+    run_gesture(sim, 10); // 9 frames after the first: the middle of 18
+    const Vec3 at = anchor_at(sim, SIM_HandPose::Grip);
+    EXPECT_NEAR(at.y - from.y, 0.1f, 0.01f) << "the bow's height at the middle";
+    run_gesture(sim, 12);
+    EXPECT_NEAR(anchor_at(sim, SIM_HandPose::Grip).y, from.y, 1e-4f);
+    EXPECT_NEAR(anchor_at(sim, SIM_HandPose::Grip).x, from.x + 0.3f, 1e-4f);
+}
+
+// A shape step closes the hand; its event carries the frame it ended in; the hand goes back to its
+// inputs when the gesture ends unless the step holds
+TEST(SimGesture, shape_steps_close_the_hand_and_report_their_events)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
+    char        error[SIM_GESTURE_ERROR] = {};
+    const char* pinch = R"({"format": "puppetxr-gesture", "version": 1, "steps": [
+        {"shape": "pinch", "duration": 0.1, "event": "pinched"},
+        {"wait": 0.1},
+        {"shape": "idle", "duration": 0.1, "event": "released"}]})";
+    const u64 first = sim_frame_index(sim);
+    const u32 id    = sim_gesture_play_json(sim, pinch, SIM_Device::RightHand, nullptr, error, sizeof(error));
+    ASSERT_NE(id, 0u) << error;
+    run_gesture(sim, 10);
+    EXPECT_NEAR(sim_reported_input(sim, SIM_Device::RightHand, SIM_Input::TriggerValue).value.x, 1.0f, 1e-3f) << "the pinch shape reads as a full pinch";
+    run_gesture(sim, 30);
+    EXPECT_EQ(sim_reported_input(sim, SIM_Device::RightHand, SIM_Input::TriggerValue).value.x, 0.0f);
+    SIM_HandCurls shape = {};
+    EXPECT_FALSE(sim_get_hand_shape(sim, SIM_Device::RightHand, shape)) << "back to the inputs";
+
+    SIM_GestureEvent events[4] = {};
+    ASSERT_EQ(sim_gesture_events(sim, id, events, 4), 3u);
+    EXPECT_STREQ(events[0].name, "pinched");
+    EXPECT_STREQ(events[1].name, "released");
+    EXPECT_STREQ(events[2].name, "end");
+    // 0.1 s is 9 frames: the step that began in the first frame ends in the tenth
+    EXPECT_EQ(events[0].frame, first + 9);
+    EXPECT_GT(events[1].frame, events[0].frame + 17);
+
+    const char* held = R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"shape": "fist", "duration": 0.05, "hold": true}]})";
+    ASSERT_NE(sim_gesture_play_json(sim, held, SIM_Device::RightHand, nullptr, error, sizeof(error)), 0u) << error;
+    run_gesture(sim, 10);
+    ASSERT_TRUE(sim_get_hand_shape(sim, SIM_Device::RightHand, shape));
+    EXPECT_EQ(shape.curls[3], 1.0f);
+}
+
+TEST(SimGesture, steps_run_alongside_wait_and_return_home)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
+    char        error[SIM_GESTURE_ERROR] = {};
+    const Vec3  home  = anchor_at(sim, SIM_HandPose::Grip);
+    const char* steps = R"({"format": "puppetxr-gesture", "version": 1, "steps": [
+        {"wait": 0.2},
+        {"to": "home + forward * 0.2", "duration": 0.2},
+        {"shape": "fist", "duration": 0.2, "with": "previous"},
+        {"path": "home", "speed": 1}]})";
+    ASSERT_NE(sim_gesture_play_json(sim, steps, SIM_Device::RightHand, nullptr, error, sizeof(error)), 0u) << error;
+    run_gesture(sim, 9);
+    EXPECT_TRUE(zm::near(anchor_at(sim, SIM_HandPose::Grip), home, 1e-5f)) << "waiting";
+    run_gesture(sim, 29); // the wait's 18 frames and the move's 18 after the first
+    EXPECT_NEAR(anchor_at(sim, SIM_HandPose::Grip).z, home.z - 0.2f, 1e-3f);
+    SIM_HandCurls shape = {};
+    ASSERT_TRUE(sim_get_hand_shape(sim, SIM_Device::RightHand, shape)) << "the fist closed with the move";
+    EXPECT_EQ(shape.curls[2], 1.0f);
+    run_gesture(sim, 30); // 0.2 m at 1 m/s
+    EXPECT_TRUE(zm::near(anchor_at(sim, SIM_HandPose::Grip), home, 1e-3f));
+    EXPECT_EQ(sim_gesture_playing(sim), 0u);
+}
+
+// Spec XR_EXT_hand_tracking: +Y of the palm joint points out of the back of the hand
+TEST(SimGesture, palm_facings_turn_the_hand)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
+    char error[SIM_GESTURE_ERROR] = {};
+    struct Case
+    {
+        const char* palm;
+        Vec3        back; // where the back of the hand points
+    };
+    for (const Case& c : { Case{ "down", { 0.0f, 1.0f, 0.0f } }, Case{ "up", { 0.0f, -1.0f, 0.0f } }, Case{ "in", { 1.0f, 0.0f, 0.0f } }, Case{ "forward", { 0.0f, 0.0f, 1.0f } } })
+    {
+        char json[256];
+        (void)snprintf(json, sizeof(json), R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"palm": "%s", "duration": 0.1}]})", c.palm);
+        ASSERT_NE(sim_gesture_play_json(sim, json, SIM_Device::RightHand, nullptr, error, sizeof(error)), 0u) << error;
+        run_gesture(sim, 12);
+        const Vec3 back = zm::rotate(hand_joints(sim, SIM_Device::RightHand).poses[(u32)SIM_HandJoint::Palm].orientation, { 0.0f, 1.0f, 0.0f });
+        EXPECT_GT(zm::dot(back, c.back), 0.99f) << c.palm;
+    }
+}
+
+TEST(SimGesture, stopping_leaves_the_hand_and_gives_back_its_inputs)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
+    char        error[SIM_GESTURE_ERROR] = {};
+    const char* slow = R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"to": "home + forward * 0.3", "duration": 1}, {"shape": "fist", "duration": 1, "with": "previous"}]})";
+    const u32   id   = sim_gesture_play_json(sim, slow, SIM_Device::RightHand, nullptr, error, sizeof(error));
+    ASSERT_NE(id, 0u) << error;
+    run_gesture(sim, 30);
+    const Vec3 at = anchor_at(sim, SIM_HandPose::Grip);
+    sim_gesture_stop(sim);
+    run_gesture(sim, 5);
+    EXPECT_TRUE(zm::near(anchor_at(sim, SIM_HandPose::Grip), at, 1e-6f));
+    SIM_HandCurls shape = {};
+    EXPECT_FALSE(sim_get_hand_shape(sim, SIM_Device::RightHand, shape));
+    EXPECT_EQ(sim_gesture_playing(sim), 0u);
+    SIM_GestureEvent events[2] = {};
+    ASSERT_EQ(sim_gesture_events(sim, id, events, 2), 1u);
+    EXPECT_STREQ(events[0].name, "stopped");
+}
+
+TEST(SimGesture, a_gesture_moves_the_same_way_every_time)
+{
+    char           error[SIM_GESTURE_ERROR] = {};
+    SIM_HandJoints joints[2]                = {};
+    for (u32 run = 0; run < 2; run++)
+    {
+        SIM_Sim* sim = make_sim();
+        defer { sim_destroy(sim); };
+        sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
+        const char* both = R"({"format": "puppetxr-gesture", "version": 1, "steps": [
+            {"hand": "right", "anchor": "index_tip", "to": "head + forward * 0.35", "bow": 0.05, "duration": 0.3, "palm": "down"},
+            {"hand": "left", "to": "left.palm + up * 0.1", "duration": 0.2, "with": "previous"},
+            {"hand": "right", "shape": "point", "duration": 0.15}]})";
+        ASSERT_NE(sim_gesture_play_json(sim, both, SIM_Device::RightHand, nullptr, error, sizeof(error)), 0u) << error;
+        run_gesture(sim, 33);
+        joints[run] = hand_joints(sim, SIM_Device::RightHand);
+        EXPECT_GT(zm::length(anchor_at(sim, SIM_HandPose::Grip, SIM_Device::LeftHand) - sim_get_device_pose(sim, SIM_Device::Head).position), 0.1f);
+    }
+    EXPECT_TRUE(memory_equal(joints[0].poses, joints[1].poses, sizeof(joints[0].poses)));
+}
+
+// Every built-in gesture (motion/gestures) loads, and plays to its end with its defaults
+TEST(SimGesture, every_built_in_gesture_plays_to_its_end)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    ASSERT_GE(sim_gesture_count(sim), 14u);
+    char error[SIM_GESTURE_ERROR] = {};
+    for (u32 g = 0; g < sim_gesture_count(sim); g++)
+    {
+        const char* name = sim_gesture_name(sim, g);
+        SCOPED_TRACE(name);
+        sim_set_hand_source(sim, SIM_Device::LeftHand, SIM_HandSource::Hand);
+        sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
+        const u32 id = sim_gesture_play(sim, name, SIM_Device::Count, nullptr, error, sizeof(error));
+        ASSERT_NE(id, 0u) << error;
+        for (u32 frame = 0; frame < 2000 && sim_gesture_playing(sim) == id; frame++)
+        {
+            step(sim);
+        }
+        EXPECT_EQ(sim_gesture_playing(sim), 0u);
+        SIM_GestureEvent events[SIM_MAX_GESTURE_EVENTS] = {};
+        const u32        count                          = sim_gesture_events(sim, id, events, SIM_MAX_GESTURE_EVENTS);
+        ASSERT_GT(count, 0u);
+        EXPECT_STREQ(events[count - 1].name, "end");
+        EXPECT_TRUE(zm::is_finite(sim_get_device_pose(sim, SIM_Device::RightHand)));
+        sim_set_hand_shape(sim, SIM_Device::RightHand, nullptr);
+        sim_reset_hands(sim);
+    }
+}
+
+static void write_text (const char* path, const char* text)
+{
+    ASSERT_TRUE(os_write_file(path, text, cstr_length(text)));
+}
+
+static const char* gesture_mine = R"({"format": "puppetxr-gesture", "version": 1, "description": "mine", "steps": [{"shape": "fist", "duration": 0.1}]})";
+
+// Users' gestures come from directories of the config and PUPPETXR_GESTURE_PATH, after the
+// built-ins; a broken file is skipped, a file of a built-in's name replaces it
+TEST(SimGesture, users_gestures_load_from_their_directories)
+{
+    char dir[OS_MAX_PATH], other[OS_MAX_PATH], path[OS_MAX_PATH];
+    (void)cstr_format(dir, sizeof(dir), "%s/sim_gestures", PUPPETXR_TEST_OUTPUT_DIR);
+    (void)cstr_format(other, sizeof(other), "%s/sim_gestures_other", PUPPETXR_TEST_OUTPUT_DIR);
+    os_delete_tree(dir);
+    os_delete_tree(other);
+    ASSERT_TRUE(os_create_directories(dir));
+    ASSERT_TRUE(os_create_directories(other));
+    (void)cstr_format(path, sizeof(path), "%s/my_wave.json", dir);
+    write_text(path, gesture_mine);
+    (void)cstr_format(path, sizeof(path), "%s/pinch_tap.json", dir);
+    write_text(path, gesture_mine);
+    (void)cstr_format(path, sizeof(path), "%s/broken.json", dir);
+    write_text(path, R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"to": "nowhere", "duration": 1}]})");
+    (void)cstr_format(path, sizeof(path), "%s/notes.txt", dir);
+    write_text(path, "not a gesture");
+    (void)cstr_format(path, sizeof(path), "%s/from_env.json", other);
+    write_text(path, gesture_mine);
+
+    SIM_Config config = {};
+    sim_default_config(config);
+    char json[2 * OS_MAX_PATH];
+    (void)cstr_format(json, sizeof(json), R"({ "gestures": { "paths": ["%s"] } })", dir);
+    ASSERT_TRUE(sim_parse_config(config, json));
+    ASSERT_EQ(config.gesture_paths_count, 1u);
+    char env[2 * OS_MAX_PATH];
+    (void)cstr_format(env, sizeof(env), "%s%c%s", other, os_path_list_separator(), "/nonexistent/gestures");
+    os_set_env("PUPPETXR_GESTURE_PATH", env);
+    sim_apply_env(config);
+    os_unset_env("PUPPETXR_GESTURE_PATH");
+    ASSERT_EQ(config.gesture_paths_count, 3u);
+
+    SIM_Sim* sim = sim_create(config);
+    defer { sim_destroy(sim); };
+    EXPECT_NE(sim_gesture_json(sim, "my_wave"), nullptr);
+    EXPECT_NE(sim_gesture_json(sim, "from_env"), nullptr);
+    EXPECT_EQ(sim_gesture_json(sim, "broken"), nullptr);
+    EXPECT_EQ(sim_gesture_json(sim, "notes"), nullptr);
+    ASSERT_NE(sim_gesture_json(sim, "pinch_tap"), nullptr);
+    EXPECT_NE(std::string(sim_gesture_json(sim, "pinch_tap")).find("mine"), std::string::npos) << "the user's replaces the built-in";
+}
+
+TEST(SimGesture, a_file_loads_at_runtime_and_errors_name_it)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    char path[OS_MAX_PATH], error[SIM_GESTURE_ERROR] = {};
+    (void)cstr_format(path, sizeof(path), "%s/sim_gesture_runtime.json", PUPPETXR_TEST_OUTPUT_DIR);
+    write_text(path, gesture_mine);
+    EXPECT_EQ(sim_gesture_load_path(sim, path, error, sizeof(error)), 1u) << error;
+    EXPECT_NE(sim_gesture_json(sim, "sim_gesture_runtime"), nullptr);
+
+    write_text(path, R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"duration": "-"}]})");
+    EXPECT_EQ(sim_gesture_load_path(sim, path, error, sizeof(error)), 0u);
+    EXPECT_NE(std::string(error).find("sim_gesture_runtime.json: steps[0].duration"), std::string::npos) << error;
+}
+
+// Regression: on the realtime clock a slow frame (a screenshot read back, 400 ms) ran the pinch,
+// the wait and the release of pinch_tap in one frame, so an app never saw the pinch. A step whose
+// end has not shown yet is not followed in the same frame by one that would also end there
+TEST(SimGesture, a_slow_frame_skips_no_step)
+{
+    SIM_Sim* sim = make_sim(SIM_ClockMode::Realtime);
+    defer { sim_destroy(sim); };
+    sim_set_hand_source(sim, SIM_Device::RightHand, SIM_HandSource::Hand);
+    char        error[SIM_GESTURE_ERROR] = {};
+    const char* tap = R"({"format": "puppetxr-gesture", "version": 1, "steps": [
+        {"shape": "pinch", "duration": 0.12, "event": "pinch"},
+        {"wait": 0.15},
+        {"shape": "idle", "duration": 0.15, "event": "release"}]})";
+    u64 now = 1000000000ull;
+    step(sim, now);
+    const u32 id = sim_gesture_play_json(sim, tap, SIM_Device::RightHand, nullptr, error, sizeof(error));
+    ASSERT_NE(id, 0u) << error;
+    now += 11000000ull;
+    step(sim, now); // the gesture starts
+    now += 400000000ull;
+    step(sim, now); // one slow frame, past all three steps
+    EXPECT_NEAR(sim_reported_input(sim, SIM_Device::RightHand, SIM_Input::TriggerValue).value.x, 1.0f, 1e-3f) << "the pinch shows";
+    for (u32 i = 0; i < 60; i++)
+    {
+        now += 11000000ull;
+        step(sim, now);
+    }
+    EXPECT_EQ(sim_reported_input(sim, SIM_Device::RightHand, SIM_Input::TriggerValue).value.x, 0.0f);
+    SIM_GestureEvent events[4] = {};
+    ASSERT_EQ(sim_gesture_events(sim, id, events, 4), 3u);
+    EXPECT_STREQ(events[0].name, "pinch");
+    EXPECT_STREQ(events[1].name, "release");
+    EXPECT_GT(events[1].frame, events[0].frame + 10) << "the wait still lasts its 0.15 s after the pinch showed";
+}
+
+// Regression: pinch_tap turned the back of the hand straight up, a facing picked by hand. In the
+// recorded pinches on a Quest 3 the back of the right hand is rolled about 40 degrees outward
+// from up and the fingers point about 20 degrees up (docs/hand-motion.md, Hand model, Facings)
+TEST(SimGesture, the_pinch_facing_is_the_recorded_one)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    char error[SIM_GESTURE_ERROR] = {};
+    for (const SIM_Device hand : { SIM_Device::RightHand, SIM_Device::LeftHand })
+    {
+        sim_set_hand_source(sim, hand, SIM_HandSource::Hand);
+        const char* facing = R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"palm": "pinch", "duration": 0.1}]})";
+        ASSERT_NE(sim_gesture_play_json(sim, facing, hand, nullptr, error, sizeof(error)), 0u) << error;
+        run_gesture(sim, 12);
+        const Quat palm    = hand_joints(sim, hand).poses[(u32)SIM_HandJoint::Palm].orientation;
+        const Vec3 back    = zm::rotate(palm, { 0.0f, 1.0f, 0.0f });
+        const Vec3 fingers = zm::rotate(palm, { 0.0f, 0.0f, -1.0f });
+        const f32  outward = hand == SIM_Device::RightHand ? back.x : -back.x; // the head looks along -Z
+        const f32  roll    = zm::atan2(outward, back.y) * zm::RAD_TO_DEG;
+        EXPECT_GT(roll, 30.0f) << (u32)hand;
+        EXPECT_LT(roll, 50.0f) << (u32)hand;
+        const f32 pitch = zm::asin(fingers.y) * zm::RAD_TO_DEG;
+        EXPECT_GT(pitch, 10.0f) << (u32)hand;
+        EXPECT_LT(pitch, 40.0f) << (u32)hand;
+    }
+}
+
+TEST(SimGesture, the_thumbs_up_points_up)
+{
+    // The recorded thumbs-up points the thumb 45 degrees from up, ahead; the open thumb of a curl
+    // of 0 held palm in lay level, ahead and inward
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    char error[SIM_GESTURE_ERROR] = {};
+    for (const SIM_Device hand : { SIM_Device::RightHand, SIM_Device::LeftHand })
+    {
+        sim_set_hand_source(sim, hand, SIM_HandSource::Hand);
+        ASSERT_NE(sim_gesture_play(sim, "thumbs_up", hand, nullptr, error, sizeof(error)), 0u) << error;
+        run_gesture(sim, 24);
+        const SIM_HandJoints joints = hand_joints(sim, hand);
+        const Vec3 thumb = zm::normalize(joints.poses[(u32)SIM_HandJoint::ThumbTip].position - joints.poses[(u32)SIM_HandJoint::ThumbProximal].position);
+        const f32 from_up = zm::acos(thumb.y) * zm::RAD_TO_DEG;
+        EXPECT_GT(from_up, 35.0f) << (u32)hand;
+        EXPECT_LT(from_up, 55.0f) << (u32)hand;
+        EXPECT_LT(thumb.z, 0.0f) << (u32)hand << " ahead, the head looks along -Z";
+    }
+}
+
+// Each built-in gesture holds the hand as in the motion recorder's takes of it on a Quest 3: the
+// back of the hand and the fingers within 10 degrees, the palm within 5 cm where the gesture
+// reaches, the fingertips within 2 cm of the palm and the thumb tip within 2 cm of the index tip
+// as recorded. Values of a right hand in the head's level frame (x right, y up, -z ahead), the
+// left mirrored
+TEST(SimGesture, built_in_gestures_look_like_their_recordings)
+{
+    struct Recorded
+    {
+        const char* name;
+        SIM_Device  hand;
+        const char* event; // the moment compared; nullptr for the end of the gesture's first second
+        Vec3        back;
+        Vec3        fingers;
+        b8          reaches;
+        Vec3        palm;
+        f32         curl; // the middle, ring and little tips to the palm
+        f32         gap;  // the thumb tip to the index tip
+    };
+    const Recorded recorded[] = {
+        { "point", SIM_Device::RightHand, "point", { 0.37f, 0.93f, 0.09f }, { -0.18f, 0.16f, -0.97f }, false, {}, 0.054f, 0.102f },
+        { "thumbs_up", SIM_Device::RightHand, "thumbs_up", { 0.96f, -0.14f, -0.25f }, { -0.22f, 0.22f, -0.95f }, false, {}, 0.030f, 0.070f },
+        { "pinch_tap", SIM_Device::RightHand, "pinch", { 0.61f, 0.72f, 0.34f }, { -0.06f, 0.46f, -0.89f }, true, { 0.12f, -0.25f, -0.27f }, 0.077f, 0.006f },
+        { "poke", SIM_Device::RightHand, "press", { 0.20f, 0.93f, 0.30f }, { -0.06f, 0.32f, -0.95f }, true, { 0.07f, -0.18f, -0.48f }, 0.070f, 0.063f },
+        { "grab", SIM_Device::RightHand, "grab", { 0.59f, 0.79f, 0.17f }, { -0.26f, 0.39f, -0.89f }, true, { 0.13f, -0.28f, -0.21f }, 0.074f, 0.026f },
+        { "palm_up", SIM_Device::LeftHand, "up", { 0.64f, -0.74f, -0.21f }, { -0.55f, -0.25f, -0.79f }, true, { 0.02f, -0.39f, -0.25f }, 0.092f, 0.029f },
+        { "wave", SIM_Device::RightHand, nullptr, { 0.41f, 0.32f, 0.85f }, { -0.10f, 0.95f, -0.31f }, false, {}, 0.112f, 0.067f },
+        { "swipe_left", SIM_Device::RightHand, "swipe", { 0.74f, 0.61f, 0.28f }, { 0.19f, 0.26f, -0.95f }, false, {}, 0.118f, 0.081f },
+        { "two_hand_scale", SIM_Device::RightHand, "pinch", { 0.28f, 0.77f, 0.57f }, { 0.04f, 0.62f, -0.78f }, false, {}, 0.069f, 0.011f },
+        { "swipe_right", SIM_Device::RightHand, "swipe", { -0.35f, 0.86f, 0.38f }, { -0.45f, 0.25f, -0.86f }, false, {}, 0.113f, 0.073f },
+    };
+    char error[SIM_GESTURE_ERROR] = {};
+    for (const Recorded& r : recorded)
+    {
+        SIM_Sim* sim = make_sim();
+        defer { sim_destroy(sim); };
+        sim_set_hand_source(sim, r.hand, SIM_HandSource::Hand);
+        const u32 id    = sim_gesture_play(sim, r.name, r.hand, nullptr, error, sizeof(error));
+        ASSERT_NE(id, 0u) << r.name << ": " << error;
+        const i64 start = sim_time(sim);
+        for (u32 frame = 0; frame < 600; frame++)
+        {
+            step(sim);
+            SIM_GestureEvent events[16] = {};
+            const u32        count      = sim_gesture_events(sim, id, events, 16);
+            b8               seen       = false;
+            for (u32 e = 0; e < count; e++)
+            {
+                seen = seen || (r.event && cstr_equal(events[e].name, r.event));
+            }
+            if (seen || (!r.event && sim_time(sim) - start >= 1000000000))
+            {
+                break;
+            }
+        }
+        const f32            mirror  = r.hand == SIM_Device::LeftHand ? -1.0f : 1.0f;
+        const SIM_HandJoints joints  = hand_joints(sim, r.hand);
+        const Pose&          palm    = joints.poses[(u32)SIM_HandJoint::Palm];
+        Vec3                 back    = zm::rotate(palm.orientation, { 0.0f, 1.0f, 0.0f });
+        Vec3                 fingers = zm::rotate(palm.orientation, { 0.0f, 0.0f, -1.0f });
+        Vec3                 at      = palm.position - sim_get_device_pose(sim, SIM_Device::Head).position;
+        back.x *= mirror;
+        fingers.x *= mirror;
+        at.x *= mirror;
+        EXPECT_LT(zm::acos(zm::dot(back, zm::normalize(r.back))) * zm::RAD_TO_DEG, 10.0f) << r.name << ": the back of the hand";
+        EXPECT_LT(zm::acos(zm::dot(fingers, zm::normalize(r.fingers))) * zm::RAD_TO_DEG, 10.0f) << r.name << ": the fingers";
+        if (r.reaches)
+        {
+            EXPECT_LT(zm::length(at - r.palm), 0.05f) << r.name << ": the palm";
+        }
+        const f32 curl = (joint_distance(joints, SIM_HandJoint::MiddleTip, SIM_HandJoint::Palm) + joint_distance(joints, SIM_HandJoint::RingTip, SIM_HandJoint::Palm) + joint_distance(joints, SIM_HandJoint::LittleTip, SIM_HandJoint::Palm)) / 3.0f;
+        EXPECT_NEAR(curl, r.curl, 0.02f) << r.name << ": the fingertips to the palm";
+        EXPECT_NEAR(joint_distance(joints, SIM_HandJoint::ThumbTip, SIM_HandJoint::IndexTip), r.gap, 0.02f) << r.name << ": the thumb to the index";
+        if (cstr_equal(r.name, "grab"))
+        {
+            // A Quest 3 reports a median grasp_ext/value of 0.80 for the recorded grabs
+            EXPECT_GT(sim_reported_input(sim, r.hand, SIM_Input::SqueezeValue).value.x, 0.7f) << "the grab still grasps";
         }
     }
 }

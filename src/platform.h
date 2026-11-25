@@ -331,6 +331,7 @@ void          os_unset_env          (const char* name);
 
 b8            os_file_exists        (const char* path);
 b8            os_directory_exists   (const char* path);
+char          os_path_list_separator (); // between the paths of a list in one variable: ':', ';' on Windows
 b8            os_module_directory   (char* out_dir, usize out_size); // directory of the library or executable this code is in
 OS_Library*   os_library_open       (const char* name); // a shared library by file name, loaded if needed; null when there is none
 b8            os_library_path       (const char* name, char* out_path, usize size); // where a loaded library by file or install name lives; macOS only

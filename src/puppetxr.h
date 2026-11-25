@@ -57,7 +57,7 @@ typedef long long          PUPPETXR_I64;
 extern "C" {
 #endif
 
-#define PUPPETXR_API_VERSION 2
+#define PUPPETXR_API_VERSION 3
 
 #define PUPPETXR_MAKE_VERSION(major, minor, patch) (((PUPPETXR_U32)(major) << 22) | ((PUPPETXR_U32)(minor) << 12) | (PUPPETXR_U32)(patch))
 #define PUPPETXR_VERSION_GET_MAJOR(version)     ((PUPPETXR_U32)(version) >> 22)
@@ -210,6 +210,18 @@ typedef struct PUPPETXR_BodyJoint
     PUPPETXR_I32 tracked;
     float      confidence;
 } PUPPETXR_BodyJoint;
+
+/* An event of a playing gesture (docs/hand-motion.md): a step's, "end" when the gesture
+   finished, "stopped" when it was stopped */
+typedef struct PUPPETXR_GestureEvent
+{
+    PUPPETXR_U32 play;
+    char         name[32];
+    PUPPETXR_U64 frame;   /* the frame it happened in */
+    PUPPETXR_I64 time_ns; /* that frame's predicted display time */
+} PUPPETXR_GestureEvent;
+
+#define PUPPETXR_GESTURE_ERROR_SIZE 256
 
 typedef struct PUPPETXR_Prop
 {
@@ -406,6 +418,29 @@ typedef struct PUPPETXR_Api
        may name, replacing a model of that name (docs/props.md, Models). Recorded; a file that is no
        model puppetxr reads is PUPPETXR_ERROR_INVALID_ARGUMENT, PUPPETXR_ERROR_BUSY during a replay. */
     PUPPETXR_Result (*load_model)            (const char* name, const char* path);
+
+    /* API version 3 */
+
+    /* Gestures (docs/hand-motion.md): JSON files of timed steps that move and shape the hands.
+       out_error, when given, gets the checker's message, which names the JSON path; up to
+       PUPPETXR_GESTURE_ERROR_SIZE bytes are useful. */
+    /* A .json file or every .json of a directory, named by the file; a file of a loaded name
+       replaces it. PUPPETXR_ERROR_INVALID_ARGUMENT when a file fails, the others still load. */
+    PUPPETXR_Result (*load_gesture)          (const char* path, char* out_error, PUPPETXR_U32 error_size);
+    PUPPETXR_Result (*check_gesture)         (const char* json, char* out_error, PUPPETXR_U32 error_size);
+    /* A JSON array of the loaded gestures' names; as get_body when size is too small */
+    PUPPETXR_Result (*list_gestures)         (char* out_json, PUPPETXR_U32 size, PUPPETXR_U32* out_length);
+    /* A loaded gesture's JSON; as get_body when size is too small */
+    PUPPETXR_Result (*get_gesture)           (const char* name, char* out_json, PUPPETXR_U32 size, PUPPETXR_U32* out_length);
+    /* Plays a loaded gesture, or one given as JSON (starting with '{') without keeping it, from the
+       next frame on, stopping one that plays. hand is the gesture's primary hand;
+       PUPPETXR_DEVICE_HEAD for the active one. params_json, null or an object, gives params.
+       PUPPETXR_ERROR_REPLAYING during a replay. */
+    PUPPETXR_Result (*play_gesture)          (const char* name_or_json, PUPPETXR_Device hand, const char* params_json, PUPPETXR_U32* out_id, char* out_error, PUPPETXR_U32 error_size);
+    /* The hands stay where they are and go back to their inputs */
+    PUPPETXR_Result (*stop_gesture)          (void);
+    /* Whether the play is still running and its events of the last 64 kept; out_count is the total */
+    PUPPETXR_Result (*get_gesture_state)     (PUPPETXR_U32 id, PUPPETXR_I32* out_playing, PUPPETXR_GestureEvent* out_events, PUPPETXR_U32 capacity, PUPPETXR_U32* out_count);
 } PUPPETXR_Api;
 
 /* Fills the lower of `version` and the runtime's PUPPETXR_API_VERSION; version 0 is invalid */

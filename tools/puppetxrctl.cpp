@@ -93,6 +93,11 @@ static const char* ctl_usage =
     "  replay start <path> | replay stop\n"
     "  controller [oculus_touch|khr_simple|meta_touch_pro|meta_touch_plus]\n"
     "  hand left|right [controller|hand]  what tracks the hand; a tracked hand pinches with trigger/value, grabs with squeeze/value\n"
+    "  gesture list | show <name>           the loaded gestures, a gesture's JSON (docs/hand-motion.md)\n"
+    "  gesture check <file> | load <file|dir>   check a file here, or load files into the simulator\n"
+    "  gesture play <name|file.json> [left|right] [k=v ...]   play on that hand with params (v: a number,\n"
+    "                                       x,y,z, or an expression); prints the play id\n"
+    "  gesture wait <play> | events <play> | stop   the events once it ended, now, or stop it\n"
     "  body                                 the body tracking joints in stage space (docs/body-tracking.md)\n"
     "  body get | reset | set <json>        the body as JSON, back to the configured one, or merge JSON onto it\n"
     "  body save <file> | load <file>       the body to a file, or the configured body with the file's on top\n"
@@ -395,9 +400,9 @@ static void append (char* out, usize size, const char* fmt, ...)
     va_end(args);
 }
 
-static void append_string (char* out, usize size, const char* key, const char* value)
+static void append_json_string (char* out, usize size, const char* value)
 {
-    append(out, size, ",\"%s\":\"", key);
+    append(out, size, "\"");
     for (const char* c = value; *c; c++)
     {
         if (*c == '"' || *c == '\\')
@@ -410,6 +415,12 @@ static void append_string (char* out, usize size, const char* key, const char* v
         }
     }
     append(out, size, "\"");
+}
+
+static void append_string (char* out, usize size, const char* key, const char* value)
+{
+    append(out, size, ",\"%s\":", key);
+    append_json_string(out, size, value);
 }
 
 // Text for the virtual keyboard: the escapes \n (enter), \b (backspace) and \\ pass on as such
@@ -694,6 +705,135 @@ static b8 build_drift_request (u32 count, const char* const* words, char* out, u
         }
     }
     append(out, size, rate ? ",\"cmd\":\"set_tracking_drift_rate\",\"velocity\":[%.9g,%.9g,%.9g],\"yaw_rate\":%.9g" : ",\"cmd\":\"set_tracking_drift\",\"position\":[%.9g,%.9g,%.9g],\"yaw_degrees\":%.9g", (f64)values[0], (f64)values[1], (f64)values[2], (f64)values[3]);
+    return true;
+}
+
+// A param value of `gesture play`: a number, x,y,z as a point, else an expression
+static void append_gesture_param (char* out, usize size, const char* key, const char* value)
+{
+    f32        number = 0.0f;
+    f32        xyz[3] = {};
+    char       parts[3][64] = {};
+    u32        n            = 0;
+    const char* at          = value;
+    while (n < 3)
+    {
+        const char* comma = at;
+        while (*comma && *comma != ',')
+        {
+            comma++;
+        }
+        const usize length = (usize)(comma - at);
+        if (length == 0 || length >= sizeof(parts[0]))
+        {
+            break;
+        }
+        memory_copy(parts[n], at, length);
+        n++;
+        if (!*comma)
+        {
+            break;
+        }
+        at = comma + 1;
+    }
+    if (parse_float(value, number))
+    {
+        append(out, size, "\"%s\":%.9g", key, (f64)number);
+    }
+    else if (n == 3 && *at && parse_float(parts[0], xyz[0]) && parse_float(parts[1], xyz[1]) && parse_float(parts[2], xyz[2]))
+    {
+        append(out, size, "\"%s\":[%.9g,%.9g,%.9g]", key, (f64)xyz[0], (f64)xyz[1], (f64)xyz[2]);
+    }
+    else
+    {
+        append(out, size, "\"%s\":", key);
+        append_json_string(out, size, value);
+    }
+}
+
+// gesture list | show <name> | check <file> | load <file|dir> | play <name|file.json> [left|right]
+// [k=v ...] | wait <id> | events <id> | stop (docs/control-cli.md)
+static b8 build_gesture_request (u32 count, const char* const* words, char* out, usize size, u32& inout_timeout_ms)
+{
+    const char* verb = count >= 2 ? words[1] : "";
+    u32         id   = 0;
+    if (cstr_equal(verb, "list") && count == 2)
+    {
+        append(out, size, ",\"cmd\":\"list_gestures\"");
+    }
+    else if (cstr_equal(verb, "show") && count == 3)
+    {
+        append(out, size, ",\"cmd\":\"get_gesture\"");
+        append_string(out, size, "name", words[2]);
+    }
+    else if (cstr_equal(verb, "check") && count == 3)
+    {
+        append(out, size, ",\"cmd\":\"check_gesture\",\"gesture\":");
+        return append_body_file(out, size, words[2]);
+    }
+    else if (cstr_equal(verb, "load") && count == 3)
+    {
+        append(out, size, ",\"cmd\":\"load_gesture\"");
+        append_path(out, size, "path", words[2]);
+    }
+    else if (cstr_equal(verb, "play") && count >= 3)
+    {
+        append(out, size, ",\"cmd\":\"play_gesture\"");
+        u32 next = 3;
+        if (next < count && (cstr_equal(words[next], "left") || cstr_equal(words[next], "right")))
+        {
+            append_string(out, size, "hand", words[next++]);
+        }
+        const usize length = cstr_length(words[2]);
+        if (length > 5 && cstr_equal(words[2] + length - 5, ".json"))
+        {
+            append(out, size, ",\"gesture\":");
+            if (!append_body_file(out, size, words[2]))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            append_string(out, size, "name", words[2]);
+        }
+        if (next < count)
+        {
+            append(out, size, ",\"params\":{");
+            for (u32 i = next; i < count; i++)
+            {
+                const char* equals = words[i];
+                while (*equals && *equals != '=')
+                {
+                    equals++;
+                }
+                char key[64] = {};
+                if (!*equals || equals == words[i] || (usize)(equals - words[i]) >= sizeof(key))
+                {
+                    os_print_error("puppetxrctl: a param is name=value, not %s\n", words[i]);
+                    return false;
+                }
+                memory_copy(key, words[i], (usize)(equals - words[i]));
+                append(out, size, i > next ? "," : "");
+                append_gesture_param(out, size, key, equals + 1);
+            }
+            append(out, size, "}");
+        }
+    }
+    else if ((cstr_equal(verb, "wait") || cstr_equal(verb, "events")) && count == 3 && parse_u32(words[2], id))
+    {
+        append(out, size, ",\"cmd\":\"%s\",\"play\":%u", cstr_equal(verb, "wait") ? "wait_gesture" : "get_gesture_state", id);
+        // A gesture lasts up to 600 s
+        inout_timeout_ms = cstr_equal(verb, "wait") && inout_timeout_ms < 660000u ? 660000u : inout_timeout_ms;
+    }
+    else if (cstr_equal(verb, "stop") && count == 2)
+    {
+        append(out, size, ",\"cmd\":\"stop_gesture\"");
+    }
+    else
+    {
+        return false;
+    }
     return true;
 }
 
@@ -998,6 +1138,13 @@ static b8 build_request (u32 count, const char* const* words, i32 id, char* out,
     else if (cstr_equal(command, "profiler") && count == 2 && cstr_equal(words[1], "stop"))
     {
         append(out, size, ",\"cmd\":\"profiler_stop\"");
+    }
+    else if (cstr_equal(command, "gesture"))
+    {
+        if (!build_gesture_request(count, words, out, size, inout_timeout_ms))
+        {
+            return false;
+        }
     }
     else if (cstr_equal(command, "body"))
     {

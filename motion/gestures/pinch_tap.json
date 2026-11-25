@@ -1,0 +1,18 @@
+{
+ "format": "puppetxr-gesture",
+ "version": 1,
+ "name": "pinch_tap",
+ "description": "Reach to a point, pinch briefly, release, return",
+ "hands": ["right"],
+ "params": {
+  "target": { "type": "point", "default": "head + forward * 0.34 + down * 0.25 + outward * 0.06" },
+  "hold": { "type": "seconds", "default": 0.15, "min": 0, "max": 10 }
+ },
+ "steps": [
+  { "anchor": "pinch", "to": "target", "bow": 0.02, "duration": 0.6, "palm": "pinch" },
+  { "shape": "pinch", "duration": 0.12, "event": "pinch" },
+  { "wait": "hold" },
+  { "shape": "idle", "duration": 0.15, "event": "release" },
+  { "path": "home", "speed": 0.5 }
+ ]
+}

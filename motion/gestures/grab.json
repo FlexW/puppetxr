@@ -1,0 +1,20 @@
+{
+ "format": "puppetxr-gesture",
+ "version": 1,
+ "name": "grab",
+ "description": "Reach to a point with the palm, close the hand as around a ball, hold, open",
+ "hands": ["right"],
+ "params": {
+  "target": { "type": "point", "default": "head + forward * 0.23 + down * 0.29 + outward * 0.11" },
+  "hold": { "type": "seconds", "default": 0.5, "min": 0, "max": 60 }
+ },
+ "steps": [
+  { "anchor": "palm", "to": "target", "duration": 0.6, "palm": "grasp" },
+  { "shape": "open", "duration": 0.3, "with": "previous" },
+  { "shape": "grasp", "duration": 0.2, "event": "grab" },
+  { "wait": "hold" },
+  { "shape": "open", "duration": 0.2, "event": "release" },
+  { "path": "home", "duration": 0.5 },
+  { "shape": "idle", "duration": 0.3, "with": "previous" }
+ ]
+}

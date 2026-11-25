@@ -320,6 +320,11 @@ b8 os_file_exists (const char* path)
     return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+char os_path_list_separator ()
+{
+    return ';';
+}
+
 b8 os_directory_exists (const char* path)
 {
     const DWORD attributes = file_attributes(path);

@@ -1,0 +1,15 @@
+{
+ "format": "puppetxr-gesture",
+ "version": 1,
+ "name": "pinch_hold",
+ "description": "Pinch where the hand is, hold, release",
+ "hands": ["right"],
+ "params": {
+  "hold": { "type": "seconds", "default": 1.5, "min": 0, "max": 60 }
+ },
+ "steps": [
+  { "shape": "pinch", "duration": 0.15, "event": "pinch" },
+  { "wait": "hold" },
+  { "shape": "idle", "duration": 0.2, "event": "release" }
+ ]
+}

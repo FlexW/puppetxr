@@ -2593,3 +2593,103 @@ TEST_F(ApiTest, face_tracking)
     EXPECT_EQ(api.set_face(json), PUPPETXR_SUCCESS) << "what get_face saved loads back";
     EXPECT_FALSE(sim_get_face(oxr_get_sim()).blink);
 }
+
+// Gestures through the C API (docs/hand-motion.md): play a built-in or inline JSON, read its events
+TEST_F(ApiTest, gestures_play_and_report_their_events)
+{
+    start();
+    ASSERT_GE(api.version, 3u);
+    char     json[4096];
+    u32      length = 0;
+    ASSERT_EQ(api.list_gestures(json, sizeof(json), &length), PUPPETXR_SUCCESS);
+    EXPECT_NE(cstr_find(json, "\"pinch_tap\""), nullptr) << json;
+    EXPECT_EQ(api.list_gestures(json, 2, &length), PUPPETXR_ERROR_INVALID_ARGUMENT) << "too small";
+    EXPECT_GT(length, 2u);
+    ASSERT_EQ(api.get_gesture("fist", json, sizeof(json), &length), PUPPETXR_SUCCESS);
+    EXPECT_NE(cstr_find(json, "puppetxr-gesture"), nullptr);
+
+    ASSERT_EQ(api.set_hand_source(PUPPETXR_DEVICE_RIGHT_HAND, PUPPETXR_HAND_SOURCE_HAND), PUPPETXR_SUCCESS);
+    u32  id                                 = 0;
+    char error[PUPPETXR_GESTURE_ERROR_SIZE] = {};
+    ASSERT_EQ(api.play_gesture("pinch_hold", PUPPETXR_DEVICE_RIGHT_HAND, R"({"hold": 0.05})", &id, error, sizeof(error)), PUPPETXR_SUCCESS) << error;
+    EXPECT_NE(id, 0u);
+    i32                   playing = 0;
+    PUPPETXR_GestureEvent events[8] = {};
+    u32                   count     = 0;
+    for (u32 frame = 0; frame < 200; frame++)
+    {
+        this->frame();
+        ASSERT_EQ(api.get_gesture_state(id, &playing, events, 8, &count), PUPPETXR_SUCCESS);
+        if (!playing)
+        {
+            break;
+        }
+    }
+    EXPECT_EQ(playing, 0);
+    ASSERT_EQ(count, 3u);
+    EXPECT_STREQ(events[0].name, "pinch");
+    EXPECT_STREQ(events[1].name, "release");
+    EXPECT_STREQ(events[2].name, "end");
+    EXPECT_LT(events[0].frame, events[1].frame);
+
+    EXPECT_EQ(api.play_gesture(R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"to": "elsewhere", "duration": 1}]})", PUPPETXR_DEVICE_HEAD, nullptr, &id, error, sizeof(error)), PUPPETXR_ERROR_INVALID_ARGUMENT);
+    EXPECT_NE(cstr_find(error, "steps[0].to"), nullptr) << error;
+    EXPECT_EQ(api.check_gesture("{}", error, sizeof(error)), PUPPETXR_ERROR_INVALID_ARGUMENT);
+    EXPECT_NE(cstr_find(error, "format"), nullptr) << error;
+    EXPECT_EQ(api.play_gesture("fist", (PUPPETXR_Device)7, nullptr, &id, nullptr, 0), PUPPETXR_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(api.stop_gesture(), PUPPETXR_SUCCESS);
+}
+
+// puppetxrctl gesture: play with params, wait for the end with the events, errors with the path
+TEST_F(ApiControlTest, puppetxrctl_plays_gestures_and_waits_for_them)
+{
+    start();
+    char target[16];
+    cstr_format(target, sizeof(target), "%u", os_process_id());
+    char        output[16384];
+    sim_set_hand_source(oxr_get_sim(), SIM_Device::RightHand, SIM_HandSource::Hand);
+
+    const char* list[] = { "--target", target, "--json", "gesture", "list" };
+    EXPECT_EQ(run_ctl(*this, list, 5, output, sizeof(output)), 0) << output;
+    EXPECT_NE(cstr_find(output, "\"wave\""), nullptr) << output;
+
+    // Regression: the play id was sent and read as "id", which numbers requests; two plays before
+    // keep it apart from the CLI's request number
+    char error[SIM_GESTURE_ERROR] = {};
+    ASSERT_NE(sim_gesture_play(oxr_get_sim(), "fist", SIM_Device::RightHand, nullptr, error, sizeof(error)), 0u);
+    ASSERT_NE(sim_gesture_play(oxr_get_sim(), "fist", SIM_Device::RightHand, nullptr, error, sizeof(error)), 0u);
+    const char* play[] = { "--target", target, "--json", "gesture", "play", "pinch_tap", "right", "hold=0.05", "target=0.2,1.3,-0.4" };
+    EXPECT_EQ(run_ctl(*this, play, 9, output, sizeof(output)), 0) << output;
+    const char* id_at = cstr_find(output, "\"play\":");
+    ASSERT_NE(id_at, nullptr) << output;
+    char id[16] = {};
+    cstr_format(id, sizeof(id), "%u", (u32)strtoul(id_at + 7, nullptr, 10));
+
+    const char* wait[] = { "--target", target, "--json", "gesture", "wait", id };
+    EXPECT_EQ(run_ctl(*this, wait, 6, output, sizeof(output)), 0) << output;
+    EXPECT_NE(cstr_find(output, "\"playing\":false"), nullptr) << output;
+    char play_field[32];
+    cstr_format(play_field, sizeof(play_field), "\"play\":%s", id);
+    EXPECT_NE(cstr_find(output, play_field), nullptr) << "the events of the play waited for: " << output;
+    EXPECT_STREQ(id, "3");
+    EXPECT_NE(cstr_find(output, "\"name\":\"pinch\""), nullptr) << output;
+    EXPECT_NE(cstr_find(output, "\"name\":\"end\""), nullptr) << output;
+
+    char bad[OS_MAX_PATH];
+    api_path(bad, sizeof(bad), "puppetxr_api_bad_gesture.json");
+    const char* broken = "{\"format\": \"puppetxr-gesture\", \"version\": 1,\n \"steps\": [{\"to\": \"head + nowhere\", \"duration\": 1}]}";
+    ASSERT_TRUE(os_write_file(bad, broken, cstr_length(broken)));
+    const char* check[] = { "--target", target, "gesture", "check", bad };
+    EXPECT_EQ(run_ctl(*this, check, 5, output, sizeof(output)), 1) << output;
+    EXPECT_NE(cstr_find(output, "steps[0].to: unknown name nowhere"), nullptr) << output;
+
+    char good[OS_MAX_PATH];
+    api_path(good, sizeof(good), "puppetxr_api_my_fist.json");
+    const char* mine = R"({"format": "puppetxr-gesture", "version": 1, "steps": [{"shape": "fist", "duration": 0.05, "event": "closed"}]})";
+    ASSERT_TRUE(os_write_file(good, mine, cstr_length(mine)));
+    const char* load[] = { "--target", target, "gesture", "load", good };
+    EXPECT_EQ(run_ctl(*this, load, 5, output, sizeof(output)), 0) << output;
+    EXPECT_NE(sim_gesture_json(oxr_get_sim(), "puppetxr_api_my_fist"), nullptr);
+    const char* inline_play[] = { "--target", target, "--json", "gesture", "play", good };
+    EXPECT_EQ(run_ctl(*this, inline_play, 6, output, sizeof(output)), 0) << output;
+}

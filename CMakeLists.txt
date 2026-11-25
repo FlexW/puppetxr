@@ -174,7 +174,7 @@ add_custom_command(
     COMMENT "Embedding models"
     VERBATIM)
 # The hand model and gestures of motion/ (docs/hand-motion.md) too
-file(GLOB_RECURSE puppetxr_motion_files ${CMAKE_CURRENT_SOURCE_DIR}/motion/*.json)
+file(GLOB_RECURSE puppetxr_motion_files CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/motion/*.json)
 set(puppetxr_motion_source ${CMAKE_BINARY_DIR}/motion/motion_embedded.cpp)
 add_custom_command(
     OUTPUT ${puppetxr_motion_source}

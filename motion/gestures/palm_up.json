@@ -1,0 +1,15 @@
+{
+ "format": "puppetxr-gesture",
+ "version": 1,
+ "name": "palm_up",
+ "description": "Turn the palm up in front of the body, as to open a wrist menu, hold, turn back",
+ "hands": ["left"],
+ "params": {
+  "hold": { "type": "seconds", "default": 1, "min": 0, "max": 60 }
+ },
+ "steps": [
+  { "to": "head + forward * 0.26 + down * 0.38", "palm": "palm_up", "duration": 0.5, "event": "up" },
+  { "wait": "hold" },
+  { "path": "home", "duration": 0.5, "event": "down" }
+ ]
+}

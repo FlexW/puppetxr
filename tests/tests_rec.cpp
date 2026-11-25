@@ -35,6 +35,11 @@ static SIM_FrameState make_state (u32 i)
     if (state.devices[(u32)SIM_Device::RightHand].source == SIM_HandSource::Hand)
     {
         state.devices[(u32)SIM_Device::RightHand].detached = { { 0.3f, 0.7f + 0.01f * (f32)i, -0.4f }, zm::quat_from_euler({ 0.0f, 0.3f, 0.0f }) };
+        // A gesture shapes the tracked hand (format 6)
+        state.devices[(u32)SIM_Device::RightHand].shaped = true;
+        state.devices[(u32)SIM_Device::RightHand].shape  = { .curls = { 0.1f, 0.0f, 0.9f, 1.0f, 0.75f }, .pinch = 0.25f, .open = i % 2 == 1 ? 1.0f : 0.375f };
+        // toward one recorded pose at a time, as a gesture step goes, each in turn
+        state.devices[(u32)SIM_Device::RightHand].shape.recorded[(i / 7) % SIM_HAND_RECORDED_POSES] = 0.25f * (f32)(1 + i % 4);
     }
     // One QR code first, a moving keyboard joins at frame 3
     state.props_present = true;
@@ -95,6 +100,14 @@ static void expect_state_equal (const SIM_FrameState& a, const SIM_FrameState& b
         if (a.devices[d].source == SIM_HandSource::Hand)
         {
             EXPECT_TRUE(zm::equal(a.devices[d].detached, b.devices[d].detached)) << "device " << d;
+            EXPECT_EQ(a.devices[d].shaped, b.devices[d].shaped) << "device " << d;
+            if (a.devices[d].shaped)
+            {
+                EXPECT_TRUE(memory_equal(a.devices[d].shape.curls, b.devices[d].shape.curls, sizeof(a.devices[d].shape.curls))) << "device " << d;
+                EXPECT_EQ(a.devices[d].shape.pinch, b.devices[d].shape.pinch) << "device " << d;
+                EXPECT_EQ(a.devices[d].shape.open, b.devices[d].shape.open) << "device " << d;
+                EXPECT_TRUE(memory_equal(a.devices[d].shape.recorded, b.devices[d].shape.recorded, sizeof(a.devices[d].shape.recorded))) << "device " << d;
+            }
         }
         for (u32 i = 0; i < (u32)SIM_Input::Count; i++)
         {
@@ -278,7 +291,7 @@ TEST_F(RecTest, frames_are_compact)
     usize size = 0;
     ASSERT_TRUE(os_read_file(path, &data, &size));
     os_memory_release(data);
-    EXPECT_LT(size, 1000u * 205u);
+    EXPECT_LT(size, 1000u * 206u); // every 7th frame shaped by a gesture (format 6)
 }
 
 TEST_F(RecTest, header_applies_to_config)
@@ -1257,6 +1270,28 @@ TEST_F(RecTest, a_version_4_recording_replays_raycasts_against_the_mesh)
     EXPECT_EQ(depth.raycast_latency_ns, 0);
     EXPECT_EQ(depth.lower_width, 0.0f);
     EXPECT_EQ(rec_frame_count(recording), 2u);
+}
+
+// Format 6 added the shape of a tracked hand; a format 5 recording reads with every hand unshaped
+TEST_F(RecTest, a_version_5_recording_reads_with_unshaped_hands)
+{
+    char path[OS_MAX_PATH];
+    temp_path(path, sizeof(path), "puppetxr_test_version_5.xrrec");
+    u8*   data = nullptr;
+    usize size = 0;
+    ASSERT_TRUE(older_recording(path, 5, 0, data, size));
+    defer { os_memory_release(data); };
+
+    REC_Recording* recording = rec_load_from_memory(data, size);
+    ASSERT_NE(recording, nullptr);
+    defer { rec_release(recording); };
+    EXPECT_EQ(rec_header(recording).format_version, 5u);
+    ASSERT_EQ(rec_frame_count(recording), 2u);
+    u64            frame = 0;
+    u64            hash  = 0;
+    SIM_FrameState state = {};
+    ASSERT_TRUE(rec_read_frame(recording, 1, frame, hash, state));
+    EXPECT_FALSE(state.devices[(u32)SIM_Device::RightHand].shaped);
 }
 
 // A header naming a sensor outside the ranges the config allows is corrupt

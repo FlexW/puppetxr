@@ -23,7 +23,8 @@ Agents working on this repository: read `AGENTS.md`.
 - **Reproducible bugs.** Record a session, replay it bit-identically, attach the recording to
   the bug report.
 - **Agent ready.** `puppetxrctl` drives a running simulator from the command line: poses, inputs,
-  pause and step, screenshots, recordings. Headless mode runs in CI.
+  pause and step, screenshots, recordings, and hand gestures fitted to real hands on a Quest 3
+  (`puppetxrctl gesture play pinch_tap`; users add their own as JSON). Headless mode runs in CI.
 - **Robust.** Every `xr*` call validates its input and returns an error instead of crashing.
 
 ## Features

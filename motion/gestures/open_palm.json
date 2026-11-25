@@ -1,0 +1,8 @@
+{
+ "format": "puppetxr-gesture",
+ "version": 1,
+ "name": "open_palm",
+ "description": "Open the hand, fingers up, palm forward, and keep it",
+ "hands": ["right"],
+ "steps": [ { "palm": "forward", "shape": "open", "duration": 0.3, "hold": true, "event": "open" } ]
+}
