@@ -1114,6 +1114,11 @@ static void writer_put (REC_Writer* writer, const u8* data, usize size)
     {
         writer_flush(writer);
     }
+    if (size > REC_WRITE_BUFFER)
+    {
+        writer->failed = !os_file_write(writer->file, data, size) || writer->failed;
+        return;
+    }
     memory_copy(writer->buffer + writer->used, data, size);
     writer->used += size;
 }

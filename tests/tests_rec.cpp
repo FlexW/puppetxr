@@ -1021,6 +1021,36 @@ static SIM_Model test_model (const char* name, const u8* data, usize size)
     return model;
 }
 
+// Regression: a chunk longer than the writer's 64 KB buffer was copied past its end
+TEST_F(RecTest, a_model_longer_than_the_write_buffer_round_trips)
+{
+    char path[OS_MAX_PATH];
+    temp_path(path, sizeof(path), "puppetxr_test_large_model.xrrec");
+    Array<u8> large = {};
+    defer { large.release(); };
+    large.resize((usize)300 * 1024);
+    for (usize i = 0; i < large.length; i++)
+    {
+        large[i] = (u8)(i * 31 + (i >> 8));
+    }
+    REC_Writer* writer = rec_writer_create(path, make_header());
+    ASSERT_NE(writer, nullptr);
+    ASSERT_TRUE(rec_writer_append(writer, 0, 0, make_state(0)));
+    ASSERT_TRUE(rec_writer_append_model(writer, 1, test_model("large", large.data, large.length)));
+    ASSERT_TRUE(rec_writer_append(writer, 1, 1, make_state(1)));
+    ASSERT_TRUE(rec_writer_close(writer));
+
+    REC_Recording* recording = rec_load(path);
+    ASSERT_NE(recording, nullptr);
+    defer { rec_release(recording); };
+    EXPECT_TRUE(rec_is_complete(recording));
+    EXPECT_EQ(rec_frame_count(recording), 2u);
+    REC_Model model = {};
+    ASSERT_TRUE(rec_read_model(recording, 0, model));
+    ASSERT_EQ(model.size, large.length);
+    EXPECT_TRUE(memory_equal(model.data, large.data, large.length));
+}
+
 // A mesh prop names its model; the model's bytes come before the first frame that shows it, and
 // again only when they change
 TEST_F(RecTest, mesh_props_and_their_models_round_trip)
