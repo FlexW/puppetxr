@@ -5636,6 +5636,67 @@ TEST(SimGesture, users_gestures_load_from_their_directories)
     EXPECT_NE(std::string(sim_gesture_json(sim, "pinch_tap")).find("mine"), std::string::npos) << "the user's replaces the built-in";
 }
 
+// A pose made in the UI becomes a gesture: valid, of the shape it was made from, kept for the next
+// start in gestures.dir; the built-ins are not replaced by accident
+TEST(SimGesture, a_shape_is_saved_as_a_gesture_and_loaded_at_the_next_start)
+{
+    char dir[OS_MAX_PATH];
+    (void)cstr_format(dir, sizeof(dir), "%s/sim_gestures_saved_%u", PUPPETXR_TEST_OUTPUT_DIR, os_process_id());
+    os_delete_tree(dir);
+    defer { os_delete_tree(dir); };
+    SIM_Config config = {};
+    sim_default_config(config);
+    char json[2 * OS_MAX_PATH];
+    (void)cstr_format(json, sizeof(json), R"({ "gestures": { "dir": "%s" } })", dir);
+    ASSERT_TRUE(sim_parse_config(config, json));
+    config.clock_mode = SIM_ClockMode::FixedStep;
+
+    SIM_HandCurls shape  = { .curls = { 0.25f, 0.0f, 1.0f, 0.5f, 0.125f }, .pinch = 0.5f, .open = 1.0f };
+    shape.recorded[2]    = 0.75f;
+    char gesture[1024]   = {};
+    char error[SIM_GESTURE_ERROR] = {};
+    ASSERT_TRUE(sim_gesture_from_shape(shape, gesture, sizeof(gesture)));
+    EXPECT_TRUE(sim_gesture_check(gesture, error, sizeof(error))) << error;
+    char small[16] = {};
+    EXPECT_FALSE(sim_gesture_from_shape(shape, small, sizeof(small))) << "does not fit";
+    {
+        SIM_Sim* sim = sim_create(config);
+        defer { sim_destroy(sim); };
+        EXPECT_FALSE(sim_gesture_save(sim, "wave", gesture, error, sizeof(error))) << "a built-in's name";
+        EXPECT_NE(std::string(error).find("built-in"), std::string::npos) << error;
+        EXPECT_FALSE(sim_gesture_save(sim, "../escape", gesture, error, sizeof(error)));
+        EXPECT_FALSE(sim_gesture_save(sim, "bad", "{", error, sizeof(error)));
+        ASSERT_TRUE(sim_gesture_save(sim, "my_pose", gesture, error, sizeof(error))) << error;
+        EXPECT_NE(sim_gesture_json(sim, "my_pose"), nullptr);
+    }
+    SIM_Sim* sim = sim_create(config);
+    defer { sim_destroy(sim); };
+    ASSERT_NE(sim_gesture_json(sim, "my_pose"), nullptr) << "loaded at the next start";
+    sim_set_hand_source(sim, SIM_Device::LeftHand, SIM_HandSource::Hand);
+    ASSERT_NE(sim_gesture_play(sim, "my_pose", SIM_Device::LeftHand, nullptr, error, sizeof(error)), 0u) << error;
+    EXPECT_TRUE(sim_gesture_uses(sim, SIM_Device::LeftHand));
+    EXPECT_FALSE(sim_gesture_uses(sim, SIM_Device::RightHand));
+    for (u32 i = 0; i < 90; i++)
+    {
+        step(sim);
+    }
+    EXPECT_FALSE(sim_gesture_uses(sim, SIM_Device::LeftHand)) << "it ended";
+    SIM_HandCurls reached = {};
+    ASSERT_TRUE(sim_get_hand_shape(sim, SIM_Device::LeftHand, reached)) << "held";
+    for (u32 f = 0; f < 5; f++)
+    {
+        EXPECT_NEAR(reached.curls[f], shape.curls[f], 1e-3f) << f;
+    }
+    EXPECT_NEAR(reached.pinch, 0.5f, 1e-3f);
+    EXPECT_NEAR(reached.open, 1.0f, 1e-3f);
+    EXPECT_NEAR(reached.recorded[2], 0.75f, 1e-3f);
+
+    sim_default_config(config);
+    SIM_Sim* without = sim_create(config);
+    defer { sim_destroy(without); };
+    EXPECT_FALSE(sim_gesture_save(without, "my_pose", gesture, error, sizeof(error))) << "no directory to keep it in";
+}
+
 TEST(SimGesture, a_file_loads_at_runtime_and_errors_name_it)
 {
     SIM_Sim* sim = make_sim();

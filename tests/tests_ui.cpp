@@ -964,6 +964,72 @@ TEST_P(UiTest, face_tab_sets_expression_blinks_and_gaze)
     EXPECT_EQ(sim_get_face(sim).weights[(u32)SIM_FaceExpression::JawDrop], 0.0f);
 }
 
+// The Gestures tab plays a gesture on the chosen hand and stops it, poses the fingers with sliders
+// and keeps the pose as a gesture
+TEST_P(UiTest, gestures_tab_plays_poses_and_saves)
+{
+    sim_destroy(sim);
+    char dir[OS_MAX_PATH];
+    // Of its own: the backends' tests run side by side
+    cstr_format(dir, sizeof(dir), "%s/ui_gestures_%u", PUPPETXR_TEST_OUTPUT_DIR, os_process_id());
+    os_delete_tree(dir);
+    defer { os_delete_tree(dir); };
+    SIM_Config config = {};
+    sim_default_config(config);
+    config.clock_mode = SIM_ClockMode::FixedStep;
+    cstr_copy(config.gestures_dir, sizeof(config.gestures_dir), dir);
+    sim = sim_create(config);
+
+    UiClicker clicker(*this, 1280, 1400);
+    clicker.frame();
+    clicker.frame();
+    ASSERT_TRUE(clicker.click("Gestures"));
+    ASSERT_TRUE(clicker.click("gesture"));
+    ASSERT_TRUE(clicker.click("fist"));
+    ASSERT_TRUE(clicker.click("play"));
+    EXPECT_NE(sim_gesture_playing(sim), 0u);
+    EXPECT_TRUE(sim_gesture_uses(sim, SIM_Device::RightHand));
+    EXPECT_EQ(sim_get_hand_source(sim, SIM_Device::RightHand), SIM_HandSource::Hand) << "a controller has no fingers";
+    EXPECT_EQ(sim_get_hand_source(sim, SIM_Device::LeftHand), SIM_HandSource::Controller);
+    ASSERT_TRUE(clicker.click("stop"));
+    EXPECT_EQ(sim_gesture_playing(sim), 0u);
+
+    ASSERT_TRUE(clicker.click("hand"));
+    ASSERT_TRUE(clicker.click("left"));
+    ASSERT_TRUE(clicker.click("pose the hand"));
+    EXPECT_EQ(sim_get_hand_source(sim, SIM_Device::LeftHand), SIM_HandSource::Hand);
+    SIM_HandCurls shape = {};
+    ASSERT_TRUE(sim_get_hand_shape(sim, SIM_Device::LeftHand, shape));
+    ASSERT_TRUE(clicker.click("start from"));
+    ASSERT_TRUE(clicker.click("thumbs_up"));
+    ASSERT_TRUE(sim_get_hand_shape(sim, SIM_Device::LeftHand, shape));
+    EXPECT_EQ(shape.recorded[0], 1.0f);
+    ASSERT_TRUE(clicker.click("start from"));
+    ASSERT_TRUE(clicker.click("idle"));
+    EXPECT_TRUE(clicker.hold("ring", 0.999f, [] () {}));
+    ASSERT_TRUE(sim_get_hand_shape(sim, SIM_Device::LeftHand, shape));
+    EXPECT_FLOAT_EQ(shape.curls[3], 1.0f);
+    EXPECT_EQ(shape.recorded[0], 0.0f);
+    if (os_env("PUPPETXR_TEST_DUMP_DIR"))
+    {
+        const usize bytes  = (usize)1280 * 1400 * 4;
+        u8*         pixels = (u8*)os_memory_alloc(bytes);
+        defer { os_memory_release(pixels); };
+        ASSERT_TRUE(r_read_image(device, clicker.target, 0, R_ImageLayout::Present, pixels, bytes));
+        char path[OS_MAX_PATH];
+        cstr_format(path, sizeof(path), "%s/ui_gestures_1280x1400.bgra", os_env("PUPPETXR_TEST_DUMP_DIR"));
+        os_write_file(path, pixels, bytes);
+    }
+    ASSERT_TRUE(clicker.click("save as gesture"));
+    ASSERT_NE(sim_gesture_json(sim, "my_gesture"), nullptr) << "saved under the name the field starts with";
+    char path[OS_MAX_PATH];
+    cstr_format(path, sizeof(path), "%s/my_gesture.json", dir);
+    EXPECT_TRUE(os_file_exists(path));
+
+    ASSERT_TRUE(clicker.click("pose the hand"));
+    EXPECT_FALSE(sim_get_hand_shape(sim, SIM_Device::LeftHand, shape)) << "the hand follows its inputs again";
+}
+
 // Regression: the Simulator panel's hint named Tab whatever key controls.ui was
 TEST_P(UiTest, simulator_panel_names_the_configured_panel_key)
 {

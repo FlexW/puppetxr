@@ -108,6 +108,7 @@ unknown keys are ignored with a warning only for bad values.
 | `screenshot_at_frame` | write `<screenshot_dir>/puppetxr_frame_<n>.png` at native eye resolution when that frame is composited, 0 never |
 | `screenshot_dir` | directory of screenshots and recordings started from the window, created when missing; empty is the working directory |
 | `exit_at_frame` | request session exit at that frame, for CI runs of apps, 0 never |
+| `gestures.dir` | where the UI keeps saved gestures, loaded at the start (`docs/hand-motion.md`, Gestures tab); empty means `os_state_dir()/gestures` |
 | `gestures.paths` | up to 8 gesture files or directories of `.json` gestures loaded after the built-ins, a file of a built-in's name replacing it (`docs/hand-motion.md`, Loading); `PUPPETXR_GESTURE_PATH` adds more, `:` apart (`;` on Windows) |
 | `room` | the simulated room (`docs/world.md`): a directory name in the rooms dir (default `living_room`, so apps that need a room such as Meta's MRUK samples find one), or `none`. A room that is not found logs an error and runs without one. Also selectable in the UI and the control API, fixed while recording or replaying; a replay uses the recording's room |
 | `control` | `{ "enabled": false, "port": 0, "address": "127.0.0.1", "paused": false }`: the control server for `puppetxrctl` (`docs/control-cli.md`); port 0 picks a free one, any address but 127.0.0.1 exposes the simulator to that network |

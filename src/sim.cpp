@@ -3239,6 +3239,7 @@ b8 sim_parse_config (SIM_Config& config, const char* json)
     read_device(devices, "right", config.devices[(u32)SIM_Device::RightHand]);
 
     const JsonValue gestures = json_find(root, "gestures");
+    json_find_string(gestures, "dir", config.gestures_dir, nullptr, sizeof(config.gestures_dir), config.gestures_dir);
     const JsonValue paths    = json_find(gestures, "paths");
     for (u32 i = 0; i < json_length(paths) && config.gesture_paths_count < SIM_MAX_GESTURE_PATHS; i++)
     {
@@ -5296,6 +5297,15 @@ SIM_Sim* sim_create (const SIM_Config& config)
         if (name && cstr_starts_with(name, "gestures/") && !sim_gesture_load(sim, name + 9, sim_embedded_motion[i].json, error, sizeof(error)))
         {
             FAIL_MSG("built-in gesture %s is invalid: %s", name, error);
+        }
+    }
+    if (config.gestures_dir[0] && os_directory_exists(config.gestures_dir))
+    {
+        char error[SIM_GESTURE_ERROR] = {};
+        sim_gesture_load_path(sim, config.gestures_dir, error, sizeof(error));
+        if (error[0])
+        {
+            LOG_WARNING("Gestures: %s", error);
         }
     }
     for (u32 i = 0; i < config.gesture_paths_count; i++)
@@ -8682,6 +8692,79 @@ u32 sim_gesture_playing (const SIM_Sim* sim)
 {
     ASSERT(sim);
     return sim->gesture.active ? sim->gesture.id : 0;
+}
+
+b8 sim_gesture_uses (const SIM_Sim* sim, SIM_Device hand)
+{
+    ASSERT(sim);
+    return is_hand(hand) && sim->gesture.active && sim->gesture.uses[hand == SIM_Device::LeftHand ? 0 : 1];
+}
+
+const char* sim_hand_recorded_name (u32 index)
+{
+    return index < SIM_HAND_RECORDED_POSES ? sim_hand_keys[(u32)SIM_HandKey::Recorded + index] : "";
+}
+
+b8 sim_gesture_from_shape (const SIM_HandCurls& shape, char* out_json, u32 size)
+{
+    if (!out_json || size == 0)
+    {
+        return false;
+    }
+    char        weights[SIM_HAND_RECORDED_POSES * (SIM_GESTURE_NAME + 16)] = {};
+    usize       length                                                    = 0;
+    for (u32 r = 0; r < SIM_HAND_RECORDED_POSES; r++)
+    {
+        if (shape.recorded[r] > 0.0f)
+        {
+            length += cstr_format(weights + length, sizeof(weights) - length, ", \"%s\": %.3f", sim_hand_recorded_name(r), (f64)zm::min(shape.recorded[r], 1.0f));
+        }
+    }
+    f32 curls[5] = {};
+    for (u32 f = 0; f < 5; f++)
+    {
+        curls[f] = zm::clamp(shape.curls[f], 0.0f, 1.0f);
+    }
+    const usize total = cstr_format(out_json, size, "{\n \"format\": \"puppetxr-gesture\",\n \"version\": 1,\n \"hands\": [\"right\"],\n \"steps\": [ { \"shape\": { \"curls\": [%.3f, %.3f, %.3f, %.3f, %.3f], \"pinch\": %.3f, \"base\": \"%s\"%s }, \"duration\": 0.3, \"hold\": true, \"event\": \"pose\" } ]\n}\n",
+        (f64)curls[0], (f64)curls[1], (f64)curls[2], (f64)curls[3], (f64)curls[4], (f64)zm::clamp(shape.pinch, 0.0f, 1.0f), shape.open >= 0.5f ? "open" : "relaxed", weights);
+    return total > 0 && total < size - 1;
+}
+
+b8 sim_gesture_save (SIM_Sim* sim, const char* name, const char* json, char* error, u32 error_size)
+{
+    ASSERT(sim);
+    const SIM_Config& config = sim->config;
+    if (!gesture_name_valid(name))
+    {
+        (void)cstr_format(error, error_size, "name: needs 1 to 63 of [a-z0-9_-]");
+        return false;
+    }
+    for (u32 i = 0; i < sim_embedded_motion_count; i++)
+    {
+        const char* embedded = sim_embedded_motion[i].name;
+        if (embedded && cstr_starts_with(embedded, "gestures/") && cstr_equal(embedded + 9, name))
+        {
+            (void)cstr_format(error, error_size, "name: %s is a built-in gesture", name);
+            return false;
+        }
+    }
+    if (!config.gestures_dir[0])
+    {
+        (void)cstr_format(error, error_size, "gestures.dir: no directory to keep gestures in");
+        return false;
+    }
+    char path[OS_MAX_PATH] = {};
+    (void)cstr_format(path, sizeof(path), "%s/%s.json", config.gestures_dir, name);
+    if (!sim_gesture_load(sim, name, json, error, error_size))
+    {
+        return false;
+    }
+    if (!os_create_directories(config.gestures_dir) || !os_write_file_atomic(path, json, cstr_length(json)))
+    {
+        (void)cstr_format(error, error_size, "%s: cannot write it", path);
+        return false;
+    }
+    return true;
 }
 
 u32 sim_gesture_events (const SIM_Sim* sim, u32 play, SIM_GestureEvent* out_events, u32 capacity)

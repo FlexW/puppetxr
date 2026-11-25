@@ -24,7 +24,8 @@ Agents working on this repository: read `AGENTS.md`.
   the bug report.
 - **Agent ready.** `puppetxrctl` drives a running simulator from the command line: poses, inputs,
   pause and step, screenshots, recordings, and hand gestures fitted to real hands on a Quest 3
-  (`puppetxrctl gesture play pinch_tap`; users add their own as JSON). Headless mode runs in CI.
+  (`puppetxrctl gesture play pinch_tap`; users add their own as JSON or pose
+  them in the Gestures tab). Headless mode runs in CI.
 - **Robust.** Every `xr*` call validates its input and returns an error instead of crashing.
 
 ## Features

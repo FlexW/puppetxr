@@ -316,7 +316,19 @@ The server's requests are `load_gesture`, `check_gesture`, `list_gestures`, `get
 `get_gesture_state` and `wait_gesture` (`play`: the play id; `id` numbers requests), which replies once the play ended; replies give the play id as `play`. A failing request's
 `message` carries the checker's error. While a gesture plays a hand, the keys cannot move it. Not
 yet: observed edges in the events (a pinch strength crossing 0.5 up and down, tracking lost and
-found), a UI Gestures panel, a `tools/` script sweeping seeds once noise exists.
+found), a `tools/` script sweeping seeds once noise exists.
+
+### Gestures tab
+
+The Simulator panel's Gestures tab (`gestures_tab`, `src/ui.cpp`,
+`UiTest.gestures_tab_plays_poses_and_saves`): the hand, a gesture with its description and params
+(a JSON object), play and stop, the last events or the checker's error. Playing switches the hands
+the gesture uses to hand tracking (`sim_gesture_uses`). "pose the hand" holds the chosen hand in a
+shape (`sim_set_hand_shape`) made from a preset or a recorded pose, a slider per finger, the pinch,
+the open base and the recorded poses' weights. "save as gesture" turns it into a gesture of one step
+that takes the shape and keeps it (`sim_gesture_from_shape`), loads it and writes it to
+`gestures.dir` (`sim_gesture_save`), which loads at every start after the built-ins and before
+`gestures.paths`. A built-in's name is refused.
 
 ## Tests
 

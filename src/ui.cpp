@@ -29,6 +29,7 @@
 #define UI_WELCOME_KEY_WIDTH 150.0f
 #define UI_MAX_PROBE_ITEMS   1024
 #define UI_CLIPBOARD_SIZE    16384
+#define UI_MAX_GESTURES      128 // listed
 
 namespace
 {
@@ -116,6 +117,14 @@ struct UI_Context
     i32                body_pose = {};                        // the preset last chosen
     u32                body_joint = {};                       // the joint being edited
     i32                face_preset = {};                      // the face preset last chosen
+    i32                gesture_hand = {};                     // 0 left, 1 right; right from ui_create
+    char               gesture[SIM_GESTURE_NAME] = {};        // the gesture chosen, by name as files come and go
+    char               gesture_params[256] = {};              // JSON object, empty for the defaults
+    u32                gesture_play = {};                     // the play last started here
+    char               gesture_error[SIM_GESTURE_ERROR] = {};
+    char               pose_name[SIM_GESTURE_NAME] = {};
+    char               pose_message[SIM_GESTURE_ERROR] = {};
+    b8                 pose_failed = {};
     u32                toast_profile = UINT32_MAX;            // the profile the toast last named
     f64                toast_until = {};                      // ImGui time
     f32                welcome_height = {};                   // of the overlay's content last frame, to center it
@@ -1854,6 +1863,221 @@ static void performance_tab (const UI_Context* ui, const SIM_Config& config)
     }
 }
 
+// What a gesture does, as its file says
+static void gesture_description (const SIM_Sim* sim, const char* name)
+{
+    const char* json = sim_gesture_json(sim, name);
+    JsonParser* parser = json ? json_parse_from_string(json) : nullptr;
+    if (!parser)
+    {
+        return;
+    }
+    defer { json_release(parser); };
+    const JsonValue root = json_get_root(parser);
+    char            text[256] = {};
+    if (json_find_string(root, "description", text, nullptr, sizeof(text)))
+    {
+        ImGui::TextWrapped("%s", text);
+    }
+    const JsonValue params = json_find(root, "params");
+    if (json_is_object(params) && json_length(params) > 0)
+    {
+        char  names[256] = {};
+        usize length     = 0;
+        for (const JsonMember member : json_members(params))
+        {
+            char key[SIM_GESTURE_NAME] = {};
+            (void)json_as_string(member.key, key, nullptr, sizeof(key));
+            length += cstr_format(names + length, sizeof(names) - length, "%s%s", length ? ", " : "", key);
+            length  = zm::min(length, sizeof(names) - 1);
+        }
+        ImGui::TextDisabled("params: %s", names);
+    }
+}
+
+static void play_gesture (UI_Context* ui, SIM_Sim* sim, SIM_Device hand)
+{
+    ui->gesture_error[0] = 0;
+    const u32 play = sim_gesture_play(sim, ui->gesture, hand, ui->gesture_params[0] ? ui->gesture_params : nullptr, ui->gesture_error, sizeof(ui->gesture_error));
+    if (play == 0)
+    {
+        return;
+    }
+    ui->gesture_play = play;
+    // A controller has no fingers to shape
+    const SIM_Device devices[] = { SIM_Device::LeftHand, SIM_Device::RightHand };
+    for (const SIM_Device device : devices)
+    {
+        if (sim_gesture_uses(sim, device))
+        {
+            sim_set_hand_source(sim, device, SIM_HandSource::Hand);
+        }
+    }
+}
+
+static void pose_section (UI_Context* ui, SIM_Sim* sim, SIM_Device hand)
+{
+    ImGui::SeparatorText("Hand pose");
+    const b8      busy  = sim_gesture_uses(sim, hand);
+    SIM_HandCurls shape = {};
+    b8            posed = sim_get_hand_shape(sim, hand, shape);
+    ImGui::BeginDisabled(busy);
+    if (ImGui::Checkbox("pose the hand", &posed))
+    {
+        if (posed)
+        {
+            sim_set_hand_source(sim, hand, SIM_HandSource::Hand);
+        }
+        sim_set_hand_shape(sim, hand, posed ? &shape : nullptr);
+    }
+    why_disabled(busy, "a gesture shapes this hand");
+    if (!posed)
+    {
+        ImGui::EndDisabled();
+        return;
+    }
+
+    b8 changed = false;
+    const char* starts[4 + SIM_HAND_RECORDED_POSES] = { "idle", "open", "fist", "pinch" };
+    for (u32 r = 0; r < SIM_HAND_RECORDED_POSES; r++)
+    {
+        starts[4 + r] = sim_hand_recorded_name(r);
+    }
+    i32 start = -1;
+    if (combo("start from", &start, starts, (i32)ARRAY_SIZE(starts)))
+    {
+        shape = {};
+        switch (start)
+        {
+        case 0:
+            break;
+        case 1:
+            shape.open = 1.0f;
+            break;
+        case 2:
+            for (f32& curl : shape.curls)
+            {
+                curl = 1.0f;
+            }
+            break;
+        case 3:
+            shape.pinch = 1.0f;
+            break;
+        default:
+            shape.recorded[start - 4] = 1.0f;
+            break;
+        }
+        changed = true;
+    }
+    static const char* const fingers[5] = { "thumb", "index", "middle", "ring", "little" };
+    for (u32 f = 0; f < 5; f++)
+    {
+        changed |= ImGui::SliderFloat(fingers[f], &shape.curls[f], 0.0f, 1.0f);
+    }
+    changed |= ImGui::SliderFloat("pinched", &shape.pinch, 0.0f, 1.0f);
+    b8 open = shape.open >= 0.5f;
+    if (ImGui::Checkbox("open hand", &open))
+    {
+        shape.open = open ? 1.0f : 0.0f;
+        changed    = true;
+    }
+    if (ImGui::TreeNode("recorded poses"))
+    {
+        for (u32 r = 0; r < SIM_HAND_RECORDED_POSES; r++)
+        {
+            char label[SIM_GESTURE_NAME + 4];
+            cstr_format(label, sizeof(label), "to %s", sim_hand_recorded_name(r));
+            changed |= ImGui::SliderFloat(label, &shape.recorded[r], 0.0f, 1.0f);
+        }
+        ImGui::TreePop();
+    }
+    if (changed)
+    {
+        sim_set_hand_shape(sim, hand, &shape);
+    }
+
+    ImGui::InputText("name", ui->pose_name, sizeof(ui->pose_name));
+    if (ImGui::Button(sim_gesture_json(sim, ui->pose_name) ? "replace gesture###save as gesture" : "save as gesture###save as gesture"))
+    {
+        char json[1024] = {};
+        ui->pose_failed = !sim_gesture_from_shape(shape, json, sizeof(json)) || !sim_gesture_save(sim, ui->pose_name, json, ui->pose_message, sizeof(ui->pose_message));
+        if (!ui->pose_failed)
+        {
+            cstr_format(ui->pose_message, sizeof(ui->pose_message), "saved %s", ui->pose_name);
+            cstr_copy(ui->gesture, sizeof(ui->gesture), ui->pose_name);
+        }
+    }
+    if (ui->pose_message[0])
+    {
+        ImGui::PushStyleColor(ImGuiCol_Text, ui->pose_failed ? UI_ERROR : UI_MUTED);
+        ImGui::TextWrapped("%s", ui->pose_message);
+        ImGui::PopStyleColor();
+    }
+    ImGui::EndDisabled();
+}
+
+static void gestures_tab (UI_Context* ui, SIM_Sim* sim)
+{
+    ImGui::BeginDisabled(ui->status.replaying);
+    static const char* const hands[2] = { "left", "right" };
+    combo("hand", &ui->gesture_hand, hands, 2);
+    why_disabled(ui->status.replaying, "the replay drives the devices");
+    const SIM_Device hand = ui->gesture_hand == 0 ? SIM_Device::LeftHand : SIM_Device::RightHand;
+
+    const char* names[UI_MAX_GESTURES] = {};
+    const i32   count                  = (i32)zm::min(sim_gesture_count(sim), (u32)UI_MAX_GESTURES);
+    i32         chosen                 = -1;
+    for (i32 i = 0; i < count; i++)
+    {
+        names[i] = sim_gesture_name(sim, (u32)i);
+        chosen   = cstr_equal(names[i], ui->gesture) ? i : chosen;
+    }
+    if (combo("gesture", &chosen, names, count))
+    {
+        cstr_copy(ui->gesture, sizeof(ui->gesture), names[chosen]);
+        ui->gesture_params[0] = 0;
+        ui->gesture_error[0]  = 0;
+    }
+    if (chosen >= 0)
+    {
+        gesture_description(sim, ui->gesture);
+        ImGui::InputTextWithHint("params", "{\"distance\": 0.4}", ui->gesture_params, sizeof(ui->gesture_params));
+    }
+    ImGui::BeginDisabled(chosen < 0);
+    if (ImGui::Button("play"))
+    {
+        play_gesture(ui, sim, hand);
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    const b8 playing = sim_gesture_playing(sim) != 0;
+    ImGui::BeginDisabled(!playing);
+    if (ImGui::Button("stop"))
+    {
+        sim_gesture_stop(sim);
+    }
+    ImGui::EndDisabled();
+    if (playing)
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled("playing");
+    }
+    if (ui->gesture_error[0])
+    {
+        ImGui::PushStyleColor(ImGuiCol_Text, UI_ERROR);
+        ImGui::TextWrapped("%s", ui->gesture_error);
+        ImGui::PopStyleColor();
+    }
+    SIM_GestureEvent events[SIM_MAX_GESTURE_EVENTS];
+    const u32        events_count = zm::min(sim_gesture_events(sim, ui->gesture_play, events, SIM_MAX_GESTURE_EVENTS), (u32)SIM_MAX_GESTURE_EVENTS);
+    for (u32 i = events_count > 4 ? events_count - 4 : 0; ui->gesture_play != 0 && i < events_count; i++)
+    {
+        ImGui::TextDisabled("%s at frame %llu", events[i].name, (unsigned long long)events[i].frame);
+    }
+    pose_section(ui, sim, hand);
+    ImGui::EndDisabled();
+}
+
 static void simulator_panel (UI_Context* ui, SIM_Sim* sim, UI_Requests& requests, SIM_MirrorView& mirror_view, const SIM_Config& config)
 {
     if (!begin_panel(ui, "Simulator", UI_Anchor::Left))
@@ -1871,6 +2095,11 @@ static void simulator_panel (UI_Context* ui, SIM_Sim* sim, UI_Requests& requests
         if (ImGui::BeginTabItem("Performance"))
         {
             performance_tab(ui, config);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Gestures"))
+        {
+            gestures_tab(ui, sim);
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -2329,6 +2558,8 @@ UI_Context* ui_create (const UI_CreateInfo& info)
     ui->target_format  = info.target_format;
     ui->show_simulator = true;
     ui->body_link      = true;
+    ui->gesture_hand   = 1;
+    cstr_copy(ui->pose_name, sizeof(ui->pose_name), "my_gesture");
     ui->body_joint     = (u32)SIM_BodyJoint::Neck;
     ui->show_devices   = true;
     ui->show_log       = true;

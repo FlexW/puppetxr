@@ -4889,6 +4889,11 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrCreateInstance (const XrInstanceCrea
     cstr_copy(inst->application_name, sizeof(inst->application_name), info->applicationInfo.applicationName);
     open_anchor_store_locked(rt, config, inst->application_name);
 
+    char state_dir[OS_MAX_PATH] = {};
+    if (!config.gestures_dir[0] && os_state_dir(state_dir, sizeof(state_dir)))
+    {
+        cstr_format(config.gestures_dir, sizeof(config.gestures_dir), "%s/gestures", state_dir);
+    }
     config.load_model          = load_model_for_sim;
     rt->sim                    = sim_create(config);
     // Time conversions anchor here, so the clock's first frame counts from here too

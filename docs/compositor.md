@@ -539,7 +539,7 @@ one steel-blue accent at three brightnesses (`UI_ACCENT*`), 4 px rounding on win
 (`begin_panel`/`end_panel`), each auto-fits its height up to the window bottom and
 cannot be moved or resized:
 
-- Simulator (left): collapsing sections Session (frame and time, profile,
+- Simulator (left), tabs Simulator, Performance and Gestures (`docs/hand-motion.md`, Gestures tab): collapsing sections Session (frame and time, profile,
   keyboard and mouse on/off, clock, reset, reset hands, recenter), Display (mirror view,
   screenshot, eye size and rate), Recording (record, frame count and path, replay
   progress and divergences), Controllers (type) and Room (room, stage origin, anchor

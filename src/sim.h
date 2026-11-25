@@ -946,6 +946,7 @@ struct SIM_Config
     char             room[SIM_MAX_NAME];     // empty means no room
     char             gesture_paths[SIM_MAX_GESTURE_PATHS][OS_MAX_PATH]; // users' gesture files or directories (docs/hand-motion.md, Loading)
     u32              gesture_paths_count;
+    char             gestures_dir[OS_MAX_PATH]; // where saved gestures are kept, loaded at the start; empty for none (oxr: os_state_dir()/gestures)
     b8               room_explicit;          // set by the config file or the environment, so the remembered room does not apply
     char             rooms_dir[OS_MAX_PATH]; // empty means the built-in rooms
 
@@ -1088,6 +1089,10 @@ u32               sim_gesture_play           (SIM_Sim* sim, const char* name, SI
 u32               sim_gesture_play_json      (SIM_Sim* sim, const char* json, SIM_Device hand, const char* params_json, char* error, u32 error_size); // a gesture not kept
 void              sim_gesture_stop           (SIM_Sim* sim); // the hands stay where they are and go back to their inputs
 u32               sim_gesture_playing        (const SIM_Sim* sim); // the id of the gesture playing, else 0
+b8                sim_gesture_uses           (const SIM_Sim* sim, SIM_Device hand); // the gesture playing moves or shapes this hand
+b8                sim_gesture_from_shape     (const SIM_HandCurls& shape, char* out_json, u32 size); // one step that takes the shape and keeps it
+b8                sim_gesture_save           (SIM_Sim* sim, const char* name, const char* json, char* error, u32 error_size); // loaded and written to config.gestures_dir; not under a built-in's name
+const char*       sim_hand_recorded_name     (u32 index); // of SIM_HandCurls::recorded
 u32               sim_gesture_events         (const SIM_Sim* sim, u32 play, SIM_GestureEvent* out_events, u32 capacity); // of the last SIM_MAX_GESTURE_EVENTS; returns the count
 void              sim_set_hand_source        (SIM_Sim* sim, SIM_Device hand, SIM_HandSource source); // zeroes inputs the source lacks
 const char*       sim_hand_source_name       (SIM_HandSource source); // "controller", "hand"; stable, used by recordings
