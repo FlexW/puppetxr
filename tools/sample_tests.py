@@ -2230,11 +2230,13 @@ class App:
             self.job = kill_children_at_end(self.proc)
             self.deadline = time.time() + test.get("timeout", opts.timeout)
             started = min(self.deadline, time.time() + START_SECONDS)
-            while not discovered(self.proc.pid, test.get("instance")):
-                if self.proc.poll() is not None or time.time() > started:
-                    break
+            # Decided by the loop alone: Unreal destroys its first instance and its discovery file
+            # with it, so a second look may find none of an app that is fine
+            found = discovered(self.proc.pid, test.get("instance"))
+            while not found and self.proc.poll() is None and time.time() <= started:
                 time.sleep(0.05)
-            if self.proc.poll() is None and not discovered(self.proc.pid, test.get("instance")):
+                found = discovered(self.proc.pid, test.get("instance"))
+            if self.proc.poll() is None and not found:
                 save_stacks(self.proc.pid, os.path.join(out, f"{prefix}start_stacks.txt"))
                 self.problems.append(f"{prefix}no simulator within {START_SECONDS} s (thread stacks in start_stacks.txt when cdb is installed)")
                 self.proc.kill()
