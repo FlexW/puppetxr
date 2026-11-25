@@ -5,11 +5,11 @@ headset and two controllers driven by keyboard and mouse, with the app's frames 
 window or offscreen. No headset, no service, no daemon.
 
 ![The mirror window: both eyes of Meta's XrPassthroughOcclusion sample in the simulated living
-room, its cubes hidden behind the TV stand, with the simulator and device panels](docs/images/ui-passthrough.png)
+room, its cubes in front of the TV, with the simulator and device panels](docs/images/ui-passthrough.png)
 
-| Tracked hands pinching, driven by `puppetxrctl` | Meta's virtual keyboard, typed on with the controller ray |
+| Tracked hands playing `puppetxrctl gesture play two_hand_scale` | Meta's virtual keyboard, typed on with the controller ray |
 |---|---|
-| ![Hand tracking in XrHandDataSource](docs/images/hands.png) | ![XrVirtualKeyboard with a key held down](docs/images/virtual-keyboard.png) |
+| ![Both hands pinching and pulling apart in XrHandDataSource](docs/images/hands.png) | ![XrVirtualKeyboard with a key held down](docs/images/virtual-keyboard.png) |
 
 Agents working on this repository: read `AGENTS.md`.
 
