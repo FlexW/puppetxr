@@ -586,6 +586,8 @@ struct SIM_EmbeddedMotion
 
 extern const SIM_EmbeddedMotion sim_embedded_motion[]; // sorted by name, generated into the build
 extern const u32                sim_embedded_motion_count;
+extern const SIM_EmbeddedMotion sim_embedded_devices[]; // data/devices, the same way
+extern const u32                sim_embedded_devices_count;
 
 // A low-poly hand of tapered prisms around the bones, each vertex rigidly skinned to one joint,
 // modelled in the bind pose: the open hand with the wrist at the origin (XR_FB_hand_tracking_mesh)
@@ -605,9 +607,12 @@ struct SIM_HandMesh
 };
 
 #define SIM_MODEL_MAX_PARTS    64
-#define SIM_MODEL_MAX_VERTICES 2048
-#define SIM_MODEL_MAX_INDICES  8192
+#define SIM_MODEL_MAX_VERTICES 8192
+#define SIM_MODEL_MAX_INDICES  32768
+#define SIM_MODEL_MAX_NODES    8
 #define SIM_MODEL_MAX_NAME     16
+#define SIM_MODEL_MAX_IMAGE    16384
+#define SIM_MODEL_PALETTE_ROWS 16
 
 struct SIM_ModelPart
 {
@@ -616,31 +621,47 @@ struct SIM_ModelPart
     u32  indices_first;
     u32  indices_count;
     Vec4 color;                    // linear RGBA
-    char name[SIM_MODEL_MAX_NAME]; // empty for none
+    char name[SIM_MODEL_MAX_NAME]; // the node's; empty for none
     Vec3 press;                    // non-zero: an animation moves the part this far
 };
 
-// A simple procedural render model (XR_FB_render_model): a controller in its grip space, a
-// keyboard around its bounding box centre with +Y up and its front at +Z, or the virtual keyboard;
-// counter-clockwise seen from outside, one part per node and material
+// How a node of a controller moves with its inputs: rotation vectors (axis times radians) at 1 of
+// the first and second value, about the pivot, and a way travelled at 1 of the press
+struct SIM_ModelNode
+{
+    char name[SIM_MODEL_MAX_NAME];
+    Vec3 pivot;
+    Vec3 turn[2];
+    Vec3 travel;
+};
+
+// A render model (XR_FB_render_model): a controller in its grip space, a keyboard around its
+// bounding box centre with +Y up and its front at +Z, or the virtual keyboard; counter-clockwise
+// seen from outside, a part per node. Hundreds of kilobytes, never on the stack
 struct SIM_RenderModel
 {
     Vec3          positions[SIM_MODEL_MAX_VERTICES];
     Vec3          normals[SIM_MODEL_MAX_VERTICES];
-    Vec2          uvs[SIM_MODEL_MAX_VERTICES]; // texture models only, image rows top down
+    Vec2          uvs[SIM_MODEL_MAX_VERTICES]; // image rows top down
     u32           vertices_count;
     u16           indices[SIM_MODEL_MAX_INDICES];
     u32           indices_count;
     SIM_ModelPart parts[SIM_MODEL_MAX_PARTS];
     u32           parts_count;
-    u64           texture_id;     // non-zero: every part shows this RGBA8 texture
+    SIM_ModelNode nodes[SIM_MODEL_MAX_NODES]; // those the inputs move, controllers only
+    u32           nodes_count;
+    u8            image[SIM_MODEL_MAX_IMAGE];      // a PNG every part shows: a row per palette colour, occlusion along it
+    u32           image_size;
+    Vec3          palette[SIM_MODEL_PALETTE_ROWS]; // the rows' linear colours
+    u64           texture_id;     // non-zero: every part shows this RGBA8 texture instead, which the app fills
     u32           texture_width;
     u32           texture_height;
 };
 
 #define SIM_VKB_MAX_KEYS       48
-#define SIM_VKB_TEXTURE_WIDTH  256
-#define SIM_VKB_TEXTURE_HEIGHT 256
+#define SIM_VKB_TEXTURE_WIDTH  1024
+#define SIM_VKB_TEXTURE_HEIGHT 512
+#define SIM_VKB_CELL           80     // atlas cell height, and width of a one unit key
 #define SIM_VKB_TEXTURE_ID     1      // the label atlas, the virtual keyboard's only texture
 #define SIM_VKB_KEY_HEIGHT     0.004f // key tops stand this far in front of the panel
 #define SIM_VKB_PRESS          0.003f // a pressed key sinks this far
@@ -662,7 +683,7 @@ struct SIM_VkbKey
     char           upper; // with shift
     Vec2           center;
     Vec2           half;
-    u32            cell_x; // its label in the atlas, pixels, 32 high
+    u32            cell_x; // its cell of the atlas, pixels, SIM_VKB_CELL high
     u32            cell_y;
     u32            cell_width;
 };
@@ -1105,6 +1126,8 @@ Pose              sim_get_detached_pose      (const SIM_Sim* sim, SIM_Device han
 void              sim_set_detached_pose      (SIM_Sim* sim, SIM_Device hand, const Pose& pose);
 Pose              sim_detached_hand_pose     (const SIM_Sim* sim, SIM_Device hand, SIM_HandPose kind); // no hand holds it: pinch and poke are its aim pose
 void              sim_controller_model       (SIM_Controller controller, SIM_Device hand, SIM_RenderModel& out_model);
+Pose              sim_model_node_pose        (const SIM_ModelNode& node, Vec2 value, f32 press); // replaces the node's identity transform
+Pose              sim_controller_node_pose   (const SIM_Sim* sim, SIM_Device hand, const SIM_ModelNode& node); // with the hand's inputs
 void              sim_keyboard_model         (SIM_RenderModel& out_model);
 
 // Face and eye tracking (docs/face-tracking.md)

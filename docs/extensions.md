@@ -102,7 +102,7 @@ Totals: 99 done, 1 partial, 147 no, 16 n/a; effort S 105, M 88, L 43, XL 8, plat
 | `XR_EXT_spatial_persistence_operations` | no | M | on EXT_spatial_persistence |
 | `XR_EXT_hand_tracking` | done | L | 26 joints per hand from a procedural skeleton: grip pose, pinch from trigger, grab from squeeze; velocities from the hand's |
 | `XR_EXT_plane_detection` | no | L | deprecated by XR_EXT_spatial_plane_tracking |
-| `XR_EXT_render_model` | done | L | the procedural controllers of `XR_FB_render_model` as GLB without glTF animations, UUID a hash of the bytes; animatable `trigger` and `buttons` nodes follow the inputs; spaces at the grip; no glTF extensions needed |
+| `XR_EXT_render_model` | done | L | the controllers of `XR_FB_render_model` as GLB without glTF animations, UUID a hash of the bytes; animatable `trigger`, `squeeze`, `thumbstick`, `primary`, `secondary` and `menu` nodes follow the inputs; spaces at the grip; no glTF extensions needed |
 | `XR_EXT_spatial_container` | no | L | containers of spatial entities |
 | `XR_EXT_spatial_image_tracking` | no | L | images placed in the world model |
 | `XR_EXT_spatial_marker_tracking` | done | L | QR codes only, from QR props (docs/props.md), with the fixed size and static features; Micro QR, ArUco and AprilTag are unsupported capabilities; docs/openxr.md "Spatial entity contexts" |
@@ -226,7 +226,7 @@ Totals: 99 done, 1 partial, 147 no, 16 n/a; effort S 105, M 88, L 43, XL 8, plat
 | `XR_FB_body_tracking` | done | L | 70 joints of a posed skeleton in Meta's joint axes: it follows the head, its arms reach for the controllers by IK; shape, pose and tracking set by the tests (`docs/body-tracking.md`) |
 | `XR_FB_hand_tracking_mesh` | done | L | one closed surface of the open hand, ending at the wrist, a sculpt fitted to `data/motion/hand_model.json` by `tools/blender/puppetxr_hand_mesh.py` (`data/motion/hand_mesh.json`), blend skinned across the joints (docs/openxr.md); scale is always 1; the wrist's parent is `XR_HAND_JOINT_MAX_ENUM_EXT`, no joint, as OVRPlugin's skeletons expect of the root |
 | `XR_FB_passthrough` | done | L | the room's visual mesh with styles; projected layers show it on `XR_FB_triangle_mesh` geometry |
-| `XR_FB_render_model` | done | L | `/model_fb/controller/left` and `right`: procedural glTF 2.0 binary per simulated controller type (handle, head, trigger, buttons, the ring of Touch), in grip space, glTF subsets 1 and 2, no textures; `/model_fb/keyboard/local` and `remote`: a procedural compact keyboard around its bounding box centre; `/model_meta/keyboard/virtual` with XR_META_virtual_keyboard |
+| `XR_FB_render_model` | done | L | `/model_fb/controller/left` and `right`: modelled glTF 2.0 binary per simulated controller type (named nodes for the body, trigger, squeeze, thumbstick, buttons and Touch's ring), in grip space, glTF subsets 1 and 2, one palette texture; `/model_fb/keyboard/local` and `remote`: a compact keyboard around its bounding box centre; `/model_meta/keyboard/virtual` with XR_META_virtual_keyboard |
 | `XR_FB_scene` | done | L | labels, bounds, boundaries and room layout of the loaded room |
 | `XR_FB_spatial_entity` | done | L | anchors and component status; anchors are storable with a storage extension, sharable with a sharing extension |
 | `XR_FB_android_surface_swapchain_create` | n/a | platform | Android |
@@ -304,7 +304,7 @@ Totals: 99 done, 1 partial, 147 no, 16 n/a; effort S 105, M 88, L 43, XL 8, plat
 | `XR_META_environment_raycast` | done | L | marches through the simulated depth sensor's captures like a Quest 3 (latency, 25 Hz, noise, coverage below the eyes, every status), props included; `mesh` mode hits the global mesh and the props exactly |
 | `XR_META_dynamic_object_tracker` | done | M | preview (values written out, Meta's SDK has the only header): trackers whose create and class results arrive as events; tracked props found by `XR_FB_spatial_entity_query` and `XR_META_spatial_entity_discovery` with the `DYNAMIC_OBJECT_DATA` component; docs/openxr.md "Dynamic objects" |
 | `XR_META_dynamic_object_keyboard` | done | S | preview: keyboard props (docs/props.md) as tracked keyboards, located, with 2D and 3D bounds |
-| `XR_META_virtual_keyboard` | done | XL | procedural labelled keyboard model with key press animations and a label atlas (`/model_meta/keyboard/virtual`, subset 2), ray and direct input with poke limiting, FAR/DIRECT/CUSTOM places, typing from the simulator (UI, `puppetxrctl vkb type`, C API); docs/openxr.md "Virtual keyboard" |
+| `XR_META_virtual_keyboard` | done | XL | labelled keyboard model of rounded keys with press animations and a label atlas (`/model_meta/keyboard/virtual`, subset 2), ray and direct input with poke limiting, FAR/DIRECT/CUSTOM places, typing from the simulator (UI, `puppetxrctl vkb type`, C API); docs/openxr.md "Virtual keyboard" |
 
 ## ML
 

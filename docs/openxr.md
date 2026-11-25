@@ -433,13 +433,28 @@ of a controller that is no longer simulated is `XR_RENDER_MODEL_UNAVAILABLE_FB` 
 an unknown key `XR_ERROR_RENDER_MODEL_KEY_INVALID_FB`. Controllers and the physical keyboards are
 offered at glTF 2.0 subsets 1 and 2 (the lowest requested is reported), the textured virtual
 keyboard at subset 2 only (`render_model_levels`); a request without one of the model's levels is
-unavailable. `sim_controller_model` builds the controller from
-capped cylinders (handle, head, trigger, buttons, stick) and, for Touch, a torus ring, in grip
-space, the left mirroring the right; `sim_keyboard_model` a slab with five rows of box caps around
-its bounding box centre, +Y up, its front at +Z (spec: a keyboard's origin is that centre).
-`write_render_model` writes a node, mesh, primitive and material per part into a GLB: positions,
-normals, texture coordinates (textured models only) and 16-bit indices in one buffer, then the key
-times 0 and 1 and, per part with a `press`, a translation animation from rest to `press`.
+unavailable. `write_render_model` writes a node, mesh, primitive and material per part into a GLB:
+positions, normals, texture coordinates and 16-bit indices in one buffer, then the key times 0 and 1
+and, per part with a `press`, a translation animation from rest to `press`, then the model's PNG.
+
+The models are `data/devices/*.json`, made by `tools/blender/puppetxr_devices.py` and embedded by
+`cmake/embed_motion.cmake` (`sim_embedded_devices`):
+
+```
+blender -b --factory-startup --disable-autoexec --python tools/blender/puppetxr_devices.py -- data/devices
+```
+
+- `controller.json` (`sim_controller_model`): the right hand's, in grip space; the left mirrors it but
+  for the letters of its buttons. Parts name their node (`body`, `trigger`, `squeeze`, `thumbstick`,
+  `primary`, `secondary`, `menu`, `ring`) and, where not all have them, their controllers and hand:
+  `khr_simple` has a trigger and menu button, `oculus_touch` the tracking ring, `meta_touch_pro`
+  cameras. Under 6000 vertices a controller.
+- `keyboard.json` (`sim_keyboard_model`): the physical keyboard, 30 x 11.2 x 1.8 cm around its bounding
+  box centre, +Y up, its front at +Z (spec: a keyboard's origin is that centre). It is what keyboard
+  props show in passthrough (a colour per material and how much the face looks up), depth and raycasts.
+- Their one texture is a palette, a row per material with the occlusion baked per vertex along it. So a
+  node is one primitive whatever it is made of (Meta's sample framework sets up the first only, and
+  draws untextured models black), and unlit apps (subset 1) show its form.
 
 `XR_EXT_render_model` with `XR_EXT_interaction_render_model` (which needs it):
 - Ids: each `xrSyncActions` (`sync_render_models`) lists a model for a hand whose source is a
@@ -448,13 +463,14 @@ times 0 and 1 and, per part with a `press`, a translation animation from rest to
   and a change queues `XrEventDataInteractionRenderModelsChangedEXT`. Nothing is listed before
   the first sync. Only listed ids create models; handles of ids that left the list stay valid
   but inactive.
-- Assets: the hand's `sim_controller_model` through `write_render_model` (parts named `body`,
-  `trigger`, `buttons`, `ring`; no glTF animations, no extensions, so the app's glTF extension
-  list changes nothing). The UUID is a hash of the GLB bytes, so a UUID always names the same
+- Assets: the hand's `sim_controller_model` through `write_render_model` (no glTF animations, no
+  extensions, so the app's glTF extension list changes nothing). The UUID is a hash of the GLB bytes, so a UUID always names the same
   bytes; `xrCreateRenderModelAssetEXT` accepts only UUIDs the session returned
   (`OXR_Session::render_model_uuids`).
-- Animatable nodes: `trigger` (moves 8 mm along +Y with the trigger value) and `buttons` (2 mm
-  along -Y while a face button or the stick is clicked); poses replace the nodes' identity
+- Animatable nodes: those of `controller.json`'s `nodes` the controller has (`SIM_ModelNode`): the
+  trigger turns about its pivot, the squeeze slides into the handle, the thumbstick tilts with its
+  axes and sinks on a click, `primary`, `secondary` and `menu` (the right hand's system button) sink.
+  `sim_controller_node_pose` moves them with the hand's inputs; poses replace the nodes' identity
   transforms. State uses the inputs of the last device update for any display time > 0.
 - Spaces: the grip pose of the model's hand, located only while the model is listed and the
   session is focused; no flags once the model is destroyed.
@@ -469,11 +485,15 @@ times 0 and 1 and, per part with a `press`, a translation animation from rest to
 - Layout (`sim_vkb_layout`, `src/sim.cpp`): digits, `qwertyuiop` + backspace, `asdfghjkl` + enter,
   shift + `zxcvbnm,.`, space; 3.6 cm pitch, keys face +Z of keyboard space, about 43 x 21 cm at
   scale 1. Shift makes the next letter upper case and `,` `.` into `?` `!`.
-- Model (`sim_vkb_model`): a quad per key 4 mm in front of the panel, in layout order, so key k is
-  node k and animation k (a 3 mm press along -Z), then `panel` and `collision` (spec: the app's
-  colliders), all showing texture 1, `metaVirtualKeyboard://texture/1?w=256&h=256&fmt=RGBA32`.
-- Labels (`sim_vkb_texture`): a 256 x 256 RGBA atlas, a cell per key drawn with the built-in 5x7
-  font `SIM_FONT`; shift redraws it. `xrGetVirtualKeyboardDirtyTexturesMETA` lists texture 1 once
+- Model (`sim_vkb_model`): a slab with rounded corners and a bevelled edge per key, 4 mm high on the
+  rounded panel, in layout order, so key k is node k and animation k (a 3 mm press along -Z), then
+  `panel` and `collision` (spec: the app's colliders), all showing texture 1,
+  `metaVirtualKeyboard://texture/1?w=1024&h=512&fmt=RGBA32`.
+- Labels (`sim_vkb_texture`): an atlas with a cell of 80 texels per key, shaded (apps draw the keyboard
+  unlit) and labelled with the coverage of `data/devices/glyphs.json` (Inter, SIL Open Font License,
+  baked by `tools/blender/puppetxr_devices.py`); shift redraws it. Solid blocks for the panel, its edge
+  and the transparent collision mesh stay away from the cells and the atlas' edges, which apps that
+  repeat the texture filter into them. `xrGetVirtualKeyboardDirtyTexturesMETA` lists texture 1 once
   after creation and after every shift change; the id read clears it.
 - Animation states: the keys whose pressed state changed since the last read (every key on the
   first), fraction 1 pressed, 0 released.

@@ -3628,67 +3628,210 @@ TEST(Sim, detached_poses_are_part_of_the_frame_state)
 // Controller render models (XR_FB_render_model)
 //
 
+namespace
+{
+
+// Too large for the stack of a Windows test
+struct HeapModel
+{
+    SIM_RenderModel* model = (SIM_RenderModel*)os_memory_alloc(sizeof(SIM_RenderModel));
+
+    HeapModel () = default;
+    HeapModel (const HeapModel&) = delete;
+    HeapModel& operator= (const HeapModel&) = delete;
+    ~HeapModel () { os_memory_release(model); }
+    SIM_RenderModel& operator* () const { return *model; }
+    SIM_RenderModel* operator-> () const { return model; }
+
+    u32 part (const char* name) const
+    {
+        for (u32 p = 0; p < model->parts_count; p++)
+        {
+            if (cstr_equal(model->parts[p].name, name))
+            {
+                return p;
+            }
+        }
+        return SIM_MODEL_MAX_PARTS;
+    }
+
+    const SIM_ModelNode* node (const char* name) const
+    {
+        for (u32 n = 0; n < model->nodes_count; n++)
+        {
+            if (cstr_equal(model->nodes[n].name, name))
+            {
+                return &model->nodes[n];
+            }
+        }
+        return nullptr;
+    }
+};
+
+} // namespace
+
 TEST(Sim, controller_models_are_closed_meshes_in_grip_space)
 {
+    const HeapModel model;
     for (u32 c = 0; c < (u32)SIM_Controller::Count; c++)
     {
         for (const SIM_Device hand : { SIM_Device::LeftHand, SIM_Device::RightHand })
         {
-            SIM_RenderModel model = {};
-            sim_controller_model((SIM_Controller)c, hand, model);
-            ASSERT_GT(model.parts_count, 1u) << c;
+            sim_controller_model((SIM_Controller)c, hand, *model);
+            ASSERT_GT(model->parts_count, 1u) << c;
+            EXPECT_LT(model->vertices_count, 6000u) << "an app draws two of them";
             u32 vertices = 0;
-            for (u32 p = 0; p < model.parts_count; p++)
+            for (u32 p = 0; p < model->parts_count; p++)
             {
-                const SIM_ModelPart& part = model.parts[p];
+                const SIM_ModelPart& part = model->parts[p];
                 ASSERT_EQ(part.indices_count % 3, 0u);
                 for (u32 i = part.indices_first; i < part.indices_first + part.indices_count; i++)
                 {
-                    ASSERT_GE(model.indices[i], part.vertices_first);
-                    ASSERT_LT(model.indices[i], part.vertices_first + part.vertices_count);
+                    ASSERT_GE(model->indices[i], part.vertices_first);
+                    ASSERT_LT(model->indices[i], part.vertices_first + part.vertices_count);
                 }
                 vertices += part.vertices_count;
                 EXPECT_GT(part.color.w, 0.0f);
+                EXPECT_EQ(model.part(part.name), p) << "a part per node, " << part.name;
             }
-            ASSERT_EQ(vertices, model.vertices_count);
-            for (u32 v = 0; v < model.vertices_count; v++)
+            ASSERT_EQ(vertices, model->vertices_count);
+            for (u32 v = 0; v < model->vertices_count; v++)
             {
                 // Spec XR_FB_render_model: a controller's origin is its grip pose; the controller fits in a 20 cm ball around it
-                EXPECT_LT(zm::length(model.positions[v]), 0.2f);
-                EXPECT_NEAR(zm::length(model.normals[v]), 1.0f, 1e-4f);
+                EXPECT_LT(zm::length(model->positions[v]), 0.2f);
+                EXPECT_NEAR(zm::length(model->normals[v]), 1.0f, 1e-4f);
+                // A texel of the palette, in the middle of a colour's row
+                const f32 row = model->uvs[v].y * (f32)SIM_MODEL_PALETTE_ROWS;
+                EXPECT_NEAR(row - (f32)(u32)row, 0.5f, 1e-3f);
+                EXPECT_GT(model->uvs[v].x, 0.0f);
+                EXPECT_LT(model->uvs[v].x, 1.0f);
             }
+            EXPECT_GT(model->image_size, 100u);
+            EXPECT_TRUE(memory_equal(model->image, "\x89PNG", 4));
+            // Counter-clockwise seen from outside, mirrored or not: faces turn with their normals
+            u32 inward = 0;
+            for (u32 i = 0; i < model->indices_count; i += 3)
+            {
+                const Vec3 a = model->positions[model->indices[i]];
+                const Vec3 b = model->positions[model->indices[i + 1]];
+                const Vec3 d = model->positions[model->indices[i + 2]];
+                const Vec3 n = model->normals[model->indices[i]] + model->normals[model->indices[i + 1]] + model->normals[model->indices[i + 2]];
+                inward += zm::dot(zm::cross(b - a, d - a), n) <= 0.0f ? 1u : 0u;
+            }
+            EXPECT_LE(inward, model->indices_count / 300) << "controller " << c << " hand " << (u32)hand;
         }
     }
+}
 
-    // Touch controllers carry their tracking ring, the left one on its left: grip +X points out of
-    // the back of the right hand and into the back of the left one, so the models mirror
-    SIM_RenderModel left  = {};
-    SIM_RenderModel right = {};
-    sim_controller_model(SIM_Controller::OculusTouch, SIM_Device::LeftHand, left);
-    sim_controller_model(SIM_Controller::OculusTouch, SIM_Device::RightHand, right);
-    ASSERT_EQ(left.vertices_count, right.vertices_count);
-    for (u32 v = 0; v < left.vertices_count; v++)
+TEST(Sim, controller_models_have_the_parts_of_their_type)
+{
+    const HeapModel model;
+    const char* const touch_nodes[] = { "trigger", "squeeze", "thumbstick", "primary", "secondary", "menu" };
+    for (u32 c = 0; c < (u32)SIM_Controller::Count; c++)
     {
-        EXPECT_NEAR(left.positions[v].x, -right.positions[v].x, 1e-6f);
-        EXPECT_NEAR(left.positions[v].y, right.positions[v].y, 1e-6f);
+        const b8 simple = (SIM_Controller)c == SIM_Controller::KhrSimple;
+        sim_controller_model((SIM_Controller)c, SIM_Device::RightHand, *model);
+        EXPECT_EQ(model.part("body"), 0u);
+        for (const char* node : touch_nodes)
+        {
+            const b8 wanted = !simple || cstr_equal(node, "trigger") || cstr_equal(node, "menu");
+            EXPECT_EQ(model.part(node) < SIM_MODEL_MAX_PARTS, wanted) << c << " " << node;
+            EXPECT_EQ(model.node(node) != nullptr, wanted) << c << " " << node;
+        }
+        EXPECT_EQ(model->nodes_count, simple ? 2u : 6u) << "the inputs of a controller move its nodes";
+        EXPECT_EQ(model.part("ring") < SIM_MODEL_MAX_PARTS, (SIM_Controller)c == SIM_Controller::OculusTouch) << "only the first Touch generations track through a ring";
     }
-    SIM_RenderModel plus = {};
-    sim_controller_model(SIM_Controller::MetaTouchPlus, SIM_Device::RightHand, plus);
-    EXPECT_LT(plus.vertices_count, right.vertices_count) << "Touch Plus has no ring";
+
+    // The left controller mirrors the right one: grip +X points out of the back of the right hand and
+    // into the back of the left one. Its letters are X and Y, not A and B mirrored
+    const HeapModel left;
+    const HeapModel right;
+    sim_controller_model(SIM_Controller::OculusTouch, SIM_Device::LeftHand, *left);
+    sim_controller_model(SIM_Controller::OculusTouch, SIM_Device::RightHand, *right);
+    ASSERT_EQ(left->parts_count, right->parts_count);
+    for (const char* name : { "body", "trigger", "ring", "thumbstick" })
+    {
+        const SIM_ModelPart& l = left->parts[left.part(name)];
+        const SIM_ModelPart& r = right->parts[right.part(name)];
+        ASSERT_EQ(l.vertices_count, r.vertices_count) << name;
+        for (u32 v = 0; v < l.vertices_count; v++)
+        {
+            const Vec3 a = left->positions[l.vertices_first + v];
+            const Vec3 b = right->positions[r.vertices_first + v];
+            ASSERT_EQ(a.x, -b.x);
+            ASSERT_EQ(a.y, b.y);
+            ASSERT_EQ(a.z, b.z);
+        }
+    }
+    EXPECT_NE(left->parts[left.part("primary")].vertices_count, right->parts[right.part("primary")].vertices_count) << "X and A";
+}
+
+TEST(Sim, controller_nodes_move_with_their_inputs)
+{
+    SIM_Sim* sim = make_sim();
+    defer { sim_destroy(sim); };
+    const HeapModel model;
+    for (const SIM_Device hand : { SIM_Device::LeftHand, SIM_Device::RightHand })
+    {
+        const b8 left = hand == SIM_Device::LeftHand;
+        sim_controller_model(sim_get_controller(sim), hand, *model);
+        const auto pose = [&] (const char* name) { return sim_controller_node_pose(sim, hand, *model.node(name)); };
+        for (u32 n = 0; n < model->nodes_count; n++)
+        {
+            const Pose rest = sim_controller_node_pose(sim, hand, model->nodes[n]);
+            EXPECT_TRUE(zm::near(rest.position, Vec3{}, 1e-7f)) << model->nodes[n].name;
+            EXPECT_EQ(rest.orientation.w, 1.0f) << model->nodes[n].name;
+        }
+
+        // The trigger's tip, its lowest point along the handle, swings to the handle behind it (+Y)
+        sim_set_input(sim, hand, SIM_Input::TriggerValue, { .value = { 1.0f, 0.0f } });
+        const Vec3 tip = { 0.0f, -0.0415f, -0.0205f };
+        EXPECT_GT(zm::transform_point(pose("trigger"), tip).y, tip.y + 0.006f);
+        EXPECT_TRUE(zm::near(zm::transform_point(pose("trigger"), model.node("trigger")->pivot), model.node("trigger")->pivot, 1e-6f)) << "it turns about its pivot";
+
+        sim_set_input(sim, hand, SIM_Input::SqueezeValue, { .value = { 1.0f, 0.0f } });
+        EXPECT_GT(pose("squeeze").position.y, 0.001f) << "into the handle";
+
+        // A stick pushed right leans right on either hand, forward it leans forward (-Y)
+        const Vec3 stick = model.node("thumbstick")->pivot;
+        const Vec3 cap   = stick + Vec3{ 0.0f, 0.5f, -0.866f } * 0.009f;
+        sim_set_input(sim, hand, SIM_Input::Thumbstick, { .value = { 1.0f, 0.0f } });
+        EXPECT_GT(zm::transform_point(pose("thumbstick"), cap).x, cap.x + 0.002f);
+        sim_set_input(sim, hand, SIM_Input::Thumbstick, { .value = { 0.0f, 1.0f } });
+        EXPECT_LT(zm::transform_point(pose("thumbstick"), cap).y, cap.y - 0.002f);
+        sim_set_input(sim, hand, SIM_Input::Thumbstick, { .value = { 0.0f, 0.0f } });
+
+        // Clicks sink into the face, which looks up the handle (-Z)
+        const struct
+        {
+            const char* node;
+            SIM_Input   input;
+        } clicks[] = {
+            { "thumbstick", SIM_Input::ThumbstickClick },
+            { "primary", left ? SIM_Input::XClick : SIM_Input::AClick },
+            { "secondary", left ? SIM_Input::YClick : SIM_Input::BClick },
+            { "menu", left ? SIM_Input::MenuClick : SIM_Input::SystemClick },
+        };
+        for (const auto& click : clicks)
+        {
+            sim_set_input(sim, hand, click.input, { .value = { 1.0f, 0.0f } });
+            EXPECT_GT(pose(click.node).position.z, 0.0008f) << click.node;
+        }
+    }
 }
 
 TEST(Sim, keyboard_model_is_centred_on_its_bounding_box)
 {
-    SIM_RenderModel model = {};
-    sim_keyboard_model(model);
-    ASSERT_GE(model.parts_count, 2u);
-    Vec3 low  = model.positions[0];
+    const HeapModel model;
+    sim_keyboard_model(*model);
+    ASSERT_GE(model->parts_count, 2u);
+    Vec3 low  = model->positions[0];
     Vec3 high = low;
-    for (u32 v = 0; v < model.vertices_count; v++)
+    for (u32 v = 0; v < model->vertices_count; v++)
     {
-        low  = zm::min(low, model.positions[v]);
-        high = zm::max(high, model.positions[v]);
-        EXPECT_NEAR(zm::length(model.normals[v]), 1.0f, 1e-4f);
+        low  = zm::min(low, model->positions[v]);
+        high = zm::max(high, model->positions[v]);
+        EXPECT_NEAR(zm::length(model->normals[v]), 1.0f, 1e-4f);
     }
     // Spec XR_FB_render_model: a keyboard's origin is the centre of its bounding box; glTF +Y is up
     EXPECT_TRUE(zm::near(low + high, Vec3{}, 1e-5f));
@@ -3698,7 +3841,9 @@ TEST(Sim, keyboard_model_is_centred_on_its_bounding_box)
     EXPECT_LT(size.y, 0.04f);
     EXPECT_GT(size.z, 0.08f);
     EXPECT_LT(size.z, 0.2f);
-    EXPECT_GT(model.parts[1].vertices_count / 24, 50u) << "a key cap is a box of 24 vertices";
+    EXPECT_EQ(model.part("body"), 0u);
+    EXPECT_LT(model.part("keys"), model->parts_count);
+    EXPECT_EQ(model->nodes_count, 0u);
 }
 
 //
@@ -3724,7 +3869,7 @@ TEST(Sim, virtual_keyboard_has_every_key_once_on_its_panel)
         EXPECT_LE(zm::abs(key.center.y) + key.half.y, layout.half.y);
         EXPECT_EQ(sim_vkb_key_at(layout, key.center), (i32)k) << "keys do not overlap";
         EXPECT_LE(key.cell_x + key.cell_width, (u32)SIM_VKB_TEXTURE_WIDTH);
-        EXPECT_LE(key.cell_y + 32, (u32)SIM_VKB_TEXTURE_HEIGHT);
+        EXPECT_LE(key.cell_y + SIM_VKB_CELL, (u32)SIM_VKB_TEXTURE_HEIGHT);
     }
     EXPECT_EQ(sim_vkb_key_at(layout, { layout.half.x + 0.01f, 0.0f }), -1);
     const SIM_VkbKey& q = layout.keys[sim_vkb_find_key(layout, "q")];
@@ -3749,7 +3894,7 @@ TEST(Sim, virtual_keyboard_labels_follow_shift)
 
     // A digit's cell is the same either way, a letter's is not; every label has white texels
     const auto cell_equal = [&](const SIM_VkbKey& key) {
-        for (u32 y = key.cell_y; y < key.cell_y + 32; y++)
+        for (u32 y = key.cell_y; y < key.cell_y + SIM_VKB_CELL; y++)
         {
             const usize row = ((usize)y * SIM_VKB_TEXTURE_WIDTH + key.cell_x) * 4;
             if (!memory_equal(lower.data + row, upper.data + row, (usize)key.cell_width * 4))
@@ -3766,7 +3911,7 @@ TEST(Sim, virtual_keyboard_labels_follow_shift)
     {
         const SIM_VkbKey& key   = layout.keys[k];
         u32               light = 0;
-        for (u32 y = key.cell_y; y < key.cell_y + 32; y++)
+        for (u32 y = key.cell_y; y < key.cell_y + SIM_VKB_CELL; y++)
         {
             for (u32 x = key.cell_x; x < key.cell_x + key.cell_width; x++)
             {
@@ -3775,41 +3920,90 @@ TEST(Sim, virtual_keyboard_labels_follow_shift)
         }
         EXPECT_GT(light, 9u) << "key " << k << " has a label";
     }
+
+    // Apps that repeat the texture filter its edges into the keys on the opposite ones: no
+    // transparent texel of the collision mesh may lie there
+    for (u32 x = 0; x < SIM_VKB_TEXTURE_WIDTH; x++)
+    {
+        EXPECT_EQ(lower[((usize)(SIM_VKB_TEXTURE_HEIGHT - 1) * SIM_VKB_TEXTURE_WIDTH + x) * 4 + 3], 255) << x;
+    }
+
+    // The letters are anti-aliased: texels between the key's and the label's colour
+    const SIM_VkbKey& o    = layout.keys[sim_vkb_find_key(layout, "o")];
+    u32               soft = 0;
+    for (u32 y = o.cell_y + 20; y < o.cell_y + 60; y++)
+    {
+        for (u32 x = o.cell_x + 20; x < o.cell_x + 60; x++)
+        {
+            const u8 value = lower[((usize)y * SIM_VKB_TEXTURE_WIDTH + x) * 4];
+            soft += value > 110 && value < 220 ? 1u : 0u;
+        }
+    }
+    EXPECT_GT(soft, 20u);
 }
 
 TEST(Sim, virtual_keyboard_model_has_a_node_per_key_then_panel_and_collision)
 {
     SIM_VkbLayout layout = {};
     sim_vkb_layout(layout);
-    SIM_RenderModel model = {};
-    sim_vkb_model(layout, model);
-    ASSERT_EQ(model.parts_count, layout.keys_count + 2);
-    EXPECT_EQ(model.texture_id, (u64)SIM_VKB_TEXTURE_ID);
-    EXPECT_STREQ(model.parts[layout.keys_count].name, "panel");
-    EXPECT_STREQ(model.parts[layout.keys_count + 1].name, "collision");
-    for (u32 p = 0; p < model.parts_count; p++)
+    const HeapModel model;
+    sim_vkb_model(layout, *model);
+    ASSERT_EQ(model->parts_count, layout.keys_count + 2);
+    EXPECT_EQ(model->texture_id, (u64)SIM_VKB_TEXTURE_ID);
+    EXPECT_STREQ(model->parts[layout.keys_count].name, "panel");
+    EXPECT_STREQ(model->parts[layout.keys_count + 1].name, "collision");
+    for (u32 p = 0; p < model->parts_count; p++)
     {
         const b8 key = p < layout.keys_count;
-        EXPECT_EQ(model.parts[p].press.z < 0.0f, key) << "only keys are pressed";
+        EXPECT_EQ(model->parts[p].press.z < 0.0f, key) << "only keys are pressed";
     }
-    for (u32 v = 0; v < model.vertices_count; v++)
+    for (u32 v = 0; v < model->vertices_count; v++)
     {
-        EXPECT_GE(model.uvs[v].x, 0.0f);
-        EXPECT_LE(model.uvs[v].x, 1.0f);
-        EXPECT_GE(model.uvs[v].y, 0.0f);
-        EXPECT_LE(model.uvs[v].y, 1.0f);
-        EXPECT_GE(model.positions[v].z, -0.01f);
+        EXPECT_GE(model->uvs[v].x, 0.0f);
+        EXPECT_LE(model->uvs[v].x, 1.0f);
+        EXPECT_GE(model->uvs[v].y, 0.0f);
+        EXPECT_LE(model->uvs[v].y, 1.0f);
+        EXPECT_GE(model->positions[v].z, -0.01f);
+        EXPECT_NEAR(zm::length(model->normals[v]), 1.0f, 1e-4f);
     }
-    // The key's quad shows its own atlas cell: the top left corner maps to the cell's top left
-    const SIM_VkbKey&    q    = layout.keys[sim_vkb_find_key(layout, "q")];
-    const SIM_ModelPart& part = model.parts[sim_vkb_find_key(layout, "q")];
-    for (u32 v = part.vertices_first; v < part.vertices_first + part.vertices_count; v++)
+    for (u32 k = 0; k < layout.keys_count; k++)
     {
-        const b8 left = model.positions[v].x < q.center.x;
-        const b8 top  = model.positions[v].y > q.center.y;
-        EXPECT_EQ(model.uvs[v].x * SIM_VKB_TEXTURE_WIDTH < (f32)q.cell_x + 1.0f, left);
-        EXPECT_EQ(model.uvs[v].y * SIM_VKB_TEXTURE_HEIGHT < (f32)q.cell_y + 1.0f, top);
+        // A key is a slab of its hit area from the panel to the key tops, rounded
+        const SIM_VkbKey&    key  = layout.keys[k];
+        const SIM_ModelPart& part = model->parts[k];
+        f32                  top  = 0.0f;
+        f32                  wide = 0.0f;
+        EXPECT_GT(part.vertices_count, 24u) << "not a box";
+        for (u32 v = part.vertices_first; v < part.vertices_first + part.vertices_count; v++)
+        {
+            const Vec3 p = model->positions[v];
+            EXPECT_LE(zm::abs(p.x - key.center.x), key.half.x + 1e-6f);
+            EXPECT_LE(zm::abs(p.y - key.center.y), key.half.y + 1e-6f);
+            top  = zm::max(top, p.z);
+            wide = zm::max(wide, zm::abs(p.x - key.center.x));
+            // It shows its own atlas cell, and its top left the cell's
+            const Vec2 texel = { model->uvs[v].x * SIM_VKB_TEXTURE_WIDTH, model->uvs[v].y * SIM_VKB_TEXTURE_HEIGHT };
+            EXPECT_GE(texel.x, (f32)key.cell_x);
+            EXPECT_LE(texel.x, (f32)(key.cell_x + key.cell_width));
+            EXPECT_GE(texel.y, (f32)key.cell_y);
+            EXPECT_LE(texel.y, (f32)(key.cell_y + SIM_VKB_CELL));
+            const Vec2 middle = { (f32)key.cell_x + 0.5f * (f32)key.cell_width, (f32)key.cell_y + 0.5f * (f32)SIM_VKB_CELL };
+            EXPECT_TRUE(zm::abs(p.x - key.center.x) < 1e-4f || (texel.x < middle.x) == (p.x < key.center.x));
+            EXPECT_TRUE(zm::abs(p.y - key.center.y) < 1e-4f || (texel.y < middle.y) == (p.y > key.center.y));
+        }
+        EXPECT_FLOAT_EQ(top, SIM_VKB_KEY_HEIGHT);
+        EXPECT_NEAR(wide, key.half.x, 1e-6f);
     }
+    u32 inward = 0;
+    for (u32 i = 0; i < model->indices_count; i += 3)
+    {
+        const Vec3 a = model->positions[model->indices[i]];
+        const Vec3 b = model->positions[model->indices[i + 1]];
+        const Vec3 c = model->positions[model->indices[i + 2]];
+        const Vec3 n = model->normals[model->indices[i]] + model->normals[model->indices[i + 1]] + model->normals[model->indices[i + 2]];
+        inward += zm::dot(zm::cross(b - a, c - a), n) <= 0.0f ? 1u : 0u;
+    }
+    EXPECT_EQ(inward, 0u) << "counter-clockwise seen from outside";
 }
 
 // Typed text is part of the frame like a microgesture: queued between frames, it belongs to the
@@ -4039,12 +4233,12 @@ TEST(Sim, prop_names_round_trip)
     EXPECT_STREQ(sim_prop_kind_name(SIM_PropKind::Mesh), "mesh");
     EXPECT_TRUE(zm::near(sim_prop_extent(qr_prop("x", {})), Vec3{ 0.1f, 0.1f, 0.0f }, 1e-6f));
     SIM_Prop keyboard = { .kind = SIM_PropKind::Keyboard, .pose = zm::POSE_IDENTITY };
-    SIM_RenderModel model = {};
-    sim_keyboard_model(model);
-    Vec3 high = model.positions[0];
-    for (u32 v = 0; v < model.vertices_count; v++)
+    const HeapModel model;
+    sim_keyboard_model(*model);
+    Vec3 high = model->positions[0];
+    for (u32 v = 0; v < model->vertices_count; v++)
     {
-        high = zm::max(high, model.positions[v]);
+        high = zm::max(high, model->positions[v]);
     }
     EXPECT_TRUE(zm::near(sim_prop_extent(keyboard), high * 2.0f, 1e-5f)) << "a keyboard is as big as its model";
 }

@@ -355,7 +355,6 @@ struct OXR_FoveationProfile;
 struct OXR_PassthroughColorLut;
 struct OXR_CameraProvider;
 
-#define OXR_RENDER_MODEL_NODES      2 // animatable: the trigger, then the face buttons
 #define OXR_MAX_RENDER_MODEL_ASSETS 16 // UUIDs one session hands out: two hands times the controller types
 
 // What the asset of a UUID is made of, kept per session: spec, only UUIDs the session returned make assets
@@ -364,6 +363,13 @@ struct OXR_RenderModelUuid
     XrUuid         uuid;
     SIM_Controller controller;
     u32            hand;
+};
+
+// The nodes of a controller's model the runtime moves (xrGetRenderModelStateEXT)
+struct OXR_RenderModelNodes
+{
+    SIM_ModelNode nodes[SIM_MODEL_MAX_NODES];
+    u32           count;
 };
 
 // XR_EXT_spatial_entity buffer ids index these, so the same id always has the same text
@@ -991,12 +997,14 @@ struct OXR_RenderModel
     u32               hand = {};       // 0 left, 1 right
     SIM_Controller    controller = {};
     XrUuid            cache_id = {};
+    OXR_RenderModelNodes nodes = {};
 };
 
 struct OXR_RenderModelAsset
 {
-    OXR_SessionHandle session;
-    Array<u8>         glb = {};
+    OXR_SessionHandle    session;
+    Array<u8>            glb = {};
+    OXR_RenderModelNodes nodes = {};
 };
 
 #define OXR_VKB_SOURCES     8   // XrVirtualKeyboardInputSourceMETA values 1 to 8

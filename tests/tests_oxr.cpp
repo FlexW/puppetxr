@@ -9742,21 +9742,21 @@ TEST_F(OxrPassthroughTest, props_show_in_passthrough)
     const u8* beside = eye_pixel(pixels, width, height, 0, 0.8f, 0.0f); // inside the lens, outside the code
     EXPECT_RGB(beside, wall[0], wall[1], wall[2]);
 
-    // Removed, the wall shows again; a keyboard shows its keys and body
+    // Removed, the wall shows again; a keyboard shows its dark caps and the darker gaps between them
     ASSERT_TRUE(sim_remove_prop(oxr_get_sim(), id));
     const SIM_Prop keyboard = { .kind = SIM_PropKind::Keyboard, .pose = { { 0.0f, 1.6f, -0.4f }, zm::quat_from_axis_angle({ 1.0f, 0.0f, 0.0f }, 0.5f * zm::PI) } };
     ASSERT_NE(sim_add_prop(oxr_get_sim(), keyboard), 0u);
     submit_and_read(layers, 1, pixels, width, height);
     u32 keys = 0;
-    u32 body = 0;
-    for (f32 x = -0.3f; x <= 0.3f; x += 0.01f)
+    u32 gaps = 0;
+    for (f32 x = -0.3f; x <= 0.3f; x += 0.005f)
     {
         const u8* p = eye_pixel(pixels, width, height, 0, x, 0.0f);
-        keys += p[0] > 150 && p[0] < 230 && p[0] == p[1] ? 1u : 0u;
-        body += p[0] < 70 && p[1] < 70 && p[2] < 80 ? 1u : 0u;
+        keys += p[0] >= 52 && p[0] < 80 && p[2] < 90 ? 1u : 0u;
+        gaps += p[0] < 48 && p[1] < 48 && p[2] < 52 ? 1u : 0u;
     }
     EXPECT_GT(keys, 5u);
-    EXPECT_GT(body, 5u);
+    EXPECT_GT(gaps, 3u);
 }
 
 // A mesh prop shows its model's colours, follows its pose and shows a model replaced under its name
@@ -18692,12 +18692,28 @@ TEST_F(OxrRenderModelTest, models_load_as_binary_gltf)
     char version[8] = {};
     EXPECT_TRUE(json_find_string(json_find(root, "asset"), "version", version, nullptr, sizeof(version)));
     EXPECT_STREQ(version, "2.0");
-    // A node, mesh and primitive per part
+    // A node, mesh and primitive per moving part
     const JsonValue meshes = json_find(root, "meshes");
-    EXPECT_GE(json_length(meshes), 3u);
+    EXPECT_EQ(json_length(meshes), 7u) << "body, trigger, squeeze, thumbstick, primary, secondary, menu";
     EXPECT_EQ(json_length(json_find(root, "nodes")), json_length(meshes));
-    EXPECT_EQ(json_length(json_find(json_at(meshes, 0), "primitives")), 1u);
-    EXPECT_FALSE(json_is_valid(json_find(root, "images"))) << "controllers are untextured";
+    for (u32 m = 0; m < json_length(meshes); m++)
+    {
+        EXPECT_EQ(json_length(json_find(json_at(meshes, m), "primitives")), 1u) << "the samples' framework sets up one";
+    }
+
+    // Its one image is a PNG in the file
+    const JsonValue images = json_find(root, "images");
+    ASSERT_EQ(json_length(images), 1u);
+    u32 view   = 0;
+    u32 offset = 0;
+    u32 size   = 0;
+    ASSERT_TRUE(json_find_uint(json_at(images, 0), "bufferView", view));
+    const JsonValue views = json_find(root, "bufferViews");
+    ASSERT_EQ(json_length(views), view + 1);
+    ASSERT_TRUE(json_find_uint(json_at(views, view), "byteOffset", offset) && json_find_uint(json_at(views, view), "byteLength", size));
+    ASSERT_LE(offset + size, read_u32(bin));
+    EXPECT_TRUE(memory_equal(bin + 8 + offset, "\x89PNG", 4));
+    EXPECT_TRUE(memory_equal(bin + 8 + offset + size - 8, "IEND", 4));
 
     // A key that names no model the runtime handed out, and one of a controller no longer simulated
     info.modelKey = 0xDEADull;
@@ -19009,7 +19025,7 @@ TEST_F(OxrVirtualKeyboardTest, model_loads_with_texture_uri_and_key_animations)
     json.add((const char*)glb.data + 20, chunk_length);
     json.add('\0');
     // Spec XR_META_virtual_keyboard: textures the runtime updates are named by this URI
-    EXPECT_NE(cstr_find(json.data, "\"uri\":\"metaVirtualKeyboard://texture/1?w=256&h=256&fmt=RGBA32\""), nullptr);
+    EXPECT_NE(cstr_find(json.data, "\"uri\":\"metaVirtualKeyboard://texture/1?w=1024&h=512&fmt=RGBA32\""), nullptr);
     EXPECT_NE(cstr_find(json.data, "\"name\":\"collision\""), nullptr);
     JsonParser* parser = json_parse_from_string(json.data);
     ASSERT_NE(parser, nullptr);
@@ -20321,7 +20337,7 @@ TEST_F(OxrExtRenderModelTest, assets_are_glb_with_the_animatable_nodes)
 {
     const XrRenderModelEXT           model = right_model();
     const XrRenderModelPropertiesEXT props = properties(model);
-    EXPECT_EQ(props.animatableNodeCount, 2u);
+    EXPECT_EQ(props.animatableNodeCount, 6u);
     b8 nonzero = false;
     for (u8 value : props.cacheId.data)
     {
@@ -20348,16 +20364,24 @@ TEST_F(OxrExtRenderModelTest, assets_are_glb_with_the_animatable_nodes)
     EXPECT_EQ(memcmp(glb.data(), "glTF", 4), 0);
     const std::string json((const char*)glb.data() + 20, glb.size() - 20);
     EXPECT_NE(json.find("\"name\":\"trigger\""), std::string::npos);
-    EXPECT_NE(json.find("\"name\":\"buttons\""), std::string::npos);
+    EXPECT_NE(json.find("\"name\":\"thumbstick\""), std::string::npos);
     EXPECT_EQ(json.find("\"animations\""), std::string::npos) << "node states animate, not glTF animations";
 
-    XrRenderModelAssetNodePropertiesEXT nodes[3] = {};
-    XrRenderModelAssetPropertiesEXT     asset_props = { .type = XR_TYPE_RENDER_MODEL_ASSET_PROPERTIES_EXT, .nodePropertyCount = 3, .nodeProperties = nodes };
+    XrRenderModelAssetNodePropertiesEXT nodes[7] = {};
+    XrRenderModelAssetPropertiesEXT     asset_props = { .type = XR_TYPE_RENDER_MODEL_ASSET_PROPERTIES_EXT, .nodePropertyCount = 7, .nodeProperties = nodes };
     EXPECT_EQ(rm.xrGetRenderModelAssetPropertiesEXT(asset, nullptr, &asset_props), XR_ERROR_VALIDATION_FAILURE) << "the count must be the node count";
-    asset_props.nodePropertyCount = 2;
+    asset_props.nodePropertyCount = 6;
     ASSERT_EQ(rm.xrGetRenderModelAssetPropertiesEXT(asset, nullptr, &asset_props), XR_SUCCESS);
-    EXPECT_STREQ(nodes[0].uniqueName, "trigger");
-    EXPECT_STREQ(nodes[1].uniqueName, "buttons");
+    const char* const names[] = { "trigger", "squeeze", "thumbstick", "primary", "secondary", "menu" };
+    for (u32 i = 0; i < 6; i++)
+    {
+        // Spec: the name is that of exactly one node of the asset
+        EXPECT_STREQ(nodes[i].uniqueName, names[i]);
+        const std::string quoted = std::string("\"name\":\"") + names[i] + "\"";
+        const usize       found  = json.find(quoted);
+        EXPECT_NE(found, std::string::npos) << names[i];
+        EXPECT_EQ(json.find(quoted, found + 1), std::string::npos) << names[i];
+    }
     EXPECT_EQ(rm.xrDestroyRenderModelAssetEXT(asset), XR_SUCCESS);
     EXPECT_EQ(rm.xrDestroyRenderModelAssetEXT(asset), XR_ERROR_HANDLE_INVALID);
 
@@ -20373,8 +20397,8 @@ TEST_F(OxrExtRenderModelTest, assets_are_glb_with_the_animatable_nodes)
 TEST_F(OxrExtRenderModelTest, node_states_follow_the_inputs)
 {
     const XrRenderModelEXT          model    = right_model();
-    XrRenderModelNodeStateEXT       nodes[2] = {};
-    XrRenderModelStateEXT           state    = { .type = XR_TYPE_RENDER_MODEL_STATE_EXT, .nodeStateCount = 2, .nodeStates = nodes };
+    XrRenderModelNodeStateEXT       nodes[6] = {};
+    XrRenderModelStateEXT           state    = { .type = XR_TYPE_RENDER_MODEL_STATE_EXT, .nodeStateCount = 6, .nodeStates = nodes };
     const XrTime                    now      = frame().predictedDisplayTime;
     XrRenderModelStateGetInfoEXT    info     = { .type = XR_TYPE_RENDER_MODEL_STATE_GET_INFO_EXT, .displayTime = now };
     ASSERT_EQ(rm.xrGetRenderModelStateEXT(model, &info, &state), XR_SUCCESS);
@@ -20385,12 +20409,13 @@ TEST_F(OxrExtRenderModelTest, node_states_follow_the_inputs)
     sim_set_input(oxr_get_sim(), SIM_Device::RightHand, SIM_Input::TriggerValue, { .value = { 1.0f, 0.0f } });
     sim_set_input(oxr_get_sim(), SIM_Device::RightHand, SIM_Input::AClick, { .value = { 1.0f, 0.0f } });
     ASSERT_EQ(rm.xrGetRenderModelStateEXT(model, &info, &state), XR_SUCCESS);
-    EXPECT_GT(zm::length(Vec3{ nodes[0].nodePose.position.x, nodes[0].nodePose.position.y, nodes[0].nodePose.position.z }), 0.001f) << "trigger pulled";
-    EXPECT_GT(zm::length(Vec3{ nodes[1].nodePose.position.x, nodes[1].nodePose.position.y, nodes[1].nodePose.position.z }), 0.001f) << "a button pressed";
+    EXPECT_LT(nodes[0].nodePose.orientation.w, 0.9999f) << "the trigger turns";
+    EXPECT_GT(nodes[3].nodePose.position.z, 0.001f) << "A sinks";
+    EXPECT_FLOAT_EQ(nodes[4].nodePose.position.z, 0.0f) << "B does not";
 
     state.nodeStateCount = 1;
     EXPECT_EQ(rm.xrGetRenderModelStateEXT(model, &info, &state), XR_ERROR_VALIDATION_FAILURE);
-    state.nodeStateCount = 2;
+    state.nodeStateCount = 6;
     info.displayTime     = 0;
     EXPECT_EQ(rm.xrGetRenderModelStateEXT(model, &info, &state), XR_ERROR_TIME_INVALID);
 }

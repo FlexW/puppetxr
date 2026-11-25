@@ -569,13 +569,6 @@ static void append_points (SIM_HapticPoint* points, u32& count, i64 now, const S
 // Controller model
 //
 
-#define SIM_MODEL_SIDES 16
-
-static const Vec4 SIM_MODEL_BODY    = { 0.12f, 0.12f, 0.14f, 1.0f };
-static const Vec4 SIM_MODEL_RING    = { 0.22f, 0.22f, 0.25f, 1.0f };
-static const Vec4 SIM_MODEL_TRIGGER = { 0.30f, 0.30f, 0.33f, 1.0f };
-static const Vec4 SIM_MODEL_BUTTON  = { 0.80f, 0.80f, 0.82f, 1.0f };
-
 static void begin_part (SIM_RenderModel& model, Vec4 color)
 {
     if (model.parts_count >= SIM_MODEL_MAX_PARTS)
@@ -586,7 +579,7 @@ static void begin_part (SIM_RenderModel& model, Vec4 color)
     model.parts[model.parts_count++] = { .vertices_first = model.vertices_count, .indices_first = model.indices_count, .color = color };
 }
 
-// Part names become glTF node names; XR_EXT_render_model animates the trigger and the buttons by name
+// Part names become glTF node names
 static void name_part (SIM_RenderModel& model, const char* name)
 {
     ASSERT(model.parts_count > 0);
@@ -628,239 +621,236 @@ static void add_model_triangle (SIM_RenderModel& model, u32 a, u32 b, u32 c)
     model.indices[model.indices_count++] = (u16)c;
 }
 
-// A closed cylinder along the frame's Z, with flat caps
-static void add_cylinder (SIM_RenderModel& model, const Pose& frame, f32 radius, f32 half_length)
+static const char* embedded_device (const char* name)
 {
-    const Vec3 axis = zm::rotate(frame.orientation, { 0.0f, 0.0f, 1.0f });
-    u32        rings[2][SIM_MODEL_SIDES];
-    u32        caps[2][SIM_MODEL_SIDES];
-    for (u32 end = 0; end < 2; end++)
+    for (u32 i = 0; i < sim_embedded_devices_count; i++)
     {
-        const f32 z = end == 0 ? -half_length : half_length;
-        for (u32 k = 0; k < SIM_MODEL_SIDES; k++)
+        if (sim_embedded_devices[i].name && cstr_equal(sim_embedded_devices[i].name, name))
         {
-            const f32  angle  = (f32)k * (2.0f * zm::PI / (f32)SIM_MODEL_SIDES);
-            const Vec3 radial = zm::rotate(frame.orientation, { zm::cos(angle), zm::sin(angle), 0.0f });
-            const Vec3 point  = zm::transform_point(frame, { radius * zm::cos(angle), radius * zm::sin(angle), z });
-            rings[end][k]     = add_model_vertex(model, point, radial);
-            caps[end][k]      = add_model_vertex(model, point, end == 0 ? -axis : axis);
+            return sim_embedded_devices[i].json;
         }
     }
-    const u32 centers[2] = { add_model_vertex(model, zm::transform_point(frame, { 0.0f, 0.0f, -half_length }), -axis), add_model_vertex(model, zm::transform_point(frame, { 0.0f, 0.0f, half_length }), axis) };
-    for (u32 k = 0; k < SIM_MODEL_SIDES; k++)
-    {
-        const u32 n = (k + 1) % SIM_MODEL_SIDES;
-        add_model_triangle(model, rings[0][k], rings[0][n], rings[1][k]);
-        add_model_triangle(model, rings[0][n], rings[1][n], rings[1][k]);
-        add_model_triangle(model, centers[0], caps[0][n], caps[0][k]);
-        add_model_triangle(model, centers[1], caps[1][k], caps[1][n]);
-    }
+    return nullptr;
 }
 
-static f32 axis_of (Vec3 v, u32 axis)
+// Decodes a base64 member of little-endian binary into exactly size bytes
+static b8 read_packed (const JsonValue& object, const char* key, Array<u8>& out, usize size)
 {
-    return axis == 0 ? v.x : (axis == 1 ? v.y : v.z);
+    const char* text   = nullptr;
+    usize       length = 0;
+    out.length         = 0;
+    return json_is_string(json_find(object, key)) && json_raw(json_find(object, key), text, length) && base64_decode(text, length, out, size) && out.length == size;
 }
 
-static void set_axis (Vec3& v, u32 axis, f32 value)
+static b8 read_model_vec3 (const JsonValue& value, Vec3& out)
 {
-    if (axis == 0)
-    {
-        v.x = value;
-    }
-    else if (axis == 1)
-    {
-        v.y = value;
-    }
-    else
-    {
-        v.z = value;
-    }
+    return json_length(value) == 3 && json_as_float(json_at(value, 0), out.x) && json_as_float(json_at(value, 1), out.y) && json_as_float(json_at(value, 2), out.z);
 }
 
-// An axis aligned box, four vertices per face for flat normals
-static void add_box (SIM_RenderModel& model, Vec3 center, Vec3 half)
+// Whether the part belongs to the controller (any for null) in the hand
+static b8 device_part_wanted (const JsonValue& part, const char* controller, b8 left)
 {
-    for (u32 axis = 0; axis < 3; axis++)
+    char hand[8] = {};
+    if (json_find_string(part, "hand", hand, nullptr, sizeof(hand)) && cstr_equal(hand, "left") != left)
     {
-        for (u32 side = 0; side < 2; side++)
+        return false;
+    }
+    const JsonValue controllers = json_find(part, "controllers");
+    b8              wanted      = !controller || !json_is_valid(controllers);
+    for (u32 i = 0; !wanted && i < json_length(controllers); i++)
+    {
+        char name[32] = {};
+        wanted        = json_as_string(json_at(controllers, i), name, nullptr, sizeof(name)) && cstr_equal(name, controller);
+    }
+    return wanted;
+}
+
+// The part's targets are little-endian, as the arrays are
+static b8 read_device_part (const JsonValue& json, b8 left, Array<u8>& bytes, SIM_RenderModel& model)
+{
+    char     node[SIM_MODEL_MAX_NAME] = {};
+    u32      vertices                 = 0;
+    u32      triangles                = 0;
+    const b8 counts                   = json_find_uint(json, "vertices", vertices) && json_find_uint(json, "triangles", triangles);
+    if (!counts || !json_find_string(json, "node", node, nullptr, sizeof(node)))
+    {
+        return false;
+    }
+    if (vertices == 0 || vertices > SIM_MODEL_MAX_VERTICES - model.vertices_count || triangles > (SIM_MODEL_MAX_INDICES - model.indices_count) / 3 || model.parts_count >= SIM_MODEL_MAX_PARTS)
+    {
+        return false;
+    }
+    const u32 first = model.vertices_count;
+    // A node is one part, so that it is one primitive: Meta's sample framework sets up the first only
+    if (model.parts_count == 0 || !cstr_equal(model.parts[model.parts_count - 1].name, node))
+    {
+        begin_part(model, { 1.0f, 1.0f, 1.0f, 1.0f });
+        name_part(model, node);
+    }
+    if (!read_packed(json, "positions", bytes, (usize)vertices * sizeof(Vec3)))
+    {
+        return false;
+    }
+    memory_copy(model.positions + first, bytes.data, bytes.length);
+    if (!read_packed(json, "normals", bytes, (usize)vertices * sizeof(Vec3)))
+    {
+        return false;
+    }
+    memory_copy(model.normals + first, bytes.data, bytes.length);
+    if (!read_packed(json, "uvs", bytes, (usize)vertices * sizeof(Vec2)))
+    {
+        return false;
+    }
+    memory_copy(model.uvs + first, bytes.data, bytes.length);
+    for (u32 v = first; v < first + vertices; v++)
+    {
+        Vec3& p = model.positions[v];
+        Vec3& n = model.normals[v];
+        if (!zm::is_finite(p.x + p.y + p.z) || !zm::is_finite(n.x + n.y + n.z) || !zm::is_finite(model.uvs[v].x + model.uvs[v].y) || zm::length(n) < 0.5f)
         {
-            const f32 sign   = side == 0 ? -1.0f : 1.0f;
-            Vec3      normal = {};
-            set_axis(normal, axis, sign);
-            const u32 u_axis  = (axis + 1) % 3;
-            const u32 v_axis  = (axis + 2) % 3;
-            u32       corners[4];
-            for (u32 c = 0; c < 4; c++)
-            {
-                Vec3 offset = normal * axis_of(half, axis);
-                set_axis(offset, u_axis, (c == 1 || c == 2 ? 1.0f : -1.0f) * axis_of(half, u_axis));
-                set_axis(offset, v_axis, (c >= 2 ? 1.0f : -1.0f) * axis_of(half, v_axis));
-                corners[c] = add_model_vertex(model, center + offset, normal);
-            }
-            // u x v is the normal of the positive face, so its winding reverses on the negative one
-            if (side == 1)
-            {
-                add_model_triangle(model, corners[0], corners[1], corners[2]);
-                add_model_triangle(model, corners[0], corners[2], corners[3]);
-            }
-            else
-            {
-                add_model_triangle(model, corners[0], corners[2], corners[1]);
-                add_model_triangle(model, corners[0], corners[3], corners[2]);
-            }
+            return false;
+        }
+        // The left controller mirrors the right one across X
+        p.x = left ? -p.x : p.x;
+        n.x = left ? -n.x : n.x;
+        n   = zm::normalize(n);
+    }
+    model.vertices_count += vertices;
+    if (!read_packed(json, "indices", bytes, (usize)triangles * 3 * sizeof(u16)))
+    {
+        return false;
+    }
+    for (u32 i = 0; i < triangles * 3; i++)
+    {
+        u16 index = 0;
+        memory_copy(&index, bytes.data + (usize)i * sizeof(u16), sizeof(u16));
+        if (index >= vertices)
+        {
+            return false;
+        }
+        // Mirrored, a triangle turns the other way: its last two corners swap
+        const u32 corner = i % 3;
+        const u32 at     = left ? i - corner + (3 - corner) % 3 : i;
+
+        model.indices[model.indices_count + at] = (u16)(first + index);
+    }
+    model.indices_count += triangles * 3;
+    end_part(model);
+    return true;
+}
+
+static b8 read_device_node (const JsonValue& json, b8 left, SIM_RenderModel& model)
+{
+    SIM_ModelNode   node  = {};
+    const JsonValue turn  = json_find(json, "turn");
+    const b8        named = json_find_string(json, "name", node.name, nullptr, sizeof(node.name));
+    const b8        turns = json_length(turn) == 2 && read_model_vec3(json_at(turn, 0), node.turn[0]) && read_model_vec3(json_at(turn, 1), node.turn[1]);
+    if (!named || !turns || !read_model_vec3(json_find(json, "pivot"), node.pivot) || !read_model_vec3(json_find(json, "travel"), node.travel))
+    {
+        return false;
+    }
+    b8 present = false;
+    for (u32 p = 0; p < model.parts_count; p++)
+    {
+        present = present || cstr_equal(model.parts[p].name, node.name);
+    }
+    if (!present)
+    {
+        return true;
+    }
+    if (model.nodes_count >= SIM_MODEL_MAX_NODES)
+    {
+        return false;
+    }
+    // Turns are the same in both hands: a stick pushed right leans right on either
+    node.pivot.x                     = left ? -node.pivot.x : node.pivot.x;
+    node.travel.x                    = left ? -node.travel.x : node.travel.x;
+    model.nodes[model.nodes_count++] = node;
+    return true;
+}
+
+// A model of data/devices (tools/blender/puppetxr_devices.py): the parts of the controller in the
+// hand, all of them for null, and the nodes that have parts
+static b8 load_device_model (const char* device, const char* controller, b8 left, SIM_RenderModel& model)
+{
+    const char* json   = embedded_device(device);
+    JsonParser* parser = json ? json_parse_from_string(json) : nullptr;
+    if (!parser)
+    {
+        return false;
+    }
+    Array<u8> bytes = {};
+    defer
+    {
+        json_release(parser);
+        bytes.release();
+    };
+    const JsonValue root    = json_get_root(parser);
+    const JsonValue parts   = json_find(root, "parts");
+    const JsonValue nodes   = json_find(root, "nodes");
+    const JsonValue palette = json_find(root, "palette");
+    const char*     text    = nullptr;
+    usize           length  = 0;
+    if (!json_is_string(json_find(root, "texture")) || !json_raw(json_find(root, "texture"), text, length) || !base64_decode(text, length, bytes, SIM_MODEL_MAX_IMAGE) || json_length(palette) > SIM_MODEL_PALETTE_ROWS)
+    {
+        return false;
+    }
+    memory_copy(model.image, bytes.data, bytes.length);
+    model.image_size = (u32)bytes.length;
+    for (u32 c = 0; c < json_length(palette); c++)
+    {
+        if (!read_model_vec3(json_at(palette, c), model.palette[c]))
+        {
+            return false;
         }
     }
-}
-
-// A torus around the frame's Z
-static void add_torus (SIM_RenderModel& model, const Pose& frame, f32 major, f32 minor)
-{
-    const u32 segments = 2 * SIM_MODEL_SIDES;
-    const u32 sides    = 6;
-    const u32 first    = model.vertices_count;
-    for (u32 i = 0; i < segments; i++)
+    for (u32 p = 0; p < json_length(parts); p++)
     {
-        const f32  around = (f32)i * (2.0f * zm::PI / (f32)segments);
-        const Vec3 out    = { zm::cos(around), zm::sin(around), 0.0f };
-        for (u32 j = 0; j < sides; j++)
+        const JsonValue part = json_at(parts, p);
+        if (device_part_wanted(part, controller, left) && !read_device_part(part, left, bytes, model))
         {
-            const f32  tube   = (f32)j * (2.0f * zm::PI / (f32)sides);
-            const Vec3 normal = out * zm::cos(tube) + Vec3{ 0.0f, 0.0f, zm::sin(tube) };
-            add_model_vertex(model, zm::transform_point(frame, out * major + normal * minor), zm::rotate(frame.orientation, normal));
+            return false;
         }
     }
-    for (u32 i = 0; i < segments; i++)
+    for (u32 n = 0; n < json_length(nodes); n++)
     {
-        for (u32 j = 0; j < sides; j++)
+        if (!read_device_node(json_at(nodes, n), left, model))
         {
-            const u32 a = first + i * sides + j;
-            const u32 b = first + ((i + 1) % segments) * sides + j;
-            const u32 c = first + ((i + 1) % segments) * sides + (j + 1) % sides;
-            const u32 d = first + i * sides + (j + 1) % sides;
-            add_model_triangle(model, a, b, c);
-            add_model_triangle(model, a, c, d);
+            return false;
         }
     }
+    return model.parts_count > 0;
 }
 
 //
 // Virtual keyboard
 //
 
-namespace
-{
+#define SIM_VKB_PITCH        0.036f // key pitch, meters
+#define SIM_VKB_GAP          0.004f
+#define SIM_VKB_MARGIN       0.008f
+#define SIM_VKB_KEY_RADIUS   0.0055f // of a key's corners
+#define SIM_VKB_KEY_BEVEL    0.0009f
+#define SIM_VKB_PANEL_RADIUS 0.014f
+#define SIM_VKB_PANEL_DEPTH  0.0015f
+#define SIM_VKB_CORNER       4 // segments of a quarter turn
+#define SIM_VKB_MAX_GLYPHS   96
 
-// 5x7 glyphs, rows top to bottom, bit 4 the leftmost column
-struct SIM_Glyph
-{
-    char code;
-    u8   rows[7];
-};
+static const Vec3 SIM_VKB_KEY_COLOR      = { 83.0f, 87.0f, 95.0f }; // sRGB, of 255
+static const Vec3 SIM_VKB_MODIFIER_COLOR = { 60.0f, 64.0f, 71.0f };
+static const Vec3 SIM_VKB_ENTER_COLOR    = { 52.0f, 134.0f, 143.0f };
+static const Vec3 SIM_VKB_LABEL_COLOR    = { 242.0f, 244.0f, 246.0f };
+static const Vec3 SIM_VKB_SPACE_COLOR    = { 206.0f, 210.0f, 215.0f };
+static const Vec3 SIM_VKB_SHIFT_COLOR    = { 110.0f, 224.0f, 232.0f };
+static const u8   SIM_VKB_PANEL_COLOR[4] = { 37, 40, 46, 255 };
 
-} // namespace
-
-static const SIM_Glyph SIM_FONT[] = {
-    { 'A', { 0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001 } },
-    { 'B', { 0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110 } },
-    { 'C', { 0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110 } },
-    { 'D', { 0b11100, 0b10010, 0b10001, 0b10001, 0b10001, 0b10010, 0b11100 } },
-    { 'E', { 0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111 } },
-    { 'F', { 0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000 } },
-    { 'G', { 0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01111 } },
-    { 'H', { 0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001 } },
-    { 'I', { 0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110 } },
-    { 'J', { 0b00111, 0b00010, 0b00010, 0b00010, 0b00010, 0b10010, 0b01100 } },
-    { 'K', { 0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001 } },
-    { 'L', { 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111 } },
-    { 'M', { 0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001 } },
-    { 'N', { 0b10001, 0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001 } },
-    { 'O', { 0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110 } },
-    { 'P', { 0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000 } },
-    { 'Q', { 0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101 } },
-    { 'R', { 0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001 } },
-    { 'S', { 0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110 } },
-    { 'T', { 0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100 } },
-    { 'U', { 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110 } },
-    { 'V', { 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100 } },
-    { 'W', { 0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010 } },
-    { 'X', { 0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001 } },
-    { 'Y', { 0b10001, 0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100 } },
-    { 'Z', { 0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111 } },
-    { 'a', { 0b00000, 0b00000, 0b01110, 0b00001, 0b01111, 0b10001, 0b01111 } },
-    { 'b', { 0b10000, 0b10000, 0b10110, 0b11001, 0b10001, 0b10001, 0b11110 } },
-    { 'c', { 0b00000, 0b00000, 0b01110, 0b10000, 0b10000, 0b10001, 0b01110 } },
-    { 'd', { 0b00001, 0b00001, 0b01101, 0b10011, 0b10001, 0b10001, 0b01111 } },
-    { 'e', { 0b00000, 0b00000, 0b01110, 0b10001, 0b11111, 0b10000, 0b01110 } },
-    { 'f', { 0b00110, 0b01001, 0b01000, 0b11100, 0b01000, 0b01000, 0b01000 } },
-    { 'g', { 0b00000, 0b01111, 0b10001, 0b10001, 0b01111, 0b00001, 0b01110 } },
-    { 'h', { 0b10000, 0b10000, 0b10110, 0b11001, 0b10001, 0b10001, 0b10001 } },
-    { 'i', { 0b00100, 0b00000, 0b01100, 0b00100, 0b00100, 0b00100, 0b01110 } },
-    { 'j', { 0b00010, 0b00000, 0b00110, 0b00010, 0b00010, 0b10010, 0b01100 } },
-    { 'k', { 0b10000, 0b10000, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010 } },
-    { 'l', { 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110 } },
-    { 'm', { 0b00000, 0b00000, 0b11010, 0b10101, 0b10101, 0b10001, 0b10001 } },
-    { 'n', { 0b00000, 0b00000, 0b10110, 0b11001, 0b10001, 0b10001, 0b10001 } },
-    { 'o', { 0b00000, 0b00000, 0b01110, 0b10001, 0b10001, 0b10001, 0b01110 } },
-    { 'p', { 0b00000, 0b00000, 0b11110, 0b10001, 0b11110, 0b10000, 0b10000 } },
-    { 'q', { 0b00000, 0b00000, 0b01101, 0b10011, 0b01111, 0b00001, 0b00001 } },
-    { 'r', { 0b00000, 0b00000, 0b10110, 0b11001, 0b10000, 0b10000, 0b10000 } },
-    { 's', { 0b00000, 0b00000, 0b01110, 0b10000, 0b01110, 0b00001, 0b11110 } },
-    { 't', { 0b01000, 0b01000, 0b11100, 0b01000, 0b01000, 0b01001, 0b00110 } },
-    { 'u', { 0b00000, 0b00000, 0b10001, 0b10001, 0b10001, 0b10011, 0b01101 } },
-    { 'v', { 0b00000, 0b00000, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100 } },
-    { 'w', { 0b00000, 0b00000, 0b10001, 0b10001, 0b10101, 0b10101, 0b01010 } },
-    { 'x', { 0b00000, 0b00000, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001 } },
-    { 'y', { 0b00000, 0b00000, 0b10001, 0b10001, 0b01111, 0b00001, 0b01110 } },
-    { 'z', { 0b00000, 0b00000, 0b11111, 0b00010, 0b00100, 0b01000, 0b11111 } },
-    { '0', { 0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110 } },
-    { '1', { 0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110 } },
-    { '2', { 0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111 } },
-    { '3', { 0b11111, 0b00010, 0b00100, 0b00010, 0b00001, 0b10001, 0b01110 } },
-    { '4', { 0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010 } },
-    { '5', { 0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110 } },
-    { '6', { 0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110 } },
-    { '7', { 0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000 } },
-    { '8', { 0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110 } },
-    { '9', { 0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100 } },
-    { ',', { 0b00000, 0b00000, 0b00000, 0b00000, 0b01100, 0b00100, 0b01000 } },
-    { '.', { 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b01100, 0b01100 } },
-    { '?', { 0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b00000, 0b00100 } },
-    { '!', { 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00000, 0b00100 } },
-    { '\b', { 0b00000, 0b00100, 0b01000, 0b11111, 0b01000, 0b00100, 0b00000 } }, // backspace arrow
-    { '\n', { 0b00001, 0b00001, 0b00101, 0b01001, 0b11111, 0b01000, 0b00100 } }, // enter arrow
-    { '\x0e', { 0b00100, 0b01110, 0b11111, 0b01110, 0b01110, 0b01110, 0b00000 } }, // shift arrow
-    { ' ', { 0b00000, 0b00000, 0b00000, 0b00000, 0b10001, 0b11111, 0b00000 } },   // space bracket
-};
-
-#define SIM_VKB_PITCH      0.036f // key pitch, meters
-#define SIM_VKB_GAP        0.004f
-#define SIM_VKB_MARGIN     0.008f
-#define SIM_VKB_CELL       32     // atlas cell height, and width of a one unit key
-#define SIM_VKB_GLYPH_SCALE 3
-
-static const u8 SIM_VKB_KEY_COLOR[4]    = { 64, 64, 72, 255 };
-static const u8 SIM_VKB_BORDER_COLOR[4] = { 40, 40, 46, 255 };
-static const u8 SIM_VKB_LABEL_COLOR[4]  = { 235, 235, 235, 255 };
-static const u8 SIM_VKB_SHIFT_COLOR[4]  = { 255, 200, 60, 255 };
-static const u8 SIM_VKB_PANEL_COLOR[4]  = { 28, 28, 32, 255 };
-
-// Solid blocks below the label cells: the panel colour, and transparent texels for the collision mesh
-#define SIM_VKB_PANEL_TEXEL_X 8
-#define SIM_VKB_CLEAR_TEXEL_X 24
-#define SIM_VKB_SOLID_TEXEL_Y 248
-
-static const SIM_Glyph* find_glyph (char code)
-{
-    for (const SIM_Glyph& glyph : SIM_FONT)
-    {
-        if (glyph.code == code)
-        {
-            return &glyph;
-        }
-    }
-    return nullptr;
-}
+// Solid blocks below the label cells: the panel colour, its edge, and transparent texels for the collision mesh
+// away from the cells and the atlas' edges, which an app that repeats the texture filters into them
+#define SIM_VKB_PANEL_TEXEL_X 64
+#define SIM_VKB_CLEAR_TEXEL_X 128
+#define SIM_VKB_EDGE_TEXEL_X  192
+#define SIM_VKB_SOLID_TEXEL_Y 416
+#define SIM_VKB_SOLID         16 // half a block
 
 static char vkb_label (const SIM_VkbKey& key, b8 shifted)
 {
@@ -893,20 +883,173 @@ static void fill_texels (u8* rgba, u32 x, u32 y, u32 width, u32 height, const u8
 
 static const char* const SIM_VKB_SPECIAL_NAMES[] = { "", "backspace", "enter", "shift", "space" };
 
-static void add_vkb_quad (SIM_RenderModel& model, Vec2 center, Vec2 half, f32 z, Vec2 uv_low, Vec2 uv_high)
+static void add_vkb_quad (SIM_RenderModel& model, Vec2 half, f32 z, Vec2 uv)
 {
-    const Vec3 normal = { 0.0f, 0.0f, 1.0f };
-    u32        corners[4];
+    u32 corners[4];
     for (u32 c = 0; c < 4; c++)
     {
-        const f32 sx = c == 1 || c == 2 ? 1.0f : -1.0f;
-        const f32 sy = c >= 2 ? 1.0f : -1.0f;
-        corners[c]   = add_model_vertex(model, { center.x + sx * half.x, center.y + sy * half.y, z }, normal);
-        // Texture rows run top down, keyboard y up
-        model.uvs[corners[c]] = { sx > 0.0f ? uv_high.x : uv_low.x, sy > 0.0f ? uv_low.y : uv_high.y };
+        const f32 sx         = c == 1 || c == 2 ? 1.0f : -1.0f;
+        const f32 sy         = c >= 2 ? 1.0f : -1.0f;
+        corners[c]           = add_model_vertex(model, { sx * half.x, sy * half.y, z }, { 0.0f, 0.0f, 1.0f });
+        model.uvs[corners[c]] = uv;
     }
     add_model_triangle(model, corners[0], corners[1], corners[2]);
     add_model_triangle(model, corners[0], corners[2], corners[3]);
+}
+
+// A ring of a rounded rectangle, counter-clockwise seen from +Z, its normals leaning out by `lean`
+static u32 add_vkb_ring (SIM_RenderModel& model, Vec2 center, Vec2 half, f32 radius, f32 z, f32 lean)
+{
+    const u32 first = model.vertices_count;
+    for (u32 q = 0; q < 4; q++)
+    {
+        const f32 sx = q == 0 || q == 3 ? 1.0f : -1.0f;
+        const f32 sy = q < 2 ? 1.0f : -1.0f;
+        for (u32 i = 0; i <= SIM_VKB_CORNER; i++)
+        {
+            const f32  angle = 0.5f * zm::PI * ((f32)q + (f32)i / (f32)SIM_VKB_CORNER);
+            const Vec2 out   = { zm::cos(angle), zm::sin(angle) };
+            const Vec3 point = { center.x + sx * (half.x - radius) + radius * out.x, center.y + sy * (half.y - radius) + radius * out.y, z };
+            add_model_vertex(model, point, { out.x * zm::sin(lean), out.y * zm::sin(lean), zm::cos(lean) });
+        }
+    }
+    return first;
+}
+
+// A slab from z0 to z1 with rounded corners and a bevelled front edge, open behind, where it is never seen
+static void add_vkb_slab (SIM_RenderModel& model, Vec2 center, Vec2 half, f32 radius, f32 z0, f32 z1, f32 bevel)
+{
+    const u32 count    = 4 * (SIM_VKB_CORNER + 1);
+    const f32 slant    = 0.2929f * bevel; // 1 - cos 45 degrees
+    const u32 rings[5] = {
+        add_vkb_ring(model, center, half, radius, z0, 0.5f * zm::PI),
+        add_vkb_ring(model, center, half, radius, z1 - bevel, 0.5f * zm::PI),
+        add_vkb_ring(model, center, half - Vec2{ slant, slant }, radius - slant, z1 - slant, 0.25f * zm::PI),
+        add_vkb_ring(model, center, half - Vec2{ bevel, bevel }, radius - bevel, z1, 0.0f),
+        add_model_vertex(model, { center.x, center.y, z1 }, { 0.0f, 0.0f, 1.0f }),
+    };
+    for (u32 r = 0; r < 3; r++)
+    {
+        for (u32 i = 0; i < count; i++)
+        {
+            const u32 n = (i + 1) % count;
+            add_model_triangle(model, rings[r] + i, rings[r] + n, rings[r + 1] + n);
+            add_model_triangle(model, rings[r] + i, rings[r + 1] + n, rings[r + 1] + i);
+        }
+    }
+    for (u32 i = 0; i < count; i++)
+    {
+        add_model_triangle(model, rings[4], rings[3] + i, rings[3] + (i + 1) % count);
+    }
+}
+
+namespace
+{
+
+// data/devices/glyphs.json: coverage of SIM_VkbGlyphs::height rows per glyph, one after the other
+struct SIM_VkbGlyphs
+{
+    Array<u8> coverage;
+    u32       height;
+    u32       count;
+    struct
+    {
+        u32 code;
+        u32 width;
+        u32 offset;
+    } glyphs[SIM_VKB_MAX_GLYPHS];
+};
+
+} // namespace
+
+static b8 load_vkb_glyphs (SIM_VkbGlyphs& out)
+{
+    const char* json   = embedded_device("glyphs");
+    JsonParser* parser = json ? json_parse_from_string(json) : nullptr;
+    if (!parser)
+    {
+        return false;
+    }
+    defer { json_release(parser); };
+    const JsonValue root   = json_get_root(parser);
+    const JsonValue glyphs = json_find(root, "glyphs");
+    u32             size   = 0;
+    if (!json_find_uint(root, "height", out.height) || out.height == 0 || out.height > SIM_VKB_CELL || json_length(glyphs) > SIM_VKB_MAX_GLYPHS)
+    {
+        return false;
+    }
+    for (u32 g = 0; g < json_length(glyphs); g++)
+    {
+        auto& glyph = out.glyphs[out.count++];
+        if (!json_as_uint(json_at(json_at(glyphs, g), 0), glyph.code) || !json_as_uint(json_at(json_at(glyphs, g), 1), glyph.width) || glyph.width == 0 || glyph.width > SIM_VKB_TEXTURE_WIDTH)
+        {
+            return false;
+        }
+        glyph.offset = size;
+        size += glyph.width * out.height;
+    }
+    return read_packed(root, "coverage", out.coverage, size);
+}
+
+static f32 smooth_step (f32 low, f32 high, f32 x)
+{
+    const f32 t = zm::clamp((x - low) / (high - low), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+// Apps draw the keyboard unlit, so a key's cell is shaded: its flanks dark, the bevel lit from
+// above, the face a little lighter at the top
+static void draw_vkb_key (const SIM_VkbKey& key, Vec3 color, u8* out_rgba)
+{
+    const f32 width  = 2.0f * key.half.x;
+    const f32 height = 2.0f * key.half.y;
+    for (u32 row = 0; row < SIM_VKB_CELL; row++)
+    {
+        for (u32 column = 0; column < key.cell_width; column++)
+        {
+            const Vec2 p      = { width * (((f32)column + 0.5f) / (f32)key.cell_width - 0.5f), height * (0.5f - ((f32)row + 0.5f) / (f32)SIM_VKB_CELL) };
+            const Vec2 corner = { zm::max(zm::abs(p.x) - key.half.x + SIM_VKB_KEY_RADIUS, 0.0f), zm::max(zm::abs(p.y) - key.half.y + SIM_VKB_KEY_RADIUS, 0.0f) };
+            const f32  inside = SIM_VKB_KEY_RADIUS - zm::sqrt(corner.x * corner.x + corner.y * corner.y); // to the key's edge
+            const f32  reach  = zm::max(zm::sqrt(corner.x * corner.x + corner.y * corner.y), 1e-6f);
+            const f32  up     = corner.y / reach * (p.y > 0.0f ? 1.0f : -1.0f);
+            const f32  face   = 1.0f + 0.07f * p.y / key.half.y;
+            const f32  bevel  = 1.0f + 0.42f * up;
+            const f32  edge   = smooth_step(0.0002f, 0.0007f, inside);
+            const f32  flat   = smooth_step(0.0008f, 0.0016f, inside);
+            const f32  shade  = zm::lerp(0.42f, zm::lerp(bevel, face, flat), edge);
+            u8*        texel  = out_rgba + ((usize)(key.cell_y + row) * SIM_VKB_TEXTURE_WIDTH + key.cell_x + column) * 4;
+            texel[0]          = (u8)(zm::min(color.x * shade, 255.0f) + 0.5f);
+            texel[1]          = (u8)(zm::min(color.y * shade, 255.0f) + 0.5f);
+            texel[2]          = (u8)(zm::min(color.z * shade, 255.0f) + 0.5f);
+            texel[3]          = 255;
+        }
+    }
+}
+
+static void draw_vkb_label (const SIM_VkbGlyphs& glyphs, const SIM_VkbKey& key, char label, Vec3 color, u8* out_rgba)
+{
+    for (u32 g = 0; g < glyphs.count; g++)
+    {
+        const u32 width = glyphs.glyphs[g].width;
+        if (glyphs.glyphs[g].code != (u32)(u8)label || width > key.cell_width)
+        {
+            continue;
+        }
+        const u32 left = key.cell_x + (key.cell_width - width) / 2;
+        const u32 top  = key.cell_y + (SIM_VKB_CELL - glyphs.height) / 2;
+        for (u32 row = 0; row < glyphs.height; row++)
+        {
+            for (u32 column = 0; column < width; column++)
+            {
+                const f32 a     = (f32)glyphs.coverage[glyphs.glyphs[g].offset + (usize)row * width + column] / 255.0f;
+                u8*       texel = out_rgba + ((usize)(top + row) * SIM_VKB_TEXTURE_WIDTH + left + column) * 4;
+                texel[0]        = (u8)(zm::lerp((f32)texel[0], color.x, a) + 0.5f);
+                texel[1]        = (u8)(zm::lerp((f32)texel[1], color.y, a) + 0.5f);
+                texel[2]        = (u8)(zm::lerp((f32)texel[2], color.z, a) + 0.5f);
+            }
+        }
+        return;
+    }
 }
 
 //
@@ -1362,15 +1505,6 @@ static Pose wrist_in_grip (const SIM_HandModel& model, b8 left)
     const Vec3 offset           = model.offsets[(u32)SIM_HandJoint::Palm];
     const Vec3 palm_in_wrist    = { left ? -offset.x : offset.x, offset.y, offset.z };
     return zm::pose_mul(palm, { -palm_in_wrist, zm::QUAT_IDENTITY });
-}
-
-// Decodes a base64 member of little-endian binary (hand_mesh.json) into exactly size bytes
-static b8 read_packed (const JsonValue& object, const char* key, Array<u8>& out, usize size)
-{
-    const char* text   = nullptr;
-    usize       length = 0;
-    out.length         = 0;
-    return json_is_string(json_find(object, key)) && json_raw(json_find(object, key), text, length) && base64_decode(text, length, out, size) && out.length == size;
 }
 
 // The open hand the mesh is skinned to: bind poses in the wrist frame, radii and parents
@@ -6268,54 +6402,12 @@ const SIM_HandMesh& sim_get_hand_mesh (SIM_Sim* sim, SIM_Device hand)
     return sim->hand_meshes[hand == SIM_Device::LeftHand ? 0 : 1];
 }
 
-// A compact keyboard: a slab and five rows of caps, the last with a space bar
 void sim_keyboard_model (SIM_RenderModel& out_model)
 {
-    out_model = {};
-    const f32 pitch = 0.019f;
-    const f32 cap   = 0.0085f; // half width of a cap
-    const f32 base  = 0.006f;  // half height of the slab
-    begin_part(out_model, SIM_MODEL_BODY);
-    add_box(out_model, { 0.0f, 0.0f, 0.0f }, { 0.15f, base, 0.056f });
-    end_part(out_model);
-
-    begin_part(out_model, SIM_MODEL_BUTTON);
-    static const u32 row_keys[4] = { 15, 14, 13, 12 };
-    const f32        top         = base + 0.003f;
-    for (u32 row = 0; row < 5; row++)
+    memory_zero(&out_model, sizeof(out_model));
+    if (!load_device_model("keyboard", nullptr, false, out_model))
     {
-        const f32 z = -0.038f + (f32)row * pitch;
-        if (row == 4)
-        {
-            add_box(out_model, { 0.0f, top, z }, { 3.0f * pitch, 0.003f, cap });
-            for (u32 k = 0; k < 4; k++)
-            {
-                const f32 x = (3.5f + (f32)k) * pitch;
-                add_box(out_model, { -x, top, z }, { cap, 0.003f, cap });
-                add_box(out_model, { x, top, z }, { cap, 0.003f, cap });
-            }
-            continue;
-        }
-        const f32 first = -0.5f * (f32)(row_keys[row] - 1) * pitch;
-        for (u32 k = 0; k < row_keys[row]; k++)
-        {
-            add_box(out_model, { first + (f32)k * pitch, top, z }, { cap, 0.003f, cap });
-        }
-    }
-    end_part(out_model);
-
-    // Spec XR_FB_render_model: a keyboard's origin is the centre of its bounding box
-    Vec3 low  = out_model.positions[0];
-    Vec3 high = low;
-    for (u32 v = 0; v < out_model.vertices_count; v++)
-    {
-        low  = zm::min(low, out_model.positions[v]);
-        high = zm::max(high, out_model.positions[v]);
-    }
-    const Vec3 center = (low + high) * 0.5f;
-    for (u32 v = 0; v < out_model.vertices_count; v++)
-    {
-        out_model.positions[v] -= center;
+        FAIL_MSG("data/devices/keyboard.json is missing from the build or invalid");
     }
 }
 
@@ -6385,7 +6477,7 @@ void sim_vkb_layout (SIM_VkbLayout& out_layout)
             out_layout.keys[out_layout.keys_count++] = key;
         }
     }
-    ASSERT(cell_y + SIM_VKB_CELL <= SIM_VKB_SOLID_TEXEL_Y - 8);
+    ASSERT(cell_y + SIM_VKB_CELL <= SIM_VKB_SOLID_TEXEL_Y - SIM_VKB_SOLID);
     out_layout.half = { 0.5f * widest * SIM_VKB_PITCH + SIM_VKB_MARGIN, 2.5f * SIM_VKB_PITCH + SIM_VKB_MARGIN };
 }
 
@@ -6406,36 +6498,37 @@ void sim_vkb_texture (const SIM_VkbLayout& layout, b8 shifted, u8* out_rgba)
 {
     fill_texels(out_rgba, 0, 0, SIM_VKB_TEXTURE_WIDTH, SIM_VKB_TEXTURE_HEIGHT, SIM_VKB_PANEL_COLOR);
     const u8 clear[4] = {};
-    fill_texels(out_rgba, SIM_VKB_CLEAR_TEXEL_X - 8, SIM_VKB_SOLID_TEXEL_Y - 8, 16, 16, clear);
+    const u8 edge[4]  = { 62, 66, 74, 255 };
+    fill_texels(out_rgba, SIM_VKB_CLEAR_TEXEL_X - SIM_VKB_SOLID, SIM_VKB_SOLID_TEXEL_Y - SIM_VKB_SOLID, 2 * SIM_VKB_SOLID, 2 * SIM_VKB_SOLID, clear);
+    fill_texels(out_rgba, SIM_VKB_EDGE_TEXEL_X - SIM_VKB_SOLID, SIM_VKB_SOLID_TEXEL_Y - SIM_VKB_SOLID, 2 * SIM_VKB_SOLID, 2 * SIM_VKB_SOLID, edge);
+    SIM_VkbGlyphs glyphs = {};
+    defer { glyphs.coverage.release(); };
+    if (!load_vkb_glyphs(glyphs))
+    {
+        FAIL_MSG("data/devices/glyphs.json is missing from the build or invalid");
+        return;
+    }
     for (u32 k = 0; k < layout.keys_count; k++)
     {
         const SIM_VkbKey& key    = layout.keys[k];
         const b8          active = key.kind == SIM_VkbKeyKind::Shift && shifted;
-        fill_texels(out_rgba, key.cell_x, key.cell_y, key.cell_width, SIM_VKB_CELL, SIM_VKB_BORDER_COLOR);
-        fill_texels(out_rgba, key.cell_x + 1, key.cell_y + 1, key.cell_width - 2, SIM_VKB_CELL - 2, SIM_VKB_KEY_COLOR);
-        const SIM_Glyph* glyph = find_glyph(vkb_label(key, shifted));
-        ASSERT(glyph);
-        const u32 left = key.cell_x + (key.cell_width - 5 * SIM_VKB_GLYPH_SCALE) / 2;
-        const u32 top  = key.cell_y + (SIM_VKB_CELL - 7 * SIM_VKB_GLYPH_SCALE) / 2;
-        for (u32 row = 0; row < 7; row++)
-        {
-            for (u32 column = 0; column < 5; column++)
-            {
-                if (glyph->rows[row] & (0x10u >> column))
-                {
-                    fill_texels(out_rgba, left + column * SIM_VKB_GLYPH_SCALE, top + row * SIM_VKB_GLYPH_SCALE, SIM_VKB_GLYPH_SCALE, SIM_VKB_GLYPH_SCALE, active ? SIM_VKB_SHIFT_COLOR : SIM_VKB_LABEL_COLOR);
-                }
-            }
-        }
+        const b8          plain  = key.kind == SIM_VkbKeyKind::Char || key.kind == SIM_VkbKeyKind::Space;
+        const Vec3        color  = key.kind == SIM_VkbKeyKind::Enter ? SIM_VKB_ENTER_COLOR : plain ? SIM_VKB_KEY_COLOR : SIM_VKB_MODIFIER_COLOR;
+        const Vec3        label  = active ? SIM_VKB_SHIFT_COLOR : key.kind == SIM_VkbKeyKind::Space ? SIM_VKB_SPACE_COLOR : SIM_VKB_LABEL_COLOR;
+        draw_vkb_key(key, color, out_rgba);
+        draw_vkb_label(glyphs, key, vkb_label(key, shifted), label, out_rgba);
     }
 }
 
 void sim_vkb_model (const SIM_VkbLayout& layout, SIM_RenderModel& out_model)
 {
-    out_model = { .texture_id = SIM_VKB_TEXTURE_ID, .texture_width = SIM_VKB_TEXTURE_WIDTH, .texture_height = SIM_VKB_TEXTURE_HEIGHT };
-    const Vec4 white = { 1.0f, 1.0f, 1.0f, 1.0f };
-    const f32  w     = (f32)SIM_VKB_TEXTURE_WIDTH;
-    const f32  h     = (f32)SIM_VKB_TEXTURE_HEIGHT;
+    memory_zero(&out_model, sizeof(out_model));
+    out_model.texture_id     = SIM_VKB_TEXTURE_ID;
+    out_model.texture_width  = SIM_VKB_TEXTURE_WIDTH;
+    out_model.texture_height = SIM_VKB_TEXTURE_HEIGHT;
+    const Vec4 white         = { 1.0f, 1.0f, 1.0f, 1.0f };
+    const f32  w             = (f32)SIM_VKB_TEXTURE_WIDTH;
+    const f32  h             = (f32)SIM_VKB_TEXTURE_HEIGHT;
     for (u32 k = 0; k < layout.keys_count; k++)
     {
         const SIM_VkbKey& key = layout.keys[k];
@@ -6443,24 +6536,34 @@ void sim_vkb_model (const SIM_VkbLayout& layout, SIM_RenderModel& out_model)
         SIM_ModelPart& part = out_model.parts[out_model.parts_count - 1];
         part.press          = { 0.0f, 0.0f, -SIM_VKB_PRESS };
         cstr_format(part.name, sizeof(part.name), "key%u", k);
-        // Half a texel in from the cell edges so filtering never reaches the next cell
-        const Vec2 low  = { ((f32)key.cell_x + 0.5f) / w, ((f32)key.cell_y + 0.5f) / h };
-        const Vec2 high = { ((f32)(key.cell_x + key.cell_width) - 0.5f) / w, ((f32)(key.cell_y + SIM_VKB_CELL) - 0.5f) / h };
-        add_vkb_quad(out_model, key.center, key.half, SIM_VKB_KEY_HEIGHT, low, high);
+        add_vkb_slab(out_model, key.center, key.half, SIM_VKB_KEY_RADIUS, 0.0f, SIM_VKB_KEY_HEIGHT, SIM_VKB_KEY_BEVEL);
+        // The cell lies flat over the key; half a texel in from its edges so filtering never reaches
+        // the next cell. Texture rows run top down, keyboard y up
+        for (u32 v = part.vertices_first; v < out_model.vertices_count; v++)
+        {
+            const Vec2 at = { 0.5f + 0.5f * (out_model.positions[v].x - key.center.x) / key.half.x, 0.5f - 0.5f * (out_model.positions[v].y - key.center.y) / key.half.y };
+            out_model.uvs[v] = { ((f32)key.cell_x + 0.5f + at.x * ((f32)key.cell_width - 1.0f)) / w, ((f32)key.cell_y + 0.5f + at.y * ((f32)SIM_VKB_CELL - 1.0f)) / h };
+        }
         end_part(out_model);
     }
 
     const Vec2 panel = { (f32)SIM_VKB_PANEL_TEXEL_X / w, (f32)SIM_VKB_SOLID_TEXEL_Y / h };
+    const Vec2 edge  = { (f32)SIM_VKB_EDGE_TEXEL_X / w, (f32)SIM_VKB_SOLID_TEXEL_Y / h };
     begin_part(out_model, white);
-    cstr_copy(out_model.parts[out_model.parts_count - 1].name, sizeof(out_model.parts[0].name), "panel");
-    add_vkb_quad(out_model, { 0.0f, 0.0f }, layout.half, 0.0f, panel, panel);
+    name_part(out_model, "panel");
+    const u32 first = out_model.vertices_count;
+    add_vkb_slab(out_model, {}, layout.half, SIM_VKB_PANEL_RADIUS, -SIM_VKB_PANEL_DEPTH, 0.0f, 0.5f * SIM_VKB_PANEL_DEPTH);
+    for (u32 v = first; v < out_model.vertices_count; v++)
+    {
+        out_model.uvs[v] = out_model.normals[v].z > 0.9f ? panel : edge;
+    }
     end_part(out_model);
 
     // Spec XR_META_virtual_keyboard: the app's colliders come from the node named "collision"
     const Vec2 clear = { (f32)SIM_VKB_CLEAR_TEXEL_X / w, (f32)SIM_VKB_SOLID_TEXEL_Y / h };
     begin_part(out_model, white);
-    cstr_copy(out_model.parts[out_model.parts_count - 1].name, sizeof(out_model.parts[0].name), "collision");
-    add_vkb_quad(out_model, { 0.0f, 0.0f }, layout.half, -0.002f, clear, clear);
+    name_part(out_model, "collision");
+    add_vkb_quad(out_model, layout.half, -0.002f, clear);
     end_part(out_model);
 }
 
@@ -6728,60 +6831,59 @@ b8 sim_prop_motion_from_name (const char* name, SIM_PropMotion& out_motion)
 
 void sim_controller_model (SIM_Controller controller, SIM_Device hand, SIM_RenderModel& out_model)
 {
-    out_model = {};
+    memory_zero(&out_model, sizeof(out_model));
     ASSERT_MSG(is_hand(hand), "device %u is not a hand", (u32)hand);
-
-    // Right hand in grip space: the handle runs along Z (its top at -Z), the trigger faces -Y,
-    // the face buttons sit on top; the thumb side is -X
-    const Quat upright = zm::QUAT_IDENTITY;
-    begin_part(out_model, SIM_MODEL_BODY);
-    name_part(out_model, "body");
-    add_cylinder(out_model, { { 0.0f, 0.0f, 0.0125f }, upright }, 0.017f, 0.0475f);
-    add_cylinder(out_model, { { 0.0f, -0.008f, -0.05f }, upright }, controller == SIM_Controller::MetaTouchPro ? 0.036f : 0.032f, 0.012f);
-    end_part(out_model);
-
-    begin_part(out_model, SIM_MODEL_TRIGGER);
-    name_part(out_model, "trigger");
-    add_cylinder(out_model, { { 0.0f, -0.03f, -0.028f }, upright }, 0.007f, 0.012f);
-    end_part(out_model);
-
-    begin_part(out_model, SIM_MODEL_BUTTON);
-    name_part(out_model, "buttons");
-    add_cylinder(out_model, { { 0.012f, -0.016f, -0.064f }, upright }, 0.006f, 0.002f);
-    if (controller != SIM_Controller::KhrSimple)
+    if (!load_device_model("controller", sim_controller_name(controller), hand == SIM_Device::LeftHand, out_model))
     {
-        add_cylinder(out_model, { { 0.012f, 0.004f, -0.064f }, upright }, 0.006f, 0.002f);
-        add_cylinder(out_model, { { -0.01f, -0.006f, -0.067f }, upright }, 0.008f, 0.005f);
-    }
-    end_part(out_model);
-
-    // Only the first Touch generations track through a ring around the hand
-    if (controller == SIM_Controller::OculusTouch)
-    {
-        begin_part(out_model, SIM_MODEL_RING);
-        name_part(out_model, "ring");
-        const Quat across = zm::quat_from_axis_angle({ 0.0f, 1.0f, 0.0f }, 0.5f * zm::PI);
-        add_torus(out_model, { { 0.0f, -0.035f, -0.03f }, across }, 0.05f, 0.006f);
-        end_part(out_model);
-    }
-
-    // The left controller mirrors the right one across X; mirroring flips the winding back
-    if (hand == SIM_Device::LeftHand)
-    {
-        for (u32 v = 0; v < out_model.vertices_count; v++)
-        {
-            out_model.positions[v].x = -out_model.positions[v].x;
-            out_model.normals[v].x   = -out_model.normals[v].x;
-        }
-        for (u32 i = 0; i + 2 < out_model.indices_count; i += 3)
-        {
-            const u16 swap            = out_model.indices[i + 1];
-            out_model.indices[i + 1]  = out_model.indices[i + 2];
-            out_model.indices[i + 2]  = swap;
-        }
+        FAIL_MSG("data/devices/controller.json is missing from the build or invalid");
     }
 }
 
+static Quat turn_quat (Vec3 turn, f32 value)
+{
+    const f32 angle = zm::length(turn);
+    return angle > 0.0f ? zm::quat_from_axis_angle(turn * (1.0f / angle), angle * value) : zm::QUAT_IDENTITY;
+}
+
+Pose sim_model_node_pose (const SIM_ModelNode& node, Vec2 value, f32 press)
+{
+    const Quat turn = turn_quat(node.turn[0], value.x) * turn_quat(node.turn[1], value.y);
+    return { node.pivot - zm::rotate(turn, node.pivot) + node.travel * press, turn };
+}
+
+Pose sim_controller_node_pose (const SIM_Sim* sim, SIM_Device hand, const SIM_ModelNode& node)
+{
+    ASSERT(sim);
+    // A node's press may be a slot of its own on each hand
+    static const struct
+    {
+        const char* node;
+        SIM_Slot    value;
+        SIM_Slot    press;
+        SIM_Slot    other_press;
+    } drives[] = {
+        { "trigger", SIM_Slot::Trigger, SIM_Slot::Count, SIM_Slot::Count },
+        { "squeeze", SIM_Slot::Count, SIM_Slot::Grip, SIM_Slot::Count },
+        { "thumbstick", SIM_Slot::Stick, SIM_Slot::StickClick, SIM_Slot::Count },
+        { "primary", SIM_Slot::Count, SIM_Slot::Primary, SIM_Slot::Count },
+        { "secondary", SIM_Slot::Count, SIM_Slot::Secondary, SIM_Slot::Count },
+        { "menu", SIM_Slot::Count, SIM_Slot::Menu, SIM_Slot::System },
+    };
+    const SIM_Controller controller = sim_get_controller(sim);
+    const auto           value      = [&] (SIM_Slot slot) -> Vec2
+    {
+        const SIM_Input input = sim_controller_slot_input(controller, hand, slot);
+        return input == SIM_NO_INPUT ? Vec2{} : sim_get_input(sim, hand, input).value;
+    };
+    for (const auto& drive : drives)
+    {
+        if (cstr_equal(node.name, drive.node))
+        {
+            return sim_model_node_pose(node, value(drive.value), zm::max(value(drive.press).x, value(drive.other_press).x));
+        }
+    }
+    return zm::POSE_IDENTITY;
+}
 
 const char* sim_controller_name (SIM_Controller controller)
 {

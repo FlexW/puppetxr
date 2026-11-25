@@ -98,7 +98,7 @@ per layer so a change recompiles only the layers above it.
 
 Details: `docs/architecture.md`. Per-layer docs: `docs/openxr.md`, `docs/compositor.md`, `docs/shaders.md`, `docs/world.md`, `docs/room-format.md`,
 `docs/recording-format.md`, `docs/control-api.md`, `docs/control-cli.md`, `docs/determinism.md`, `docs/anchors.md`, `docs/props.md`, `docs/profiling.md`.
-`data/` holds what the build embeds into the library: `data/shaders/`, `data/rooms/`, `data/models/` and `data/motion/` (hand model, hand mesh, gestures).
+`data/` holds what the build embeds into the library: `data/shaders/`, `data/rooms/`, `data/models/`, `data/devices/` (controllers and keyboards) and `data/motion/` (hand model, hand mesh, gestures).
 `tools/puppetxrctl.cpp` is the control CLI; it builds only the platform and base layers.
 `tools/recorder/` is the motion recorder (`docs/recorder.md`), an OpenXR app on libc, OpenXR and Vulkan only, so it also builds for Android.
 `tools/hlsl_compile.cpp` is a Windows build tool compiling the shaders to DXBC.

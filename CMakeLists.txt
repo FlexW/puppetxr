@@ -178,11 +178,20 @@ file(GLOB_RECURSE puppetxr_motion_files CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE
 set(puppetxr_motion_source ${CMAKE_BINARY_DIR}/motion/motion_embedded.cpp)
 add_custom_command(
     OUTPUT ${puppetxr_motion_source}
-    COMMAND ${CMAKE_COMMAND} -DMOTION_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data/motion -DOUTPUT=${puppetxr_motion_source} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_motion.cmake
+    COMMAND ${CMAKE_COMMAND} -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/data/motion -DSYMBOL=sim_embedded_motion -DOUTPUT=${puppetxr_motion_source} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_motion.cmake
     DEPENDS ${puppetxr_motion_files} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_motion.cmake
     COMMENT "Embedding the hand model"
     VERBATIM)
-add_library(puppetxr_rooms STATIC ${puppetxr_rooms_source} ${puppetxr_models_source} ${puppetxr_motion_source})
+# The controllers and keyboards of data/devices/ (docs/openxr.md, Render models)
+file(GLOB puppetxr_device_files CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/data/devices/*.json)
+set(puppetxr_devices_source ${CMAKE_BINARY_DIR}/devices/devices_embedded.cpp)
+add_custom_command(
+    OUTPUT ${puppetxr_devices_source}
+    COMMAND ${CMAKE_COMMAND} -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/data/devices -DSYMBOL=sim_embedded_devices -DOUTPUT=${puppetxr_devices_source} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_motion.cmake
+    DEPENDS ${puppetxr_device_files} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_motion.cmake
+    COMMENT "Embedding the device models"
+    VERBATIM)
+add_library(puppetxr_rooms STATIC ${puppetxr_rooms_source} ${puppetxr_models_source} ${puppetxr_motion_source} ${puppetxr_devices_source})
 target_compile_features(puppetxr_rooms PRIVATE cxx_std_20)
 target_include_directories(puppetxr_rooms PRIVATE src)
 set_target_properties(puppetxr_rooms PROPERTIES POSITION_INDEPENDENT_CODE ON)

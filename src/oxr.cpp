@@ -2944,12 +2944,14 @@ static W_Model* keyboard_shape (OXR_Runtime* rt)
         SIM_RenderModel* keyboard = (SIM_RenderModel*)os_memory_alloc(sizeof(SIM_RenderModel));
         defer { os_memory_release(keyboard); };
         sim_keyboard_model(*keyboard);
-        u32 indices[SIM_MODEL_MAX_INDICES];
+        Array<u32> indices = {};
+        defer { indices.release(); };
+        indices.resize(keyboard->indices_count);
         for (u32 i = 0; i < keyboard->indices_count; i++)
         {
             indices[i] = keyboard->indices[i];
         }
-        rt->keyboard_shape = w_create_mesh_model(keyboard->positions, keyboard->vertices_count, indices, keyboard->indices_count);
+        rt->keyboard_shape = w_create_mesh_model(keyboard->positions, keyboard->vertices_count, indices.data, keyboard->indices_count);
     }
     return rt->keyboard_shape;
 }
@@ -13925,11 +13927,13 @@ static void append_f32 (Array<u8>& out, f32 value)
 
 // glTF 2.0 binary (GLB): a node, mesh and material per model part. Positions, normals, texture
 // coordinates and 16-bit indices relative to the part in one buffer; then the key times 0 and 1
-// shared by every animation and, per part with a press, its translation at both. A textured
-// model's texture is an image the app fills itself, named by the URI of XR_META_virtual_keyboard.
+// shared by every animation and, per part with a press, its translation at both; then the model's
+// image. A model with a texture id has no image of its own: the app fills it, named by the URI of
+// XR_META_virtual_keyboard.
 static void write_render_model (const SIM_RenderModel& model, const char* name, Array<u8>& out)
 {
-    const b8    textured       = model.texture_id != 0;
+    const b8    filled         = model.texture_id != 0; // by the app
+    const b8    textured       = filled || model.image_size > 0;
     const u32   per_part       = textured ? 4 : 3; // accessors
     const usize vec3_length    = (usize)model.vertices_count * sizeof(Vec3);
     const usize uvs_offset     = vec3_length * 2;
@@ -13943,7 +13947,8 @@ static void write_render_model (const SIM_RenderModel& model, const char* name, 
         animated += model.parts[p].press.x != 0.0f || model.parts[p].press.y != 0.0f || model.parts[p].press.z != 0.0f ? 1 : 0;
     }
     const usize anim_length = animated > 0 ? 8 + (usize)animated * 24 : 0;
-    const usize bin_length  = anim_offset + anim_length;
+    const usize image_offset = anim_offset + anim_length;
+    const usize bin_length   = image_offset + (((usize)model.image_size + 3) & ~(usize)3);
     const u32   times       = model.parts_count * per_part; // accessor of the key times
 
     Array<char> json = {};
@@ -13983,14 +13988,21 @@ static void write_render_model (const SIM_RenderModel& model, const char* name, 
         {
             append_text(json, "\"baseColorTexture\":{\"index\":0},");
         }
-        append_text(json, "\"metallicFactor\":0,\"roughnessFactor\":0.6}%s}", textured ? ",\"alphaMode\":\"BLEND\"" : "");
+        append_text(json, "\"metallicFactor\":0,\"roughnessFactor\":0.5}%s}", filled ? ",\"alphaMode\":\"BLEND\"" : "");
     }
     append_text(json, "],");
     if (textured)
     {
         // Spec XR_META_virtual_keyboard: metaVirtualKeyboard://texture/{textureID}?w={width}&h={height}&fmt=RGBA32
         append_text(json, "\"samplers\":[{\"magFilter\":9729,\"minFilter\":9729,\"wrapS\":33071,\"wrapT\":33071}],\"textures\":[{\"sampler\":0,\"source\":0}],");
-        append_text(json, "\"images\":[{\"uri\":\"metaVirtualKeyboard://texture/%llu?w=%u&h=%u&fmt=RGBA32\"}],", (unsigned long long)model.texture_id, model.texture_width, model.texture_height);
+        if (filled)
+        {
+            append_text(json, "\"images\":[{\"uri\":\"metaVirtualKeyboard://texture/%llu?w=%u&h=%u&fmt=RGBA32\"}],", (unsigned long long)model.texture_id, model.texture_width, model.texture_height);
+        }
+        else
+        {
+            append_text(json, "\"images\":[{\"name\":\"palette\",\"mimeType\":\"image/png\",\"bufferView\":%u}],", animated > 0 ? 5u : 4u);
+        }
     }
     if (animated > 0)
     {
@@ -14019,6 +14031,10 @@ static void write_render_model (const SIM_RenderModel& model, const char* name, 
     if (animated > 0)
     {
         append_text(json, ",{\"buffer\":0,\"byteOffset\":%zu,\"byteLength\":%zu}", anim_offset, anim_length);
+    }
+    if (model.image_size > 0)
+    {
+        append_text(json, ",{\"buffer\":0,\"byteOffset\":%zu,\"byteLength\":%u}", image_offset, model.image_size);
     }
     append_text(json, "],\"accessors\":[");
     const u32 indices_view = textured ? 3 : 2;
@@ -14101,6 +14117,11 @@ static void write_render_model (const SIM_RenderModel& model, const char* name, 
                 }
             }
         }
+    }
+    out.add(model.image, model.image_size);
+    while (out.length - bin_start < bin_length)
+    {
+        out.add(0);
     }
     ASSERT(out.length - bin_start == bin_length);
 }
@@ -14241,11 +14262,9 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrLoadRenderModelFB (XrSession session
 // Render models: XR_EXT_render_model, XR_EXT_interaction_render_model
 //
 
-static const char* const oxr_render_model_nodes[OXR_RENDER_MODEL_NODES] = { "trigger", "buttons" };
-
-// The asset of a controller in a hand: the XR_FB_render_model mesh without glTF animations,
-// whose trigger and buttons nodes the runtime moves (xrGetRenderModelStateEXT)
-static void render_model_glb (SIM_Controller controller, u32 hand, Array<u8>& out)
+// The asset of a controller in a hand: the XR_FB_render_model mesh without glTF animations, and
+// the nodes of it the runtime moves (xrGetRenderModelStateEXT)
+static void render_model_glb (SIM_Controller controller, u32 hand, Array<u8>& out, OXR_RenderModelNodes& out_nodes)
 {
     SIM_RenderModel* model = (SIM_RenderModel*)os_memory_alloc(sizeof(SIM_RenderModel));
     defer { os_memory_release(model); };
@@ -14253,6 +14272,8 @@ static void render_model_glb (SIM_Controller controller, u32 hand, Array<u8>& ou
     char name[64];
     render_model_name(controller, hand, name, sizeof(name));
     write_render_model(*model, name, out);
+    out_nodes.count = model->nodes_count;
+    memory_copy(out_nodes.nodes, model->nodes, sizeof(out_nodes.nodes));
 }
 
 // Spec: the same UUID always names the same bytes, across sessions, so it is a hash of them
@@ -14385,7 +14406,7 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrCreateRenderModelEXT (XrSession sess
     OXR_RenderModel model = { .session = session_handle(session), .id = info->renderModelId, .hand = hand, .controller = sess->render_model_controller[hand] };
     Array<u8>       glb   = {};
     defer { glb.release(); };
-    render_model_glb(model.controller, hand, glb);
+    render_model_glb(model.controller, hand, glb, model.nodes);
     model.cache_id = render_model_uuid(glb);
     *out_model     = (XrRenderModelEXT)(uintptr_t)render_model_xr(runtime()->render_models.add(model));
     return XR_SUCCESS;
@@ -14414,7 +14435,7 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrGetRenderModelPropertiesEXT (XrRende
     OXR_CHECK(!info || info->type == XR_TYPE_RENDER_MODEL_PROPERTIES_GET_INFO_EXT);
     OXR_CHECK_TYPE(properties, XR_TYPE_RENDER_MODEL_PROPERTIES_EXT);
     properties->cacheId             = target->cache_id;
-    properties->animatableNodeCount = OXR_RENDER_MODEL_NODES;
+    properties->animatableNodeCount = target->nodes.count;
 
     // Spec: the session remembers the UUIDs it returned; only those make assets
     b8 known = false;
@@ -14464,7 +14485,7 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrCreateRenderModelAssetEXT (XrSession
         return XR_ERROR_RENDER_MODEL_ASSET_UNAVAILABLE_EXT;
     }
     OXR_RenderModelAsset asset = { .session = session_handle(session) };
-    render_model_glb(entry->controller, entry->hand, asset.glb);
+    render_model_glb(entry->controller, entry->hand, asset.glb, asset.nodes);
     *out_asset = (XrRenderModelAssetEXT)(uintptr_t)render_model_asset_xr(runtime()->render_model_assets.add(asset));
     return XR_SUCCESS;
 }
@@ -14511,25 +14532,21 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrGetRenderModelAssetDataEXT (XrRender
 
 static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrGetRenderModelAssetPropertiesEXT (XrRenderModelAssetEXT asset, const XrRenderModelAssetPropertiesGetInfoEXT* info, XrRenderModelAssetPropertiesEXT* properties) // NOLINT(misc-const-correctness): signature of the spec
 {
-    const OXR_Lock lock(__func__);
-    if (!runtime()->render_model_assets.try_get(render_model_asset_handle(asset)))
+    const OXR_Lock              lock(__func__);
+    const OXR_RenderModelAsset* target = runtime()->render_model_assets.try_get(render_model_asset_handle(asset));
+    if (!target)
     {
         return XR_ERROR_HANDLE_INVALID;
     }
     OXR_CHECK(!info || info->type == XR_TYPE_RENDER_MODEL_ASSET_PROPERTIES_GET_INFO_EXT);
     OXR_CHECK_TYPE(properties, XR_TYPE_RENDER_MODEL_ASSET_PROPERTIES_EXT);
-    OXR_CHECK(properties->nodePropertyCount == OXR_RENDER_MODEL_NODES && properties->nodeProperties);
-    for (u32 i = 0; i < OXR_RENDER_MODEL_NODES; i++)
+    OXR_CHECK(properties->nodePropertyCount == target->nodes.count && properties->nodeProperties);
+    for (u32 i = 0; i < target->nodes.count; i++)
     {
-        cstr_copy(properties->nodeProperties[i].uniqueName, sizeof(properties->nodeProperties[i].uniqueName), oxr_render_model_nodes[i]);
+        cstr_copy(properties->nodeProperties[i].uniqueName, sizeof(properties->nodeProperties[i].uniqueName), target->nodes.nodes[i].name);
     }
     return XR_SUCCESS;
 }
-
-// The trigger swings into the handle, a pressed face button sinks into the head; spec, the node
-// poses replace the nodes' identity transforms in the asset
-#define OXR_RENDER_MODEL_TRIGGER_TRAVEL 0.008f
-#define OXR_RENDER_MODEL_BUTTON_TRAVEL  0.002f
 
 static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrGetRenderModelStateEXT (XrRenderModelEXT model, const XrRenderModelStateGetInfoEXT* info, XrRenderModelStateEXT* state) // NOLINT(misc-const-correctness): signature of the spec
 {
@@ -14541,23 +14558,18 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrGetRenderModelStateEXT (XrRenderMode
     }
     OXR_CHECK_TYPE(info, XR_TYPE_RENDER_MODEL_STATE_GET_INFO_EXT);
     OXR_CHECK_TYPE(state, XR_TYPE_RENDER_MODEL_STATE_EXT);
-    OXR_CHECK(state->nodeStateCount == OXR_RENDER_MODEL_NODES && state->nodeStates);
+    OXR_CHECK(state->nodeStateCount == target->nodes.count && state->nodeStates);
     if (locate_time(info->displayTime) <= 0)
     {
         return XR_ERROR_TIME_INVALID;
     }
-    // The inputs of the last device update: the sim does not predict buttons
-    const SIM_Sim*   sim     = runtime()->sim;
-    const SIM_Device device  = target->hand == 0 ? SIM_Device::LeftHand : SIM_Device::RightHand;
-    const f32        trigger = sim_get_input(sim, device, SIM_Input::TriggerValue).value.x;
-    const SIM_Input  buttons[] = { SIM_Input::AClick, SIM_Input::BClick, SIM_Input::XClick, SIM_Input::YClick, SIM_Input::ThumbstickClick };
-    f32              pressed = 0.0f;
-    for (const SIM_Input input : buttons)
+    // The inputs of the last device update: the sim does not predict buttons. Spec, the node poses
+    // replace the nodes' identity transforms in the asset
+    const SIM_Device device = target->hand == 0 ? SIM_Device::LeftHand : SIM_Device::RightHand;
+    for (u32 i = 0; i < target->nodes.count; i++)
     {
-        pressed = zm::max(pressed, sim_get_input(sim, device, input).value.x);
+        state->nodeStates[i] = { .nodePose = pose_to_xr(sim_controller_node_pose(runtime()->sim, device, target->nodes.nodes[i])), .isVisible = XR_TRUE };
     }
-    state->nodeStates[0] = { .nodePose = pose_to_xr({ { 0.0f, OXR_RENDER_MODEL_TRIGGER_TRAVEL * trigger, 0.0f }, zm::QUAT_IDENTITY }), .isVisible = XR_TRUE };
-    state->nodeStates[1] = { .nodePose = pose_to_xr({ { 0.0f, -OXR_RENDER_MODEL_BUTTON_TRAVEL * pressed, 0.0f }, zm::QUAT_IDENTITY }), .isVisible = XR_TRUE };
     return XR_SUCCESS;
 }
 

@@ -753,12 +753,30 @@ static void set_mesh_props (COMP_Compositor* comp, const SIM_Prop* props, const 
     }
 }
 
-// Solid colours below the QR cells, sRGB: keyboard body, keys, the back of a QR plate
-static const u8 comp_prop_solids[3][4] = { { 40, 40, 46, 255 }, { 190, 190, 190, 255 }, { 120, 120, 120, 255 } };
+// Solid colours below the QR cells, sRGB: the back of a QR plate, then the keyboard's palette.
+// Passthrough is unlit, so each has a colour per shade of its faces, by how much they look up
+#define COMP_PROP_PLATE_SOLID     0
+#define COMP_PROP_SHADES          4
+#define COMP_PROP_KEYBOARD_SOLIDS (SIM_MODEL_PALETTE_ROWS * COMP_PROP_SHADES)
+#define COMP_PROP_SOLID_WIDTH     7
+static_assert((COMP_PROP_KEYBOARD_SOLIDS + 1) * COMP_PROP_SOLID_WIDTH <= COMP_PROP_ATLAS_WIDTH);
+
+static const f32 comp_prop_shades[COMP_PROP_SHADES] = { 0.35f, 0.5f, 0.78f, 1.0f };
+
+static u32 prop_shade (Vec3 normal)
+{
+    return normal.y > 0.8f ? 3 : normal.y > 0.35f ? 2 : normal.y > -0.35f ? 1 : 0;
+}
+
+static u8 srgb_byte (f32 linear)
+{
+    const f32 c = linear <= 0.0031308f ? linear * 12.92f : 1.055f * zm::pow(linear, 1.0f / 2.4f) - 0.055f;
+    return (u8)(zm::clamp(c, 0.0f, 1.0f) * 255.0f + 0.5f);
+}
 
 static Vec2 solid_uv (u32 solid)
 {
-    return { ((f32)solid * 16.0f + 8.0f) / (f32)COMP_PROP_ATLAS_WIDTH, ((f32)COMP_PROP_SOLID_Y + 6.0f) / (f32)COMP_PROP_ATLAS_HEIGHT };
+    return { ((f32)solid + 0.5f) * (f32)COMP_PROP_SOLID_WIDTH / (f32)COMP_PROP_ATLAS_WIDTH, ((f32)COMP_PROP_SOLID_Y + 6.0f) / (f32)COMP_PROP_ATLAS_HEIGHT };
 }
 
 static u64 props_atlas_hash (const SIM_Prop* props, u32 count)
@@ -787,13 +805,22 @@ static b8 update_props_atlas (COMP_Compositor* comp, const SIM_Prop* props, u32 
         p.atlas_pixels = (u8*)os_memory_alloc(size);
     }
     memory_zero(p.atlas_pixels, size);
-    for (u32 s = 0; s < ARRAY_SIZE(comp_prop_solids); s++)
+    for (u32 s = 0; s <= COMP_PROP_KEYBOARD_SOLIDS; s++)
     {
+        u8 color[4] = { 120, 120, 120, 255 };
+        if (s != COMP_PROP_PLATE_SOLID)
+        {
+            const Vec3 base  = p.keyboard->palette[(s - 1) / COMP_PROP_SHADES];
+            const f32  shade = comp_prop_shades[(s - 1) % COMP_PROP_SHADES];
+            color[0]         = srgb_byte(base.x * shade);
+            color[1]         = srgb_byte(base.y * shade);
+            color[2]         = srgb_byte(base.z * shade);
+        }
         for (u32 y = COMP_PROP_SOLID_Y; y < COMP_PROP_SOLID_Y + 12; y++)
         {
-            for (u32 x = s * 16; x < s * 16 + 16; x++)
+            for (u32 x = s * COMP_PROP_SOLID_WIDTH; x < (s + 1) * COMP_PROP_SOLID_WIDTH; x++)
             {
-                memory_copy(p.atlas_pixels + ((usize)y * COMP_PROP_ATLAS_WIDTH + x) * 4, comp_prop_solids[s], 4);
+                memory_copy(p.atlas_pixels + ((usize)y * COMP_PROP_ATLAS_WIDTH + x) * 4, color, 4);
             }
         }
     }
@@ -1286,14 +1313,10 @@ void comp_set_props (COMP_Compositor* comp, const SIM_Prop* props, const COMP_Pr
         {
             const SIM_RenderModel& model = *p.keyboard;
             const u32              base  = vertices_count;
-            for (u32 part = 0; part < model.parts_count; part++)
+            for (u32 v = 0; v < model.vertices_count; v++)
             {
-                const SIM_ModelPart& mp = model.parts[part];
-                const Vec2           uv = solid_uv(part == 0 ? 0 : 1);
-                for (u32 v = mp.vertices_first; v < mp.vertices_first + mp.vertices_count; v++)
-                {
-                    vertices[base + v] = { zm::transform_point(room_from_prop, model.positions[v]), uv };
-                }
+                const u32 color    = zm::min((u32)(model.uvs[v].y * (f32)SIM_MODEL_PALETTE_ROWS), (u32)SIM_MODEL_PALETTE_ROWS - 1);
+                vertices[base + v] = { zm::transform_point(room_from_prop, model.positions[v]), solid_uv(1 + color * COMP_PROP_SHADES + prop_shade(model.normals[v])) };
             }
             for (u32 k = 0; k < model.indices_count; k++)
             {
@@ -1316,7 +1339,7 @@ void comp_set_props (COMP_Compositor* comp, const SIM_Prop* props, const COMP_Pr
         const Vec2 low    = { cell_x / (f32)COMP_PROP_ATLAS_WIDTH, cell_y / (f32)COMP_PROP_ATLAS_HEIGHT };
         const Vec2 high   = { (cell_x + (f32)side) / (f32)COMP_PROP_ATLAS_WIDTH, (cell_y + (f32)side) / (f32)COMP_PROP_ATLAS_HEIGHT };
         put_prop_quad(vertices, indices, vertices_count, indices_count, room_from_prop, half, 0.0f, low, high, true);
-        put_prop_quad(vertices, indices, vertices_count, indices_count, room_from_prop, half, -COMP_PROP_PLATE, solid_uv(2), solid_uv(2), false);
+        put_prop_quad(vertices, indices, vertices_count, indices_count, room_from_prop, half, -COMP_PROP_PLATE, solid_uv(COMP_PROP_PLATE_SOLID), solid_uv(COMP_PROP_PLATE_SOLID), false);
     }
     r_flush_buffer(device, p.vertices[p.slot], 0, (u64)vertices_count * sizeof(W_VisualVertex));
     r_flush_buffer(device, p.indices[p.slot], 0, (u64)indices_count * sizeof(u32));

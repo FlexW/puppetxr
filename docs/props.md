@@ -130,7 +130,7 @@ needs none of the files they came from (`OxrRecordTest.mesh_props_replay_without
 
 - Geometry in room space, rebuilt per frame into frame-slotted host-visible buffers, drawn with
   the passthrough pipeline right after the room so both share depth.
-- Keyboards copy the `sim_keyboard_model` (dark body, light keys). QR codes are a plate: the
+- Keyboards copy the `sim_keyboard_model` (aluminium body, dark caps). QR codes are a plate: the
   code with its 4-module quiet zone on the front, gray on the back 2 mm behind.
 - The atlas: a 72 x 72 cell per prop (one texel per module, `w_qr_encode`, `src/world.cpp`)
   above a row of solid colours, sampled with nearest filtering, uploaded only when a prop's kind

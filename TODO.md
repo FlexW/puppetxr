@@ -68,7 +68,7 @@ GPUs:
 - [ ] keyboard tracking checked against a device that tracks keyboards: whether the remote query bit finds the local keyboard, the name and size Meta reports, whether the keyboard space is lost while the cameras do not see it
 - [ ] spatial entities: an end-to-end app test (no Meta sample uses them), plane tracking and anchors on the room, a UI and `puppetxrctl` view of what each context tracks
 - [ ] props: more kinds (mouse, other markers); XR_BD_dynamic_object_tracking on the same props
-- [ ] render models: textured or authored controller and keyboard models (Blender, like the rooms); a way to move a put down controller (puppetxrctl, C API, UI)
+- [ ] render models: a way to move a put down controller (puppetxrctl, C API, UI)
 - [ ] hands: a hand scale override is reported but does not scale the joints; `ready_ext` and action states of a hand outside the cone stay active
 - [ ] host gamepad drives the simulator: SDL gamepad events in platform, sticks/triggers/bumpers/face buttons to both Touch controllers, View held moves the body, deadzone in sim
 - [ ] simulated OpenXR gamepad: `microsoft/xbox_controller` on `/user/gamepad`, a gamepad device with its inputs and four haptic outputs, recording format bump
@@ -90,7 +90,6 @@ Ordered: real takes first, then the model fitted to them, then gestures.
 - [ ] the rest of the gesture library (docs/hand-motion.md, Library, Planned), each checked against its takes (`data/motion/takes/`), and an app test that `idle` and `talking_hands` trigger nothing
 - [ ] clip steps: a user's take plays as a gesture, inside one or alone
 - [ ] body: the recorder's `body` track, body clips through the same step
-- [ ] after the above: a nicer controller render model, made with zenvr's ZenApp kit skill (joins the render models item in 8b)
 
 ## 9. robustness + CTS
 - [ ] extension tests the CTS skips until we implement them: EXT_hand_tracking, EXT_dpad_binding, EXT_eye_gaze_interaction (full list in docs/extensions.md)
