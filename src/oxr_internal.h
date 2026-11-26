@@ -531,6 +531,7 @@ struct OXR_Session
 {
     OXR_InstanceHandle     instance;
     XrTime                 waited_display_time = {};
+    XrTime                 begun_display_time = {}; // predicted display time of the begun frame; it is never shown before
     u64                    last_wait_os_time = {}; // when the last xrWaitFrame returned, after its pacing
     XrSessionState         state = {};
     b8                     running = {};

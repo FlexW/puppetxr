@@ -2960,6 +2960,74 @@ TEST_F(OxrVulkanTest, projection_views_are_reprojected_to_the_display_pose)
     EXPECT_EQ(xr.xrDestroySwapchain(swapchain), XR_SUCCESS);
 }
 
+// Regression: in Unity's editor with Meta's OpenXR feature, the frame begun is rendered with the
+// views of that frame's xrWaitFrame, but OVRPlugin ends it with the display time of the frame
+// before. Shown at that
+// older time, the image was turned back by a frame of head motion and left the eye's edge empty
+// while the head turned. A frame is never shown before the time it was waited for
+TEST_F(OxrVulkanTest, a_frame_ended_with_an_older_display_time_is_shown_at_its_own)
+{
+    create_vulkan();
+    create_vulkan_session();
+    begin_session();
+    const XrSwapchain swapchain = create_swapchain(64, 64, 2);
+    const XrSpace     local     = reference_space(XR_REFERENCE_SPACE_TYPE_LOCAL);
+    render_into(swapchain, { { 1.0f, 0.0f, 0.0f, 1.0f } });
+    SIM_Sim*               sim        = oxr_get_sim();
+    const Vec3             head       = sim_get_device_state(sim, SIM_Device::Head).pose.position;
+    const XrFrameWaitInfo  wait_info  = { .type = XR_TYPE_FRAME_WAIT_INFO };
+    const XrFrameBeginInfo begin_info = { .type = XR_TYPE_FRAME_BEGIN_INFO };
+
+    XrFrameState         older = { .type = XR_TYPE_FRAME_STATE };
+    const XrFrameEndInfo first = { .type = XR_TYPE_FRAME_END_INFO, .environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE };
+    ASSERT_EQ(xr.xrWaitFrame(session, &wait_info, &older), XR_SUCCESS);
+    ASSERT_EQ(xr.xrBeginFrame(session, &begin_info), XR_SUCCESS);
+    XrFrameEndInfo first_end = first;
+    first_end.displayTime    = older.predictedDisplayTime;
+    ASSERT_EQ(xr.xrEndFrame(session, &first_end), XR_SUCCESS);
+
+    sim_set_device_pose(sim, SIM_Device::Head, { .position = head, .orientation = zm::quat_from_axis_angle({ 0.0f, 1.0f, 0.0f }, 0.6f) });
+    XrFrameState state = { .type = XR_TYPE_FRAME_STATE };
+    ASSERT_EQ(xr.xrWaitFrame(session, &wait_info, &state), XR_SUCCESS);
+    ASSERT_EQ(xr.xrBeginFrame(session, &begin_info), XR_SUCCESS);
+    const XrViewLocateInfo locate_info = { .type = XR_TYPE_VIEW_LOCATE_INFO, .viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, .displayTime = state.predictedDisplayTime, .space = local };
+    XrViewState            view_state  = { .type = XR_TYPE_VIEW_STATE };
+    XrView                 located[2]  = { { .type = XR_TYPE_VIEW }, { .type = XR_TYPE_VIEW } };
+    u32                    count       = 0;
+    ASSERT_EQ(xr.xrLocateViews(session, &locate_info, &view_state, 2, &count, located), XR_SUCCESS);
+    XrCompositionLayerProjectionView views[2] = { view(swapchain, 0, 64, 64), view(swapchain, 1, 64, 64) };
+    for (u32 v = 0; v < 2; v++)
+    {
+        views[v].pose = located[v].pose;
+        views[v].fov  = located[v].fov;
+    }
+    XrCompositionLayerProjection        layer     = { .type = XR_TYPE_COMPOSITION_LAYER_PROJECTION, .space = local, .viewCount = 2, .views = views };
+    const XrCompositionLayerBaseHeader* layers[1] = { (XrCompositionLayerBaseHeader*)&layer };
+    XrFrameEndInfo                      end_info  = first;
+    end_info.displayTime                          = older.predictedDisplayTime;
+    end_info.layerCount                           = 1;
+    end_info.layers                               = layers;
+    oxr_set_mirror_view(SIM_MirrorView::Both);
+    ASSERT_EQ(xr.xrEndFrame(session, &end_info), XR_SUCCESS);
+
+    Array<u8> pixels = {};
+    defer { pixels.release(); };
+    u32 width  = 0;
+    u32 height = 0;
+    u8  probe[4];
+    ASSERT_FALSE(oxr_read_frame(probe, sizeof(probe), width, height));
+    pixels.resize((usize)width * height * 4);
+    ASSERT_TRUE(oxr_read_frame(pixels.data, pixels.length, width, height));
+    // At the older time the head looked 0.6 rad further right: the image would end left of x 0.5
+    for (u32 eye = 0; eye < 2; eye++)
+    {
+        EXPECT_EQ(eye_pixel(pixels, width, height, eye, -0.5f, 0.0f)[0], 255);
+        EXPECT_EQ(eye_pixel(pixels, width, height, eye, 0.5f, 0.0f)[0], 255);
+    }
+
+    EXPECT_EQ(xr.xrDestroySwapchain(swapchain), XR_SUCCESS);
+}
+
 // Regression, CTS ProjectionMutableFieldOfView: a flipped fov (left > right, down > up) is a
 // mirrored image of the same region, not an invalid one
 TEST_F(OxrVulkanTest, projection_views_with_flipped_fov_are_drawn_mirrored)

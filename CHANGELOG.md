@@ -7,6 +7,7 @@ config start with **Breaking:**.
 
 ## Unreleased
 
+- Fixed: in Unity's editor with Meta's OpenXR feature the app's image was cut off at the eye's edge while the head turned fast. OVRPlugin ends each frame there with the display time of the frame before, and puppetxr showed it with that older head pose; a frame is now never shown before the time it was waited for.
 - `XR_FB_hand_tracking_mesh` gives a sculpted hand fitted to a Quest 3's skeleton: one closed surface ending at the wrist, blended across the joints, where it was a prism per bone that bent with a hard edge.
 - Render models: modelled, textured controllers (`XR_FB_render_model`, `XR_EXT_render_model`), keyboard and virtual keyboard. `XR_EXT_render_model` moves the trigger, squeeze, thumbstick and each button with its input, where one node moved for all buttons.
 - Gestures in the simulator: JSON files of timed steps that move a hand's anchor to points given as expressions, turn its palm and shape its fingers, with params, events and errors that name the JSON path (`docs/hand-motion.md`); 14 built-in gestures (`data/motion/gestures/`) that shape, hold and place the hand as recorded on a Quest 3, and users' gestures from `gestures.paths` and `PUPPETXR_GESTURE_PATH`; `puppetxrctl gesture list|show|check|load|play|wait|events|stop` and the C API's gesture functions (API version 3).

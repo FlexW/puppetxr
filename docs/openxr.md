@@ -158,6 +158,16 @@ creation with `XR_ERROR_FEATURE_UNSUPPORTED`, report no swapchain formats, repor
   frame and ends that frame with the destroyed one; Quest composites it, and rejecting it made
   every later frame of such an app fail. A space destroyed before is `XR_ERROR_HANDLE_INVALID`
   (`OXR_RetiredSpace`, at most `OXR_MAX_RETIRED_SPACES`).
+- A frame is never shown before the display time of the `xrWaitFrame` it was begun after
+  (`OXR_Session::begun_display_time`): the eyes, props, camera images and depth of `xrEndFrame`
+  are sampled at the later of that and `displayTime`. In Unity's editor with Meta's OpenXR
+  feature, Unity renders the frame it began with the views located at that frame's predicted time
+  and ends it with that time, but OVRPlugin (1.113.0) passes the display time of the frame before
+  on to the runtime; Unity without OVRPlugin, and a player build with it, pass the right time.
+  Shown at the older time, the image was turned back by a frame of head motion and the eye's edge
+  showed through while the head turned. A runtime shows such a late frame at the next refresh with
+  the head pose of then. Test
+  `OxrVulkanTest.a_frame_ended_with_an_older_display_time_is_shown_at_its_own`.
 
 ## Frame faults
 

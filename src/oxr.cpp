@@ -6595,9 +6595,10 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrBeginFrame (XrSession session, const
         return fault;
     }
     const b8 discarded = sess->frame_begun;
-    sess->frame_waited      = false;
-    sess->begin_failed      = false;
-    sess->frame_begun       = true;
+    sess->frame_waited       = false;
+    sess->begin_failed       = false;
+    sess->frame_begun        = true;
+    sess->begun_display_time = sess->waited_display_time;
     sess->frames_begun++;
     sess->frames_discarded += discarded ? 1 : 0;
     return discarded ? XR_FRAME_DISCARDED : XR_SUCCESS;
@@ -7366,8 +7367,12 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrEndFrame (XrSession session, const X
     }
     sess->local_dimming = dimming;
 
-    SIM_Sample sample = {};
-    sim_sample(runtime()->sim, info->displayTime, sample);
+    // A frame ended with an older frame's display time (OVRPlugin in Unity's editor, whose frames
+    // are rendered with the views of the frame begun) is shown when it was waited for, as a runtime
+    // shows a late frame at the next refresh with the head pose of then
+    const XrTime shown_time = zm::max(info->displayTime, sess->begun_display_time);
+    SIM_Sample   sample     = {};
+    sim_sample(runtime()->sim, shown_time, sample);
     OXR_Eye eyes[OXR_VIEW_COUNT];
     for (u32 e = 0; e < OXR_VIEW_COUNT; e++)
     {
@@ -7443,13 +7448,13 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrEndFrame (XrSession session, const X
         const OXR_PropModel* model = props[i].kind == SIM_PropKind::Mesh ? find_prop_model(rt, props[i].model) : nullptr;
         models[i]                  = model ? COMP_PropModel{ model->model, model->serial } : COMP_PropModel{};
     }
-    comp_set_props(sess->compositor, props, models, props_count, info->displayTime, rt->room_from_stage);
+    comp_set_props(sess->compositor, props, models, props_count, shown_time, rt->room_from_stage);
     {
         PROF_ZONE("compose");
         comp_compose(sess->compositor, layers, layers_count, (COMP_ViewMode)rt->mirror_view);
     }
-    render_cameras(sess, session_handle(session), info->displayTime, sample);
-    render_depth(sess, session_handle(session), info->displayTime, sample);
+    render_cameras(sess, session_handle(session), shown_time, sample);
+    render_depth(sess, session_handle(session), shown_time, sample);
     // Read back here for the control server's readers (docs/openxr.md, Queue access)
     if (sim_get_config(rt->sim).control)
     {
