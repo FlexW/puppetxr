@@ -1329,24 +1329,28 @@ void os_socket_close (OS_Socket* socket)
 }
 
 // Written under a temporary name and renamed once locked, so a reader never sees the final
-// name without a holder
-OS_LockFile* os_lock_file_create (const char* path, const void* data, usize size)
+// name without a holder. Between open and flock the temporary file is unlocked: a sweep of stale
+// files by another process may delete it then, and the rename fails. The lock waits, since
+// os_lock_file_is_stale takes it for a moment to probe.
+// One try; false with `out_swept` when a sweep deleted the temporary file before the rename
+static OS_LockFile* create_lock_file (const char* path, const char* temporary, const void* data, usize size, b8& out_swept)
 {
-    char temporary[OS_MAX_PATH];
-    if (!path || cstr_format(temporary, sizeof(temporary), "%s.%u.tmp", path, os_process_id()) >= sizeof(temporary))
-    {
-        return nullptr;
-    }
+    out_swept    = false;
     const i32 fd = open(temporary, O_CREAT | O_TRUNC | O_RDWR | O_CLOEXEC, 0600);
     if (fd < 0)
     {
         LOG_ERROR("Cannot create %s: %s", temporary, errno_text(errno).text);
         return nullptr;
     }
-    const b8 written = flock(fd, LOCK_EX | LOCK_NB) == 0 && (size == 0 || write(fd, data, size) == (ssize_t)size) && rename(temporary, path) == 0;
-    if (!written)
+    const b8 filled = flock(fd, LOCK_EX) == 0 && (size == 0 || write(fd, data, size) == (ssize_t)size);
+    if (!filled || rename(temporary, path) != 0)
     {
-        LOG_ERROR("Cannot write lock file %s: %s", path, errno_text(errno).text);
+        const i32 error = errno;
+        out_swept       = filled && error == ENOENT;
+        if (!out_swept)
+        {
+            LOG_ERROR("Cannot write lock file %s: %s", path, errno_text(error).text);
+        }
         unlink(temporary);
         close(fd);
         return nullptr;
@@ -1355,6 +1359,28 @@ OS_LockFile* os_lock_file_create (const char* path, const void* data, usize size
     file->fd          = fd;
     cstr_copy(file->path, sizeof(file->path), path);
     return file;
+}
+
+OS_LockFile* os_lock_file_create (const char* path, const void* data, usize size)
+{
+    char temporary[OS_MAX_PATH];
+    if (!path || cstr_format(temporary, sizeof(temporary), "%s.%u.tmp", path, os_process_id()) >= sizeof(temporary))
+    {
+        return nullptr;
+    }
+    b8 swept = true;
+    for (u32 attempt = 0; swept && attempt < 8; attempt++)
+    {
+        if (OS_LockFile* file = create_lock_file(path, temporary, data, size, swept))
+        {
+            return file;
+        }
+    }
+    if (swept)
+    {
+        LOG_ERROR("Cannot write lock file %s: swept away %u times", path, 8u);
+    }
+    return nullptr;
 }
 
 void os_lock_file_release (OS_LockFile* file)

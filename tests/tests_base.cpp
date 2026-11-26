@@ -2461,7 +2461,6 @@ TEST(Platform, lock_files_are_stale_once_their_process_is_gone)
     EXPECT_FALSE(os_lock_file_is_stale(path));
 }
 
-#if HAVE_WINDOWS
 namespace
 {
 struct LockSweeper
@@ -2523,6 +2522,7 @@ TEST(Platform, lock_file_creation_survives_a_concurrent_sweep)
     EXPECT_FALSE(os_file_exists(path));
 }
 
+#if HAVE_WINDOWS
 // Reads the lock file as puppetxrctl list and test drivers do: fopen shares neither delete nor a
 // rename onto the file
 static i32 read_lock_file (void* user)
