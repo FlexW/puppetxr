@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(puppetxr VERSION 0.1.0 LANGUAGES C CXX)
+project(puppetxr VERSION 0.2.0 LANGUAGES C CXX)
 # The Metal backend and the Cocoa windows are Objective-C++ (src/render_metal.mm, src/platform_macos.mm)
 if (APPLE)
     enable_language(OBJCXX)

@@ -7,6 +7,8 @@ config start with **Breaking:**.
 
 ## Unreleased
 
+## 0.2.0 - 2026-11-26
+
 - Fixed: in Unity's editor with Meta's OpenXR feature the app's image was cut off at the eye's edge while the head turned fast. OVRPlugin ends each frame there with the display time of the frame before, and puppetxr showed it with that older head pose; a frame is now never shown before the time it was waited for.
 - `XR_FB_hand_tracking_mesh` gives a sculpted hand fitted to a Quest 3's skeleton: one closed surface ending at the wrist, blended across the joints, where it was a prism per bone that bent with a hard edge.
 - Render models: modelled, textured controllers (`XR_FB_render_model`, `XR_EXT_render_model`), keyboard and virtual keyboard. `XR_EXT_render_model` moves the trigger, squeeze, thumbstick and each button with its input, where one node moved for all buttons.
