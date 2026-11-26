@@ -4,12 +4,12 @@ An OpenXR simulator runtime. Point any unmodified OpenXR app at it and get a sim
 headset and two controllers driven by keyboard and mouse, with the app's frames in a mirror
 window or offscreen. No headset, no service, no daemon.
 
-![The mirror window: both eyes of Meta's XrPassthroughOcclusion sample in the simulated living
-room, its cubes in front of the TV, with the simulator and device panels](docs/images/ui-passthrough.png)
+![The mirror window: both eyes of Meta's North Star in its ship's cabin, run from the Unity
+editor, with the simulator, device and log panels](docs/images/northstar-ui.png)
 
-| Tracked hands playing `puppetxrctl gesture play two_hand_scale` | Meta's virtual keyboard, typed on with the controller ray |
+| Meta's Cryptic Cabinet: the time cabinet in the simulated living room, with tracked hands | Cryptic Cabinet fitting its puzzle pieces to the room it found |
 |---|---|
-| ![Both hands pinching and pulling apart in XrHandDataSource](docs/images/hands.png) | ![XrVirtualKeyboard with a key held down](docs/images/virtual-keyboard.png) |
+| ![Cryptic Cabinet's time cabinet standing by the living room's window, a glowing letter on the floor under the left hand](docs/images/crypticcabinet-cabinet.png) | ![Cryptic Cabinet's room layout panel and blue placement boxes around the TV, seen from the side](docs/images/crypticcabinet-layout.png) |
 
 Agents working on this repository: read `AGENTS.md`.
 
