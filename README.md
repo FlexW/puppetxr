@@ -1,4 +1,4 @@
-<img src="docs/images/logo.svg" alt="PuppetXR logo: a VR headset above a glowing grid floor" width="128" align="right">
+<p align="center"><img src="docs/images/logo.svg" alt="PuppetXR logo: a VR headset above a glowing grid floor" width="128"></p>
 
 # PuppetXR
 
