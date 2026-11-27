@@ -7,6 +7,8 @@ config start with **Breaking:**.
 
 ## Unreleased
 
+- Arch Linux packages in the AUR: `puppetxr`, `puppetxr-bin` and `puppetxr-git`; the README lists how to install on each platform.
+
 ## 0.2.0 - 2026-11-26
 
 - Fixed: on Linux and macOS a simulator starting while another one cleaned up the shared discovery directory could fail to write its discovery file, and `puppetxrctl` would not find it; it now tries again.

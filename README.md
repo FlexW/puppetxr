@@ -1,4 +1,4 @@
-# puppetxr
+# PuppetXR
 
 An OpenXR simulator runtime. Point any unmodified OpenXR app at it and get a simulated
 headset and two controllers driven by keyboard and mouse, with the app's frames in a mirror
@@ -48,9 +48,9 @@ Agents working on this repository: read `AGENTS.md`.
   or any glTF model) moving through the room in passthrough, depth and raycasts
 - Fault injection: anchor requests and frame calls (`xrWaitFrame`, `xrBeginFrame`,
   `xrLocateViews`, `xrEndFrame`) fail with a chosen error, to test an app's error handling
-- Apps on Meta's XR SDKs (OVRPlugin, Unity and Unreal) run without settings: puppetxr recognises
+- Apps on Meta's XR SDKs (OVRPlugin, Unity and Unreal) run without settings: PuppetXR recognises
   OVRPlugin and answers as it expects (`docs/config.md`, Known modules)
-- Works from editors' play modes: puppetxr's window comes in front with Unreal's VR Preview and
+- Works from editors' play modes: PuppetXR's window comes in front with Unreal's VR Preview and
   goes when it stops
 - 109 extensions, list in `docs/extensions.md`
 - ImGui panels in the mirror window for devices, inputs, clock, room, recording and performance (frame rate and a frame time graph)
@@ -58,6 +58,25 @@ Agents working on this repository: read `AGENTS.md`.
 - A C API (`src/puppetxr.h`) for tests and tools
 - A motion recorder (`puppetxr_recorder`) that writes tracked hands as an app sees them into JSON
   takes, guided by a protocol of gestures; on the desktop and as a Meta Quest APK (`docs/recorder.md`)
+
+## Install
+
+| Platform | Package |
+|---|---|
+| Arch Linux | AUR: [`puppetxr`](https://aur.archlinux.org/packages/puppetxr) (release, built from source), [`puppetxr-bin`](https://aur.archlinux.org/packages/puppetxr-bin) (release binaries), [`puppetxr-git`](https://aur.archlinux.org/packages/puppetxr-git) (latest `main`) |
+| Other Linux (x86_64, glibc 2.28+: Debian 10+, Ubuntu 18.10+, RHEL 8+, SteamOS) | `puppetxr-<version>-linux-x86_64.tar.gz` from the [latest release](https://github.com/FlexW/puppetxr/releases/latest); unpack anywhere |
+| Windows (x64) | `puppetxr-<version>-windows-x64.zip` from the [latest release](https://github.com/FlexW/puppetxr/releases/latest); unpack anywhere |
+| macOS 11+ (arm64, x86_64) | `puppetxr-<version>-macos-universal.tar.gz` from the [latest release](https://github.com/FlexW/puppetxr/releases/latest); unpack, then `xattr -dr com.apple.quarantine <folder>` |
+
+Run an app with it: `XR_RUNTIME_JSON=<prefix>/share/openxr/1/puppetxr.json <your openxr app>`
+(`<prefix>` is `/usr` for the AUR packages, the unpacked folder otherwise). To make it the
+default runtime for every app:
+
+- Linux: `ln -sf <prefix>/share/openxr/1/puppetxr.json ~/.config/openxr/1/active_runtime.json`
+- Windows: `powershell -ExecutionPolicy Bypass -File install-runtime.ps1` in the unpacked folder,
+  from an administrator prompt; `-Uninstall` restores the previous runtime
+- macOS: `ln -sf <folder>/share/openxr/1/puppetxr.json /usr/local/share/openxr/1/active_runtime.json`;
+  Vulkan apps also need `brew install vulkan-loader molten-vk` unless they ship their own
 
 ## Build
 
@@ -75,12 +94,12 @@ XR_RUNTIME_JSON=$HOME/.local/share/openxr/1/puppetxr.json <your openxr app>
 Add `PUPPETXR_HEADLESS=1` to run without a window, `PUPPETXR_CONTROL=1` to enable `puppetxrctl`.
 For development use the presets (`cmake --preset gcc-debug`, on macOS `mac-debug`; list and
 the macOS dependencies in `docs/building.md`).
-Releases (Linux and Windows binaries, source tarballs) are on the GitHub releases page,
+Releases (Linux, Windows and macOS binaries, source tarballs) are on the GitHub releases page,
 built by `.github/workflows/release.yml` from the scripts in `tools/dist/` (`docs/building.md`).
 
 Or let an agent do it:
 
-> Read AGENTS.md and docs/building.md, install the build dependencies, build puppetxr in Release,
+> Read AGENTS.md and docs/building.md, install the build dependencies, build PuppetXR in Release,
 > run the tests, install it to ~/.local and tell me how to start my OpenXR app with it.
 
 ## Controls
