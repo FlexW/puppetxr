@@ -1,3 +1,5 @@
+<img src="docs/images/logo.svg" alt="PuppetXR logo: a VR headset above a glowing grid floor" width="128" align="right">
+
 # PuppetXR
 
 An OpenXR simulator runtime. Point any unmodified OpenXR app at it and get a simulated

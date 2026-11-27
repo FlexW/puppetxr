@@ -1430,6 +1430,103 @@ TEST(Platform, showing_a_maximized_window_does_not_wait_for_an_animation)
     EXPECT_GT(height, 240u);
 }
 
+namespace
+{
+
+struct TestIcon
+{
+    u8           small[16 * 16 * 4];
+    u8           large[32 * 32 * 4];
+    OS_IconImage images[2];
+};
+
+void make_test_icon (TestIcon& icon)
+{
+    for (u32 i = 0; i < 16 * 16; i++)
+    {
+        icon.small[i * 4 + 0] = 0x22;
+        icon.small[i * 4 + 1] = 0xd3;
+        icon.small[i * 4 + 2] = 0xee;
+        icon.small[i * 4 + 3] = (u8)(i % 2 ? 0xff : 0x80);
+    }
+    for (u32 i = 0; i < 32 * 32; i++)
+    {
+        icon.large[i * 4 + 0] = 0x0e;
+        icon.large[i * 4 + 1] = 0x1a;
+        icon.large[i * 4 + 2] = 0x2b;
+        icon.large[i * 4 + 3] = 0xff;
+    }
+    icon.images[0] = { .rgba = icon.small, .width = 16, .height = 16 };
+    icon.images[1] = { .rgba = icon.large, .width = 32, .height = 32 };
+}
+
+} // namespace
+
+// The window system shows a window's own icon in its title bar, taskbar and switcher: on X11,
+// Windows and Wayland compositors with xdg-toplevel-icon. macOS has one icon per process, the app's
+TEST(Platform, a_window_carries_the_icon_it_is_given)
+{
+    os_shutdown();
+    ASSERT_TRUE(os_initialize(false));
+    defer { os_shutdown(); };
+    if (os_is_headless())
+    {
+        GTEST_SKIP() << "no display";
+    }
+    OS_Window* window = os_create_window("icon", 64, 64, false, 0, true);
+    ASSERT_NE(window, nullptr);
+    defer { os_destroy_window(window); };
+    EXPECT_FALSE(os_window_has_icon(window));
+    TestIcon icon = {};
+    make_test_icon(icon);
+    const b8 set = os_window_set_icon(window, icon.images, ARRAY_SIZE(icon.images));
+    const char* const driver = os_video_driver();
+    if (cstr_equal(driver, "x11") || cstr_equal(driver, "windows"))
+    {
+        EXPECT_TRUE(set);
+    }
+    if (!set)
+    {
+        GTEST_SKIP() << "the " << driver << " video driver has no icon per window";
+    }
+    EXPECT_TRUE(os_window_has_icon(window));
+    // Setting it again replaces it
+    EXPECT_TRUE(os_window_set_icon(window, icon.images, 1));
+    EXPECT_TRUE(os_window_has_icon(window));
+}
+
+TEST(Platform, icons_without_pixels_or_size_are_refused)
+{
+    os_shutdown();
+    ASSERT_TRUE(os_initialize(false));
+    defer { os_shutdown(); };
+    os_set_assert_mode(OS_AssertMode::Log);
+    defer { os_set_assert_mode(os_default_assert_mode()); };
+    TestIcon icon = {};
+    make_test_icon(icon);
+    EXPECT_FALSE(os_window_set_icon(nullptr, icon.images, 1));
+    EXPECT_FALSE(os_window_has_icon(nullptr));
+    if (os_is_headless())
+    {
+        GTEST_SKIP() << "no display";
+    }
+    OS_Window* window = os_create_window("icon", 64, 64, false, 0, true);
+    ASSERT_NE(window, nullptr);
+    defer { os_destroy_window(window); };
+    const u32 before = os_assert_count();
+    const OS_IconImage no_pixels = { .rgba = nullptr, .width = 16, .height = 16 };
+    const OS_IconImage no_width  = { .rgba = icon.small, .width = 0, .height = 16 };
+    const OS_IconImage too_large = { .rgba = icon.small, .width = OS_ICON_MAX_SIZE + 1, .height = 16 };
+    EXPECT_FALSE(os_window_set_icon(window, nullptr, 1));
+    EXPECT_FALSE(os_window_set_icon(window, icon.images, 0));
+    EXPECT_FALSE(os_window_set_icon(window, icon.images, OS_ICON_MAX_IMAGES + 1));
+    EXPECT_FALSE(os_window_set_icon(window, &no_pixels, 1));
+    EXPECT_FALSE(os_window_set_icon(window, &no_width, 1));
+    EXPECT_FALSE(os_window_set_icon(window, &too_large, 1));
+    EXPECT_EQ(os_assert_count(), before + (PUPPETXR_VALIDATION ? 6u : 0u));
+    EXPECT_FALSE(os_window_has_icon(window));
+}
+
 // The UI turns text input on under a text field and off again each frame it changes; a request the
 // window system refuses ends the Wayland connection, and the window with it
 TEST(Platform, text_input_turns_on_and_off)

@@ -118,6 +118,8 @@ enum class WindowOp : u8
     CursorPosition,
     KeepCursor,
     SetCursor,
+    SetIcon,
+    HasIcon,
     TextInput,
     ClipboardText,
     SetClipboardText,
@@ -151,6 +153,7 @@ struct WindowCall
     u32                  count;
     OS_Cursor            cursor;
     OS_Key               key;
+    const OS_IconImage*  icons;
 };
 
 } // namespace
@@ -903,6 +906,12 @@ static void window_call_now (void* user)
     case WindowOp::Maximized:
         call.result = driver->maximized && driver->maximized(window);
         break;
+    case WindowOp::SetIcon:
+        call.result = driver->set_icon && driver->set_icon(window, call.icons, call.count);
+        break;
+    case WindowOp::HasIcon:
+        call.result = driver->has_icon && driver->has_icon(window);
+        break;
     case WindowOp::Show:
         if (driver->show)
         {
@@ -1094,6 +1103,34 @@ b8 os_window_maximize (OS_Window* window)
 b8 os_window_maximized (OS_Window* window)
 {
     return window && window_call({ .op = WindowOp::Maximized, .window = window }).result;
+}
+
+b8 os_window_set_icon (OS_Window* window, const OS_IconImage* images, u32 count)
+{
+    if (!window)
+    {
+        return false;
+    }
+    if (!images || count == 0 || count > OS_ICON_MAX_IMAGES)
+    {
+        FAIL_MSG("Window icon: %u images at %p", count, (const void*)images);
+        return false;
+    }
+    for (u32 i = 0; i < count; i++)
+    {
+        const OS_IconImage& image = images[i];
+        if (!image.rgba || image.width == 0 || image.height == 0 || image.width > OS_ICON_MAX_SIZE || image.height > OS_ICON_MAX_SIZE)
+        {
+            FAIL_MSG("Window icon: image %u is %ux%u at %p", i, image.width, image.height, (const void*)image.rgba);
+            return false;
+        }
+    }
+    return window_call({ .op = WindowOp::SetIcon, .window = window, .count = count, .icons = images }).result;
+}
+
+b8 os_window_has_icon (OS_Window* window)
+{
+    return window && window_call({ .op = WindowOp::HasIcon, .window = window }).result;
 }
 
 static b8 rect_inside (OS_ScreenRect inner, OS_ScreenRect outer)

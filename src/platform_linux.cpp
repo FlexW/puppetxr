@@ -328,6 +328,7 @@ struct X11State
     Atom             wm_delete_window;
     Atom             net_wm_ping;
     Atom             net_wm_name;
+    Atom             net_wm_icon;
     Atom             net_wm_state;
     Atom             net_wm_state_max_vert;
     Atom             net_wm_state_max_horz;
@@ -442,6 +443,7 @@ static b8 x11_init ()
     lx_x11.wm_delete_window      = x11_atom("WM_DELETE_WINDOW");
     lx_x11.net_wm_ping           = x11_atom("_NET_WM_PING");
     lx_x11.net_wm_name           = x11_atom("_NET_WM_NAME");
+    lx_x11.net_wm_icon           = x11_atom("_NET_WM_ICON");
     lx_x11.net_wm_state          = x11_atom("_NET_WM_STATE");
     lx_x11.net_wm_state_max_vert = x11_atom("_NET_WM_STATE_MAXIMIZED_VERT");
     lx_x11.net_wm_state_max_horz = x11_atom("_NET_WM_STATE_MAXIMIZED_HORZ");
@@ -799,6 +801,61 @@ static void x11_hide (OS_Window* window)
     lx_x11.x.XUnmapWindow(lx_x11.display, data->window);
     data->mapped = false;
     lx_x11.x.XFlush(lx_x11.display);
+}
+
+// _NET_WM_ICON (EWMH): each size as width, height, then its pixels as straight-alpha ARGB, every
+// value a CARDINAL, which Xlib takes as a long. Sizes above 128 make the property large for no
+// window manager that shows them, unless there is nothing smaller
+#define X11_ICON_MAX_SIZE 128
+
+static b8 x11_set_icon (OS_Window* window, const OS_IconImage* images, u32 count)
+{
+    usize values = 0;
+    for (u32 i = 0; i < count; i++)
+    {
+        if (images[i].width <= X11_ICON_MAX_SIZE || i == 0)
+        {
+            values += 2 + (usize)images[i].width * images[i].height;
+        }
+    }
+    long* const data = (long*)os_memory_alloc(values * sizeof(long));
+    usize at = 0;
+    for (u32 i = 0; i < count; i++)
+    {
+        const OS_IconImage& image = images[i];
+        if (image.width > X11_ICON_MAX_SIZE && i > 0)
+        {
+            continue;
+        }
+        data[at++] = (long)image.width;
+        data[at++] = (long)image.height;
+        const usize pixels = (usize)image.width * image.height;
+        for (usize p = 0; p < pixels; p++)
+        {
+            const u8* const rgba = image.rgba + p * 4;
+            data[at++] = (long)(((u32)rgba[3] << 24) | ((u32)rgba[0] << 16) | ((u32)rgba[1] << 8) | (u32)rgba[2]);
+        }
+    }
+    lx_x11.x.XChangeProperty(lx_x11.display, x11_data(window)->window, lx_x11.net_wm_icon, XA_CARDINAL, 32, PropModeReplace, (const u8*)data, (i32)values);
+    lx_x11.x.XFlush(lx_x11.display);
+    os_memory_release(data);
+    return true;
+}
+
+static b8 x11_has_icon (OS_Window* window)
+{
+    Atom          type   = 0;
+    i32           format = 0;
+    unsigned long count  = 0;
+    unsigned long after  = 0;
+    u8*           data   = nullptr;
+    b8            found  = false;
+    if (lx_x11.x.XGetWindowProperty(lx_x11.display, x11_data(window)->window, lx_x11.net_wm_icon, 0, 2, False, XA_CARDINAL, &type, &format, &count, &after, &data) == Success && data)
+    {
+        found = type == XA_CARDINAL && format == 32 && count == 2;
+        lx_x11.x.XFree(data);
+    }
+    return found;
 }
 
 static void x11_set_cursor (OS_Window* window, OS_Cursor cursor)
@@ -1186,6 +1243,8 @@ const OS_VideoDriver os_x11_driver = {
     .show                  = x11_show,
     .hide                  = x11_hide,
     .set_cursor            = x11_set_cursor,
+    .set_icon              = x11_set_icon,
+    .has_icon              = x11_has_icon,
     .text_input            = x11_text_input,
     .clipboard_text        = x11_clipboard_text,
     .set_clipboard_text    = x11_set_clipboard_text,

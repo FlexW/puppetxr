@@ -14,6 +14,10 @@ void         oxr_lock        ();
 void         oxr_unlock      ();
 b8           oxr_release_runtime (); // frees the runtime's global state; false while an instance is alive
 
+// The mirror window's icon: PuppetXR's logo, smallest first (data/icon, tools/gen_icon.sh)
+extern const OS_IconImage oxr_embedded_icon[];
+extern const u32          oxr_embedded_icon_count;
+
 // Composited output of the first graphics session, for tests and the control API
 b8           oxr_read_frame      (u8* out_rgba, usize out_size, u32& out_width, u32& out_height); // as screenshots see it, without secure layers; out_size 0 only gives the size
 b8           oxr_read_mirror_frame (u8* out_rgba, usize out_size, u32& out_width, u32& out_height); // as the headset shows it

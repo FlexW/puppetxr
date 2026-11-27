@@ -4698,6 +4698,17 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrEnumerateInstanceExtensionProperties
     return XR_SUCCESS;
 }
 
+// Hidden until a session shows it; the logo is its icon where windows have their own
+static OS_Window* create_mirror_window (u32 width, u32 height, u32 x11_visual)
+{
+    OS_Window* const window = os_create_window("puppetxr", width, height, true, x11_visual, true);
+    if (window)
+    {
+        os_window_set_icon(window, oxr_embedded_icon, oxr_embedded_icon_count);
+    }
+    return window;
+}
+
 // The config's "trace": read by every lookup without an instance, which comes before the instance
 // it creates, and again by each xrCreateInstance
 static char oxr_trace_filter[sizeof(SIM_Config::trace)] = {};
@@ -4884,7 +4895,7 @@ static XRAPI_ATTR XrResult XRAPI_CALL oxr_xrCreateInstance (const XrInstanceCrea
     if (!config.headless && !rt->window)
     {
         const u64 window_start = os_monotonic_ns();
-        rt->window             = os_create_window("puppetxr", config.window_width, config.window_height, true, 0, true);
+        rt->window             = create_mirror_window(config.window_width, config.window_height, 0);
         rt->window_shown       = false;
         oxr_startup.window    += os_monotonic_ns() - window_start;
         if (!rt->window)
@@ -5785,13 +5796,13 @@ static R_WindowTarget mirror_window_target (OXR_Runtime* rt, OXR_Instance* inst,
         {
             LOG_WARNING("No X11 video for the GLX mirror window");
         }
-        rt->window            = os_create_window("puppetxr", width, height, true, x11_visual, true);
+        rt->window            = create_mirror_window(width, height, x11_visual);
         rt->window_shown      = false;
         rt->window_x11_visual = rt->window ? x11_visual : 0;
         if (!rt->window)
         {
             LOG_WARNING("Cannot make the mirror window with the app's visual 0x%x", x11_visual);
-            rt->window = os_create_window("puppetxr", width, height, true, 0, true);
+            rt->window = create_mirror_window(width, height, 0);
             if (maximized)
             {
                 os_window_maximize(rt->window);

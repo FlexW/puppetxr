@@ -5426,6 +5426,31 @@ TEST_F(OxrWindowedTest, the_window_hides_with_its_session_and_returns_with_the_n
     }
 }
 
+// The icon is the logo of docs/images/logo.svg rendered by tools/gen_icon.sh: square, smallest
+// first, from the title bar's 16 pixels to the 256 of a Windows taskbar on a dense display
+TEST(Oxr, the_embedded_icon_has_every_size_square_with_round_corners)
+{
+    ASSERT_GE(oxr_embedded_icon_count, 2u);
+    ASSERT_LE(oxr_embedded_icon_count, (u32)OS_ICON_MAX_IMAGES);
+    EXPECT_EQ(oxr_embedded_icon[0].width, 16u);
+    EXPECT_EQ(oxr_embedded_icon[oxr_embedded_icon_count - 1].width, 256u);
+    for (u32 i = 0; i < oxr_embedded_icon_count; i++)
+    {
+        const OS_IconImage& image = oxr_embedded_icon[i];
+        ASSERT_NE(image.rgba, nullptr);
+        EXPECT_EQ(image.width, image.height);
+        EXPECT_LE(image.width, (u32)OS_ICON_MAX_SIZE);
+        if (i > 0)
+        {
+            EXPECT_GT(image.width, oxr_embedded_icon[i - 1].width);
+        }
+        const u8* const corner = image.rgba;
+        const u8* const centre = image.rgba + ((usize)(image.height / 2) * image.width + image.width / 2) * 4;
+        EXPECT_EQ(corner[3], 0u) << image.width;
+        EXPECT_EQ(centre[3], 0xffu) << image.width;
+    }
+}
+
 // A Vulkan driver without the offscreen window's surface extension, like Intel's on Windows
 namespace
 {
@@ -5802,6 +5827,30 @@ struct OxrVulkanRealWindowTest : OxrWindowedTest
         real_window = true;
     }
 };
+
+// The mirror window shows PuppetXR's logo where the window system gives windows an icon of their
+// own (platform.h, os_window_set_icon)
+TEST_F(OxrVulkanRealWindowTest, the_mirror_window_carries_the_puppetxr_icon)
+{
+    if (os_is_headless())
+    {
+        GTEST_SKIP() << "no display";
+    }
+    create_vulkan();
+    create_vulkan_session();
+    OXR_Runtime* rt = oxr_get_runtime();
+    ASSERT_NE(rt, nullptr);
+    ASSERT_NE(rt->window, nullptr);
+    const char* const driver = os_video_driver();
+    if (cstr_equal(driver, "x11") || cstr_equal(driver, "windows"))
+    {
+        EXPECT_TRUE(os_window_has_icon(rt->window));
+    }
+    else if (!os_window_has_icon(rt->window))
+    {
+        GTEST_SKIP() << "the " << driver << " video driver has no icon per window";
+    }
+}
 
 // The mirror window never paces the app: with FIFO, MoltenVK waited in vkQueueSubmit for a drawable
 // and Godot ran at 53 instead of 100 frames a second on a 60 Hz display

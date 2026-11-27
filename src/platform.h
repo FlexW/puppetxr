@@ -179,6 +179,17 @@ struct OS_WindowNative
     b8    wayland;
 };
 
+#define OS_ICON_MAX_IMAGES 8
+#define OS_ICON_MAX_SIZE   256
+
+// One size of a window's icon: 8-bit RGBA, straight alpha, rows top down
+struct OS_IconImage
+{
+    const u8* rgba;
+    u32       width;
+    u32       height;
+};
+
 // Mouse cursor shapes a window shows while the cursor is over it
 enum class OS_Cursor : u8
 {
@@ -408,6 +419,8 @@ b8            os_window_cursor      (OS_Window* window, f32& out_x, f32& out_y);
 void          os_window_keep_cursor (OS_Window* window, b8 held); // once a frame: held, the cursor stays in the window; not held, it is free while the window is in front (Windows; nothing elsewhere)
 OS_ClipAction os_cursor_clip_action (b8 held, b8 foreground, OS_ScreenRect clip, OS_ScreenRect client, OS_ScreenRect desktop);
 b8            os_window_shown       (OS_Window* window);
+b8            os_window_set_icon    (OS_Window* window, const OS_IconImage* images, u32 count); // the icon of the window's title bar, taskbar and switcher, from the sizes given; false where windows have no icon of their own (macOS, Wayland without xdg-toplevel-icon, offscreen)
+b8            os_window_has_icon    (OS_Window* window); // the window system holds an icon set for the window
 u32           os_poll_events        (OS_Event* out_events, u32 capacity); // returns the number written, drops the rest
 void          os_set_raw_event_hook (OS_RawEventHook hook, void* user); // called from os_poll_events
 b8            os_raw_event_is_input (const OS_RawEvent& event); // a key, text or mouse event

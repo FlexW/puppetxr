@@ -80,6 +80,14 @@ is what they share and nothing else includes.
   drags 8 points around it. Moving and resizing are the compositor's (`xdg_toplevel` move and
   resize); the window geometry takes in the title bar. A shown window waits for the first
   configure, as a buffer before it ends the connection.
+- Window icon: `os_window_set_icon` takes square RGBA images; `x11` writes `_NET_WM_ICON` (sizes
+  up to 128), `windows` makes `ICON_BIG` and `ICON_SMALL` at the system's icon sizes from the
+  smallest image at least that large. `wayland`, `cocoa` and `offscreen` have no icon per window
+  and return false: a macOS app's Dock icon is the process's, and none of GNOME, sway or weston
+  offers `xdg-toplevel-icon`. The mirror window gets PuppetXR's logo (`create_mirror_window`,
+  `oxr.cpp`): `docs/images/logo.svg`, rendered by `tools/gen_icon.sh` into
+  `data/icon/puppetxr_<size>.rgba` (16 to 256) and embedded by `cmake/embed_icon.cmake` as
+  `oxr_embedded_icon`. A changed logo means running the script and committing its output.
 - Raw events (`OS_RawEvent`): what a driver reports, in window points, queued from the video
   thread; `os_poll_events` hands the raw event to the UI's hook, then translates it to
   `OS_Event` for the sim. Repeats and text go to the UI only.

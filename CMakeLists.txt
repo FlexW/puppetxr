@@ -191,7 +191,16 @@ add_custom_command(
     DEPENDS ${puppetxr_device_files} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_motion.cmake
     COMMENT "Embedding the device models"
     VERBATIM)
-add_library(puppetxr_rooms STATIC ${puppetxr_rooms_source} ${puppetxr_models_source} ${puppetxr_motion_source} ${puppetxr_devices_source})
+# The mirror window's icon, the logo rendered by tools/gen_icon.sh into data/icon/
+file(GLOB puppetxr_icon_files CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/data/icon/*.rgba)
+set(puppetxr_icon_source ${CMAKE_BINARY_DIR}/icon/icon_embedded.cpp)
+add_custom_command(
+    OUTPUT ${puppetxr_icon_source}
+    COMMAND ${CMAKE_COMMAND} -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/data/icon -DOUTPUT=${puppetxr_icon_source} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_icon.cmake
+    DEPENDS ${puppetxr_icon_files} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_icon.cmake
+    COMMENT "Embedding the icon"
+    VERBATIM)
+add_library(puppetxr_rooms STATIC ${puppetxr_rooms_source} ${puppetxr_models_source} ${puppetxr_motion_source} ${puppetxr_devices_source} ${puppetxr_icon_source})
 target_compile_features(puppetxr_rooms PRIVATE cxx_std_20)
 target_include_directories(puppetxr_rooms PRIVATE src)
 set_target_properties(puppetxr_rooms PROPERTIES POSITION_INDEPENDENT_CODE ON)

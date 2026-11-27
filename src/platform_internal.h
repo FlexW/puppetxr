@@ -65,6 +65,8 @@ struct OS_VideoDriver
     void               (*show)                  (OS_Window* window); // and raise
     void               (*hide)                  (OS_Window* window);
     void               (*set_cursor)            (OS_Window* window, OS_Cursor cursor);
+    b8                 (*set_icon)              (OS_Window* window, const OS_IconImage* images, u32 count); // images and sizes validated
+    b8                 (*has_icon)              (OS_Window* window);
     void               (*text_input)            (OS_Window* window, b8 active, f32 x, f32 y, f32 height);
     b8                 (*clipboard_text)        (OS_Window* window, char* out_text, usize size);
     void               (*set_clipboard_text)    (OS_Window* window, const char* text);

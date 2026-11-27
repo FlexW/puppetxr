@@ -1590,6 +1590,8 @@ struct Win32Window
     POINT   saved_cursor;  // where the cursor was when the relative mode began
     wchar_t high_surrogate;
     u32     buttons_down;
+    HICON   icon_big;      // set with WM_SETICON, which leaves destroying them to us
+    HICON   icon_small;
 };
 
 // IMM32 is loaded at runtime and pinned: user32 calls it for every new window without holding it,
@@ -2048,6 +2050,14 @@ static void win_destroy_window (OS_Window* window)
     ReleaseDC(data->hwnd, data->dc);
     SetWindowLongPtrW(data->hwnd, GWLP_USERDATA, 0);
     DestroyWindow(data->hwnd);
+    if (data->icon_big)
+    {
+        DestroyIcon(data->icon_big);
+    }
+    if (data->icon_small)
+    {
+        DestroyIcon(data->icon_small);
+    }
     os_memory_release(data);
     window->data = nullptr;
 }
@@ -2151,6 +2161,101 @@ static void win_show (OS_Window* window)
 static void win_hide (OS_Window* window)
 {
     ShowWindow(win_data(window)->hwnd, SW_HIDE);
+}
+
+// A 32-bit icon: the colour bitmap carries the alpha; the mask must exist but goes unused
+static HICON win_icon (const OS_IconImage& image)
+{
+    BITMAPV5HEADER header = {};
+    header.bV5Size        = sizeof(header);
+    header.bV5Width       = (LONG)image.width;
+    header.bV5Height      = -(LONG)image.height;
+    header.bV5Planes      = 1;
+    header.bV5BitCount    = 32;
+    header.bV5Compression = BI_BITFIELDS;
+    header.bV5RedMask     = 0x00ff0000;
+    header.bV5GreenMask   = 0x0000ff00;
+    header.bV5BlueMask    = 0x000000ff;
+    header.bV5AlphaMask   = 0xff000000;
+    void*         bits    = nullptr;
+    const HBITMAP color   = CreateDIBSection(nullptr, (const BITMAPINFO*)&header, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!color)
+    {
+        return nullptr;
+    }
+    u8* const   out    = (u8*)bits;
+    const usize pixels = (usize)image.width * image.height;
+    for (usize p = 0; p < pixels; p++)
+    {
+        out[p * 4 + 0] = image.rgba[p * 4 + 2];
+        out[p * 4 + 1] = image.rgba[p * 4 + 1];
+        out[p * 4 + 2] = image.rgba[p * 4 + 0];
+        out[p * 4 + 3] = image.rgba[p * 4 + 3];
+    }
+    const HBITMAP mask = CreateBitmap((i32)image.width, (i32)image.height, 1, 1, nullptr);
+    ICONINFO      info = { .fIcon = TRUE, .xHotspot = 0, .yHotspot = 0, .hbmMask = mask, .hbmColor = color };
+    const HICON   icon = mask ? CreateIconIndirect(&info) : nullptr;
+    if (mask)
+    {
+        DeleteObject(mask);
+    }
+    DeleteObject(color);
+    return icon;
+}
+
+// The smallest image at least `wanted` pixels wide, else the largest, so Windows only scales down
+static const OS_IconImage& win_icon_image (const OS_IconImage* images, u32 count, i32 wanted)
+{
+    const OS_IconImage* best = &images[0];
+    for (u32 i = 0; i < count; i++)
+    {
+        const b8 fits      = (i32)images[i].width >= wanted;
+        const b8 best_fits = (i32)best->width >= wanted;
+        if ((fits && (!best_fits || images[i].width < best->width)) || (!fits && !best_fits && images[i].width > best->width))
+        {
+            best = &images[i];
+        }
+    }
+    return *best;
+}
+
+// ICON_BIG for the taskbar and Alt+Tab, ICON_SMALL for the title bar, each at the system's size
+static b8 win_set_icon (OS_Window* window, const OS_IconImage* images, u32 count)
+{
+    Win32Window* data  = win_data(window);
+    const HICON  big   = win_icon(win_icon_image(images, count, GetSystemMetrics(SM_CXICON)));
+    const HICON  small = win_icon(win_icon_image(images, count, GetSystemMetrics(SM_CXSMICON)));
+    if (!big || !small)
+    {
+        LOG_ERROR("Window icon: CreateIconIndirect failed (%lu)", GetLastError());
+        if (big)
+        {
+            DestroyIcon(big);
+        }
+        if (small)
+        {
+            DestroyIcon(small);
+        }
+        return false;
+    }
+    SendMessageW(data->hwnd, WM_SETICON, ICON_BIG, (LPARAM)big);
+    SendMessageW(data->hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small);
+    if (data->icon_big)
+    {
+        DestroyIcon(data->icon_big);
+    }
+    if (data->icon_small)
+    {
+        DestroyIcon(data->icon_small);
+    }
+    data->icon_big   = big;
+    data->icon_small = small;
+    return true;
+}
+
+static b8 win_has_icon (OS_Window* window)
+{
+    return SendMessageW(win_data(window)->hwnd, WM_GETICON, ICON_BIG, 0) != 0;
 }
 
 static void win_set_cursor (OS_Window* window, OS_Cursor cursor)
@@ -2344,6 +2449,8 @@ const OS_VideoDriver os_windows_driver = {
     .show                  = win_show,
     .hide                  = win_hide,
     .set_cursor            = win_set_cursor,
+    .set_icon              = win_set_icon,
+    .has_icon              = win_has_icon,
     .text_input            = win_text_input,
     .clipboard_text        = win_clipboard_text,
     .set_clipboard_text    = win_set_clipboard_text,

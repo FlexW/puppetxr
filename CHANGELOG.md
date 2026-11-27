@@ -7,6 +7,7 @@ config start with **Breaking:**.
 
 ## Unreleased
 
+- A logo: in the README, and as the mirror window's icon on Windows and X11.
 - Arch Linux packages in the AUR: `puppetxr`, `puppetxr-bin` and `puppetxr-git`; the README lists how to install on each platform.
 
 ## 0.2.0 - 2026-11-26
