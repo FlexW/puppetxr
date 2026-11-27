@@ -2222,24 +2222,24 @@ static const OS_IconImage& win_icon_image (const OS_IconImage* images, u32 count
 // ICON_BIG for the taskbar and Alt+Tab, ICON_SMALL for the title bar, each at the system's size
 static b8 win_set_icon (OS_Window* window, const OS_IconImage* images, u32 count)
 {
-    Win32Window* data  = win_data(window);
-    const HICON  big   = win_icon(win_icon_image(images, count, GetSystemMetrics(SM_CXICON)));
-    const HICON  small = win_icon(win_icon_image(images, count, GetSystemMetrics(SM_CXSMICON)));
-    if (!big || !small)
+    Win32Window* data       = win_data(window);
+    const HICON  big_icon   = win_icon(win_icon_image(images, count, GetSystemMetrics(SM_CXICON)));
+    const HICON  small_icon = win_icon(win_icon_image(images, count, GetSystemMetrics(SM_CXSMICON)));
+    if (!big_icon || !small_icon)
     {
         LOG_ERROR("Window icon: CreateIconIndirect failed (%lu)", GetLastError());
-        if (big)
+        if (big_icon)
         {
-            DestroyIcon(big);
+            DestroyIcon(big_icon);
         }
-        if (small)
+        if (small_icon)
         {
-            DestroyIcon(small);
+            DestroyIcon(small_icon);
         }
         return false;
     }
-    SendMessageW(data->hwnd, WM_SETICON, ICON_BIG, (LPARAM)big);
-    SendMessageW(data->hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small);
+    SendMessageW(data->hwnd, WM_SETICON, ICON_BIG, (LPARAM)big_icon);
+    SendMessageW(data->hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small_icon);
     if (data->icon_big)
     {
         DestroyIcon(data->icon_big);
@@ -2248,8 +2248,8 @@ static b8 win_set_icon (OS_Window* window, const OS_IconImage* images, u32 count
     {
         DestroyIcon(data->icon_small);
     }
-    data->icon_big   = big;
-    data->icon_small = small;
+    data->icon_big   = big_icon;
+    data->icon_small = small_icon;
     return true;
 }
 
