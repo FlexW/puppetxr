@@ -9,9 +9,11 @@ window or offscreen. No headset, no service, no daemon.
 ![The mirror window: both eyes of Meta's North Star in its ship's cabin, run from the Unity
 editor, with the simulator, device and log panels](docs/images/northstar-ui.png)
 
-| Meta's Cryptic Cabinet: the time cabinet in the simulated living room, with tracked hands | Cryptic Cabinet fitting its puzzle pieces to the room it found |
-|---|---|
-| ![Cryptic Cabinet's time cabinet standing by the living room's window, a glowing letter on the floor under the left hand](docs/images/crypticcabinet-cabinet.png) | ![Cryptic Cabinet's room layout panel and blue placement boxes around the TV, seen from the side](docs/images/crypticcabinet-layout.png) |
+<p align="center">
+<img src="docs/images/crypticcabinet-cabinet.png" alt="Cryptic Cabinet's time cabinet standing by the living room's window, a glowing letter on the floor under the left hand" width="49%">
+<img src="docs/images/crypticcabinet-layout.png" alt="Cryptic Cabinet's room layout panel and blue placement boxes around the TV, seen from the side" width="49%">
+<br><em>A synthetic room to simulate passthrough and mixed reality</em>
+</p>
 
 Agents working on this repository: read `AGENTS.md`.
 
