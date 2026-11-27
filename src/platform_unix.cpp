@@ -1329,20 +1329,22 @@ void os_socket_close (OS_Socket* socket)
 }
 
 // Written under a temporary name and renamed once locked, so a reader never sees the final
-// name without a holder. Between open and flock the temporary file is unlocked: a sweep of stale
-// files by another process may delete it then, and the rename fails. The lock waits, since
-// os_lock_file_is_stale takes it for a moment to probe.
+// name without a holder. Between open and flock the temporary file is unlocked; it is created
+// without permissions until then, which os_lock_file_is_stale never judges stale, so a sweep of
+// stale files by another process leaves it alone. The lock waits, since os_lock_file_is_stale
+// takes it for a moment to probe.
 // One try; false with `out_swept` when a sweep deleted the temporary file before the rename
 static OS_LockFile* create_lock_file (const char* path, const char* temporary, const void* data, usize size, b8& out_swept)
 {
-    out_swept    = false;
-    const i32 fd = open(temporary, O_CREAT | O_TRUNC | O_RDWR | O_CLOEXEC, 0600);
+    out_swept = false;
+    unlink(temporary);
+    const i32 fd = open(temporary, O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC, 0);
     if (fd < 0)
     {
         LOG_ERROR("Cannot create %s: %s", temporary, errno_text(errno).text);
         return nullptr;
     }
-    const b8 filled = flock(fd, LOCK_EX) == 0 && (size == 0 || write(fd, data, size) == (ssize_t)size);
+    const b8 filled = flock(fd, LOCK_EX) == 0 && fchmod(fd, 0600) == 0 && (size == 0 || write(fd, data, size) == (ssize_t)size);
     if (!filled || rename(temporary, path) != 0)
     {
         const i32 error = errno;
@@ -1404,7 +1406,9 @@ b8 os_lock_file_is_stale (const char* path)
     {
         return false;
     }
-    const b8 stale = flock(fd, LOCK_EX | LOCK_NB) == 0;
+    // A file without permissions is a lock file between its creation and its lock
+    struct stat info  = {};
+    const b8    stale = fstat(fd, &info) == 0 && (info.st_mode & 0777) != 0 && flock(fd, LOCK_EX | LOCK_NB) == 0;
     close(fd);
     return stale;
 }
